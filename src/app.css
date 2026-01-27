@@ -1,0 +1,517 @@
+/**
+ * Quiz App 样式
+ */
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f5f5;
+    min-height: 100vh;
+    color: #333;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        background: #1a1a1a;
+        color: #e0e0e0;
+    }
+}
+
+main {
+    width: 80vw;
+    min-width: 380px;
+    max-width: 800px;
+    padding: 20px;
+}
+
+header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+h1 {
+    margin: 0 0 10px 0;
+    color: #333;
+}
+
+@media (prefers-color-scheme: dark) {
+    h1 {
+        color: #e0e0e0;
+    }
+}
+
+.filters {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.filters button {
+    padding: 8px 16px;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #333;
+}
+
+@media (prefers-color-scheme: dark) {
+    .filters button {
+        background: #2a2a2a;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+}
+
+.filters button:hover {
+    border-color: #007bff;
+    color: #007bff;
+}
+
+.filters button.active {
+    background: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.question-card {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    min-height: 500px;
+    /*width: 100%;*/
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+    .question-card {
+        background: #2a2a2a;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+}
+
+.question-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.question-type {
+    background: #007bff;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+}
+
+.question-id {
+    color: #999;
+    font-size: 14px;
+}
+
+.progress-indicator {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+}
+
+.progress-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #e0e0e0;
+    transition: all 0.2s;
+}
+
+@media (prefers-color-scheme: dark) {
+    .progress-dot {
+        background: #444;
+    }
+}
+
+.progress-dot.filled {
+    background: #28a745;
+}
+
+.progress-dot.filled.error {
+    background: #ffc107;
+}
+
+/* 设置菜单 */
+.settings-menu {
+    position: fixed;
+    left: 20px;
+    bottom: 20px;
+}
+
+.settings-toggle {
+    width: 40px;
+    height: 40px;
+    padding: 8px;
+    border: none;
+    background: unset;
+    border-radius: 50%;
+    cursor: pointer;
+    color: #0003;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (prefers-color-scheme: dark) {
+    .settings-toggle {
+        color: #fff3;
+    }
+}
+
+.settings-toggle:hover {
+    color: #007bff;
+    transform: rotate(30deg);
+}
+
+.settings-dropdown {
+    position: absolute;
+    left: 0;
+    bottom: 100%;
+    margin-bottom: 8px;
+    padding: 8px;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 14px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    white-space: nowrap;
+    z-index: 10;
+}
+
+@media (prefers-color-scheme: dark) {
+    .settings-dropdown {
+        background: #333;
+        border-color: #444;
+    }
+}
+
+.settings-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    gap: 12px;
+    font-size: 13px;
+    color: #333;
+}
+
+@media (prefers-color-scheme: dark) {
+    .settings-option {
+        color: #e0e0e0;
+    }
+}
+
+.settings-option label {
+    cursor: pointer;
+    user-select: none;
+}
+
+.settings-option input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.btn-reset {
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    color: #dc3545;
+    border: 1px solid #dc3545;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.btn-reset:hover {
+    background: #dc3545;
+    color: white;
+}
+
+.question-text {
+    font-size: 18px;
+    line-height: 1.6;
+    color: #333;
+    margin-bottom: 20px;
+    white-space: pre-wrap;
+}
+
+@media (prefers-color-scheme: dark) {
+    .question-text {
+        color: #e0e0e0;
+    }
+}
+
+.options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    text-align: left;
+    font-size: 16px;
+    transition: all 0.2s;
+    color: #333;
+}
+
+@media (prefers-color-scheme: dark) {
+    .option {
+        background: #333;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+}
+
+.option:hover:not(:disabled) {
+    border-color: #007bff;
+    background: #f8f9ff;
+}
+
+@media (prefers-color-scheme: dark) {
+    .option:hover:not(:disabled) {
+        background: #3a3a4a;
+    }
+}
+
+.option.selected {
+    border-color: #007bff;
+    background: #e8f0ff;
+}
+
+@media (prefers-color-scheme: dark) {
+    .option.selected {
+        background: #1a3a5c;
+    }
+}
+
+.option.correct {
+    border-color: #28a745;
+    background: #d4edda;
+}
+
+@media (prefers-color-scheme: dark) {
+    .option.correct {
+        background: #1a4a2a;
+    }
+}
+
+.option.wrong {
+    border-color: #dc3545;
+    background: #f8d7da;
+}
+
+@media (prefers-color-scheme: dark) {
+    .option.wrong {
+        background: #4a1a1a;
+    }
+}
+
+.option:disabled {
+    cursor: default;
+}
+
+.option-letter {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0001;
+    border-radius: 50%;
+    font-weight: bold;
+    color: #333;
+    backdrop-filter: saturate(200%);
+}
+
+@media (prefers-color-scheme: dark) {
+    .option-letter {
+        background: #fff1;
+        color: #e0e0e0;
+    }
+}
+
+.option-text {
+    flex: 1;
+    line-height: 1.5;
+}
+
+.result {
+    margin-top: 20px;
+    padding: 16px;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.result.correct {
+    background: #d4edda;
+    color: #155724;
+}
+
+@media (prefers-color-scheme: dark) {
+    .result.correct {
+        background: #1a4a2a;
+        color: #7dce94;
+    }
+}
+
+.result.wrong {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+@media (prefers-color-scheme: dark) {
+    .result.wrong {
+        background: #4a1a1a;
+        color: #e08080;
+    }
+}
+
+.correct-answer {
+    margin-top: 8px;
+    font-weight: normal;
+    font-size: 16px;
+}
+
+.actions {
+    margin-top: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.btn-primary {
+    padding: 12px 32px;
+    background: #007bff;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: #0056b3;
+}
+
+.btn-primary:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+@media (prefers-color-scheme: dark) {
+    .btn-primary:disabled {
+        background: #444;
+    }
+}
+
+.no-questions {
+    text-align: center;
+    padding: 40px;
+    color: #666;
+    font-size: 18px;
+}
+
+@media (prefers-color-scheme: dark) {
+    .no-questions {
+        color: #aaa;
+    }
+}
+
+/* 进度条 */
+.progress-bar-container {
+    margin-top: 20px;
+}
+
+.progress-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+    .progress-labels {
+        color: #aaa;
+    }
+}
+
+.label-left,
+.label-right {
+    font-weight: 500;
+}
+
+.progress-bar {
+    height: 3px;
+    display: flex;
+    gap: 4px;
+}
+
+.progress-segment {
+    height: 3px;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.progress-segment.mastered {
+    background: #28a745;
+}
+
+.progress-segment.learning {
+    background: #ffc107;
+}
+
+.progress-segment.pending {
+    background: #0001;
+}
+
+@media (prefers-color-scheme: dark) {
+    .progress-segment.pending {
+        background: #444;
+    }
+}
+
+@media (max-width: 600px) {
+    main {
+        padding: 12px;
+    }
+
+    .question-card {
+        padding: 16px;
+    }
+
+    .question-text {
+        font-size: 16px;
+    }
+
+    .option {
+        padding: 12px;
+        font-size: 14px;
+    }
+}
