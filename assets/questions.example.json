@@ -1,0 +1,62 @@
+[
+  {
+    "id": "judgment_1",
+    "type": "judgment",
+    "question": "地球是太阳系中最大的行星。",
+    "answer": false
+  },
+  {
+    "id": "judgment_2",
+    "type": "judgment",
+    "question": "水的化学式是 H2O。",
+    "answer": true
+  },
+  {
+    "id": "single_1",
+    "type": "single",
+    "question": "以下哪个是 JavaScript 的包管理器？",
+    "options": [
+      { "text": "pip" },
+      { "text": "npm" },
+      { "text": "cargo" },
+      { "text": "gem" }
+    ],
+    "answer": [1]
+  },
+  {
+    "id": "single_2",
+    "type": "single",
+    "question": "光在真空中的传播速度约为多少？",
+    "options": [
+      { "text": "3×10⁶ m/s" },
+      { "text": "3×10⁷ m/s" },
+      { "text": "3×10⁸ m/s" },
+      { "text": "3×10⁹ m/s" }
+    ],
+    "answer": [2]
+  },
+  {
+    "id": "multiple_1",
+    "type": "multiple",
+    "question": "以下哪些是前端框架/库？",
+    "options": [
+      { "text": "React" },
+      { "text": "Django" },
+      { "text": "Vue" },
+      { "text": "Flask" }
+    ],
+    "answer": [0, 2]
+  },
+  {
+    "id": "multiple_2",
+    "type": "multiple",
+    "question": "以下哪些元素属于惰性气体？",
+    "options": [
+      { "text": "氦 (He)" },
+      { "text": "氧 (O)" },
+      { "text": "氖 (Ne)" },
+      { "text": "氮 (N)" }
+    ],
+    "answer": [0, 2]
+  }
+]

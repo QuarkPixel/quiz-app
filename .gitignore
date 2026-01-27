@@ -5,7 +5,7 @@
 CLAUDE.md
 
 # Quiz data (replace with your own)
-assets/
+assets/questions.json
 
 # Logs
 logs
