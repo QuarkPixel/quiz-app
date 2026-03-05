@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { tick } from "svelte";
     import "./app.css";
     import { questions } from "./questions";
     import type {
@@ -8,41 +9,61 @@
         RuntimeState,
         ActivePoolItem,
     } from "./types";
+    import FlashContainer from "./components/FlashContainer.svelte";
+    import Settings from "./components/Settings.svelte";
+    import QuestionFilters from "./components/QuestionFilters.svelte";
     import {
-        loadStoredState,
-        saveState,
-        resetStoredState,
-        buildRuntimeState,
-        getActivePoolItem,
-    } from "./store";
-    import {
+        buildFilterOptions,
+        canSubmitCurrentAnswer,
+        createResetRuntimeState,
+        evaluateAnswer,
         fillActivePool,
-        selectNextFromPool,
-        processAnswer,
-        getStats,
+        getActivePoolItem,
+        getCorrectChoiceLetters,
         getRequiredStreak,
+        getStats,
+        getTypeName,
+        isEditingTarget,
+        loadRuntimeState,
+        processAnswer,
+        reconcileAfterSettingsChange,
+        rebuildRuntimeState,
+        saveState,
+        selectNextFromPool,
         shuffle,
-    } from "./algorithm";
-    import FlashContainer from "./FlashContainer.svelte";
-    import Settings from "./Settings.svelte";
+    } from "./features/quiz";
 
     // 动态导入 favicon SVG
     // @ts-ignore
     import faviconRaw from "../icons/MaterialSymbolsBookmarkCheckRounded.svg?raw";
     const faviconUrl = `data:image/svg+xml,${encodeURIComponent(faviconRaw)}`;
 
+    const filterOptions = buildFilterOptions(questions);
+
+    function createInitialState(): RuntimeState {
+        return loadRuntimeState(questions);
+    }
+
     // 应用状态
-    let appState = $state<RuntimeState>(
-        buildRuntimeState(questions, loadStoredState()),
-    );
+    let appState = $state<RuntimeState>(createInitialState());
 
     // UI 状态
     let currentQuestion = $state<Question | null>(null);
     let shuffledOptions = $state<(Option & { originalIndex: number })[]>([]);
     let selectedAnswers = $state<number[]>([]);
+    let blankAnswerInput = $state("");
     let showResult = $state(false);
     let isCorrect = $state(false);
     let flashContainer: FlashContainer;
+    let blankInputElement = $state<HTMLInputElement | null>(null);
+
+    function focusBlankInputIfNeeded(): void {
+        if (currentQuestion?.type !== "blank") return;
+
+        void tick().then(() => {
+            blankInputElement?.focus();
+        });
+    }
 
     // 初始化活动池并选择第一题
     function initialize(): void {
@@ -72,8 +93,10 @@
         }
 
         selectedAnswers = [];
+        blankAnswerInput = "";
         showResult = false;
         isCorrect = false;
+        focusBlankInputIfNeeded();
     }
 
     // 切换选项
@@ -99,19 +122,25 @@
 
     // 提交答案
     function submitAnswer(): void {
-        if (!currentQuestion || selectedAnswers.length === 0) return;
+        if (
+            !currentQuestion ||
+            !canSubmitCurrentAnswer(
+                currentQuestion,
+                selectedAnswers,
+                blankAnswerInput,
+            )
+        ) {
+            return;
+        }
+
+        const nextIsCorrect = evaluateAnswer(
+            currentQuestion,
+            selectedAnswers,
+            blankAnswerInput,
+        );
 
         showResult = true;
-
-        // 检查答案
-        if (currentQuestion.type === "judgment") {
-            isCorrect = (selectedAnswers[0] === 0) === currentQuestion.answer;
-        } else {
-            const correctAnswers = currentQuestion.answer as number[];
-            isCorrect =
-                selectedAnswers.length === correctAnswers.length &&
-                selectedAnswers.every((a) => correctAnswers.includes(a));
-        }
+        isCorrect = nextIsCorrect;
 
         // 触发背景闪烁
         flashContainer.flash(isCorrect);
@@ -132,44 +161,56 @@
 
     // 键盘事件
     function handleKeydown(event: KeyboardEvent): void {
-        if (event.code === "Space" || event.code === "Enter") {
-            event.preventDefault();
-            if (showResult) {
-                selectNextQuestion();
-            } else if (
-                selectedAnswers.length > 0 &&
-                currentQuestion?.type === "multiple"
-            ) {
-                submitAnswer();
-            }
+        if (
+            !(
+                (event.code === "Space" && !isEditingTarget(event)) ||
+                event.code === "Enter"
+            )
+        )
+            return;
+
+        event.preventDefault();
+        if (showResult) {
+            selectNextQuestion();
+        } else if (
+            currentQuestion?.type === "multiple" ||
+            currentQuestion?.type === "blank"
+        ) {
+            submitAnswer();
         }
     }
 
     // 切换题型筛选
     function setFilterType(type: QuestionType | "all"): void {
-        appState.filterType = type;
-        appState = buildRuntimeState(questions, appState);
+        if (appState.filterType === type) return;
+        appState = rebuildRuntimeState(questions, appState, type);
         appState = fillActivePool(appState);
         saveState(appState);
         selectNextQuestion();
     }
 
-    // 重置进度
-    function handleReset(): void {
-        if (confirm("确定要重置所有学习进度吗？")) {
-            appState = buildRuntimeState(questions, resetStoredState());
-            initialize();
+    // 参数变更后重建状态，保证活动池/统计/当前题一致
+    function handleSettingsChange(): void {
+        const reconcileResult = reconcileAfterSettingsChange(
+            questions,
+            appState,
+            currentQuestion?.id,
+        );
+
+        appState = reconcileResult.state;
+        saveState(appState);
+
+        if (reconcileResult.shouldSelectNext) {
+            selectNextQuestion();
         }
     }
 
-    // 获取题型名称
-    function getTypeName(type: QuestionType): string {
-        const names: Record<QuestionType, string> = {
-            judgment: "判断题",
-            single: "单选题",
-            multiple: "多选题",
-        };
-        return names[type];
+    // 重置进度
+    function handleReset(): void {
+        if (confirm("确定要重置所有学习进度吗？")) {
+            appState = createResetRuntimeState(questions);
+            initialize();
+        }
     }
 
     // 初始化
@@ -185,6 +226,22 @@
     let requiredStreak = $derived(
         currentPoolItem ? getRequiredStreak(currentPoolItem, appState) : 1,
     );
+    let canSubmitCurrent = $derived(
+        canSubmitCurrentAnswer(
+            currentQuestion,
+            selectedAnswers,
+            blankAnswerInput,
+        ),
+    );
+    let masteredWidth = $derived(
+        stats.total > 0 ? (stats.mastered / stats.total) * 100 : 0,
+    );
+    let learningWidth = $derived(
+        stats.total > 0 ? (stats.learning / stats.total) * 100 : 0,
+    );
+    let pendingWidth = $derived(
+        stats.total > 0 ? (stats.pending / stats.total) * 100 : 0,
+    );
 </script>
 
 <svelte:head>
@@ -199,32 +256,11 @@
 <main>
     <header>
         <h1>Quiz! app</h1>
-        <div class="filters">
-            <button
-                class:active={appState.filterType === "all"}
-                onclick={() => setFilterType("all")}
-            >
-                全部
-            </button>
-            <button
-                class:active={appState.filterType === "judgment"}
-                onclick={() => setFilterType("judgment")}
-            >
-                判断题
-            </button>
-            <button
-                class:active={appState.filterType === "single"}
-                onclick={() => setFilterType("single")}
-            >
-                单选题
-            </button>
-            <button
-                class:active={appState.filterType === "multiple"}
-                onclick={() => setFilterType("multiple")}
-            >
-                多选题
-            </button>
-        </div>
+        <QuestionFilters
+            options={filterOptions}
+            activeType={appState.filterType}
+            onSelect={setFilterType}
+        />
     </header>
 
     {#if currentQuestion && (currentPoolItem || showResult)}
@@ -280,6 +316,20 @@
                     >
                         错误
                     </button>
+                {:else if currentQuestion.type === "blank"}
+                    <div class="blank-answer">
+                        <input
+                            class="blank-input"
+                            type="text"
+                            bind:value={blankAnswerInput}
+                            bind:this={blankInputElement}
+                            placeholder="根据中文默写英文词组"
+                            autocomplete="off"
+                            autocapitalize="off"
+                            spellcheck="false"
+                            disabled={showResult}
+                        />
+                    </div>
                 {:else}
                     {#each shuffledOptions as opt, idx}
                         {@const correctAnswers =
@@ -319,23 +369,25 @@
                             已掌握！
                         {:else}
                             回答正确
+                            {#if currentQuestion.type === "blank"}
+                                <div class="correct-answer">
+                                    {currentQuestion.answer}
+                                </div>
+                            {/if}
                         {/if}
                     {:else}
                         回答错误
-                        {#if currentQuestion.type !== "judgment"}
-                            {@const correctAnswers =
-                                currentQuestion.answer as number[]}
-                            {@const correctLetters = correctAnswers
-                                .map((origIdx) => {
-                                    const pos = shuffledOptions.findIndex(
-                                        (opt) => opt.originalIndex === origIdx,
-                                    );
-                                    return String.fromCharCode(65 + pos);
-                                })
-                                .sort()
-                                .join("")}
+                        {#if currentQuestion.type === "blank"}
                             <div class="correct-answer">
-                                正确答案: {correctLetters}
+                                正确答案: {currentQuestion.answer as string}
+                            </div>
+                        {:else if currentQuestion.type !== "judgment"}
+                            <div class="correct-answer">
+                                正确答案:
+                                {getCorrectChoiceLetters(
+                                    currentQuestion,
+                                    shuffledOptions,
+                                )}
                             </div>
                         {/if}
                     {/if}
@@ -347,7 +399,15 @@
                     <button
                         class="btn-primary"
                         onclick={submitAnswer}
-                        disabled={selectedAnswers.length === 0}
+                        disabled={!canSubmitCurrent}
+                    >
+                        提交答案
+                    </button>
+                {:else if !showResult && currentQuestion.type === "blank"}
+                    <button
+                        class="btn-primary"
+                        onclick={submitAnswer}
+                        disabled={!canSubmitCurrent}
                     >
                         提交答案
                     </button>
@@ -378,19 +438,23 @@
         <div class="progress-bar">
             <div
                 class="progress-segment mastered"
-                style="width: {(stats.mastered / stats.total) * 100}%"
+                style="width: {masteredWidth}%"
             ></div>
             <div
                 class="progress-segment learning"
-                style="width: {(stats.learning / stats.total) * 100}%"
+                style="width: {learningWidth}%"
             ></div>
             <div
                 class="progress-segment pending"
-                style="width: {(stats.pending / stats.total) * 100}%"
+                style="width: {pendingWidth}%"
             ></div>
         </div>
     </div>
 
     <!-- 设置按钮 -->
-    <Settings {appState} onReset={handleReset} />
+    <Settings
+        {appState}
+        onReset={handleReset}
+        onSettingsChange={handleSettingsChange}
+    />
 </main>

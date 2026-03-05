@@ -262,6 +262,41 @@ h1 {
     gap: 10px;
 }
 
+.blank-answer {
+    width: 100%;
+}
+
+.blank-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    background: white;
+    color: #333;
+    font-size: 18px;
+    transition: all 0.2s;
+}
+
+@media (prefers-color-scheme: dark) {
+    .blank-input {
+        background: #333;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+}
+
+.blank-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px #007bff1f;
+}
+
+.blank-input:disabled {
+    opacity: 0.8;
+    cursor: default;
+}
+
 .option {
     display: flex;
     align-items: flex-start;
@@ -513,5 +548,10 @@ h1 {
     .option {
         padding: 12px;
         font-size: 14px;
+    }
+
+    .blank-input {
+        padding: 12px;
+        font-size: 16px;
     }
 }

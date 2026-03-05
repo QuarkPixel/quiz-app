@@ -8,7 +8,7 @@ export interface Option {
 }
 
 /** 题目类型 */
-export type QuestionType = 'judgment' | 'single' | 'multiple';
+export type QuestionType = 'judgment' | 'single' | 'multiple' | 'blank';
 
 /** 题目 */
 export interface Question {
@@ -16,7 +16,7 @@ export interface Question {
   type: QuestionType;
   question: string;
   options?: Option[];
-  answer: boolean | number[];
+  answer: boolean | number[] | string;
 }
 
 /** 活动池中的题目 */

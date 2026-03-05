@@ -1,22 +1,22 @@
 <script lang="ts">
-    import type { RuntimeState } from "./types";
-    import { saveState } from "./store";
+    import type { RuntimeState } from "../types";
 
     // @ts-ignore
-    import settingsRaw from "../icons/MaterialSymbolsSettingsOutlineRounded.svg?raw";
+    import settingsRaw from "../../icons/MaterialSymbolsSettingsOutlineRounded.svg?raw";
 
     interface Props {
         appState: RuntimeState;
         onReset: () => void;
+        onSettingsChange: () => void;
     }
 
-    let { appState, onReset }: Props = $props();
+    let { appState, onReset, onSettingsChange }: Props = $props();
 
     let showMenu = $state(false);
 
     // 更新设置并保存
     function updateSettings() {
-        saveState(appState);
+        onSettingsChange();
     }
 
     // 点击外部关闭菜单

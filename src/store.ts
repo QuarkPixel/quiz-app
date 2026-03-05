@@ -93,8 +93,17 @@ export function saveState(state: RuntimeState): void {
 
 /** 重置所有进度 */
 export function resetStoredState(): StoredState {
+  const previousState = loadStoredState();
+  const defaultState = createDefaultStoredState();
+
   localStorage.removeItem(STORAGE_KEY);
-  return createDefaultStoredState();
+
+  return {
+    ...defaultState,
+    // 保留用户配置
+    filterType: previousState.filterType,
+    settings: previousState.settings,
+  };
 }
 
 /** 根据筛选条件过滤题目 */

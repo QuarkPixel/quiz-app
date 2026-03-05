@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { FLASH_ANIMATION_DURATION } from "./config";
+    import { FLASH_ANIMATION_DURATION } from "../config";
 
     let container: HTMLDivElement;
 

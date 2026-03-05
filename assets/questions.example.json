@@ -58,5 +58,11 @@
       { "text": "氮 (N)" }
     ],
     "answer": [0, 2]
+  },
+  {
+    "id": "blank_1",
+    "type": "blank",
+    "question": "取得进步",
+    "answer": "make progress"
   }
 ]
