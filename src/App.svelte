@@ -10,6 +10,7 @@
         ActivePoolItem,
     } from "./types";
     import FlashContainer from "./components/FlashContainer.svelte";
+    import ReviewView from "./components/ReviewView.svelte";
     import Settings from "./components/Settings.svelte";
     import QuestionFilters from "./components/QuestionFilters.svelte";
     import {
@@ -36,6 +37,8 @@
     // 动态导入 favicon SVG
     // @ts-ignore
     import faviconRaw from "../icons/MaterialSymbolsBookmarkCheckRounded.svg?raw";
+    // @ts-ignore
+    import bookIconRaw from "../icons/MaterialSymbolsBook5Rounded.svg?raw";
     const faviconUrl = `data:image/svg+xml,${encodeURIComponent(faviconRaw)}`;
 
     const filterOptions = buildFilterOptions(questions);
@@ -56,6 +59,7 @@
     let isCorrect = $state(false);
     let flashContainer: FlashContainer;
     let blankInputElement = $state<HTMLInputElement | null>(null);
+    let showReview = $state(false);
 
     function focusBlankInputIfNeeded(): void {
         if (currentQuestion?.type !== "blank") return;
@@ -213,6 +217,39 @@
         }
     }
 
+    function markCurrentAsMastered(): void {
+        if (!currentQuestion) return;
+
+        if (!confirm("确定将本题直接标记为已掌握吗？")) return;
+
+        const questionId = currentQuestion.id;
+        const nextState: RuntimeState = {
+            ...appState,
+            activePool: [...appState.activePool],
+            masteredIds: [...appState.masteredIds],
+            pendingIds: [...appState.pendingIds],
+        };
+
+        const activeIndex = nextState.activePool.findIndex(
+            (item) => item.id === questionId,
+        );
+        if (activeIndex !== -1) {
+            nextState.activePool.splice(activeIndex, 1);
+        }
+
+        if (!nextState.masteredIds.includes(questionId)) {
+            nextState.masteredIds.push(questionId);
+        }
+
+        nextState.pendingIds = nextState.pendingIds.filter(
+            (id) => id !== questionId,
+        );
+
+        appState = fillActivePool(nextState);
+        saveState(appState);
+        selectNextQuestion();
+    }
+
     // 初始化
     initialize();
 
@@ -367,6 +404,11 @@
                     {#if isCorrect}
                         {#if !currentPoolItem}
                             已掌握！
+                            {#if currentQuestion.type === "blank"}
+                                <div class="correct-answer">
+                                    {currentQuestion.answer}
+                                </div>
+                            {/if}
                         {:else}
                             回答正确
                             {#if currentQuestion.type === "blank"}
@@ -415,6 +457,14 @@
                     <button class="btn-primary" onclick={selectNextQuestion}>
                         下一题
                     </button>
+                    {#if currentPoolItem}
+                        <button
+                            class="btn-secondary btn-small"
+                            onclick={markCurrentAsMastered}
+                        >
+                            已掌握
+                        </button>
+                    {/if}
                 {/if}
             </div>
         </div>
@@ -457,4 +507,23 @@
         onReset={handleReset}
         onSettingsChange={handleSettingsChange}
     />
+
+    <!-- 预览答案按钮 -->
+    <button
+        class="review-toggle"
+        onclick={() => (showReview = true)}
+        aria-label="答案预览"
+        title="答案预览"
+    >
+        {@html bookIconRaw}
+    </button>
 </main>
+
+<!-- 答案预览面板 -->
+{#if showReview}
+    <ReviewView
+        questions={questions}
+        filterType={appState.filterType}
+        onClose={() => (showReview = false)}
+    />
+{/if}
