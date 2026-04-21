@@ -217,6 +217,15 @@
         }
     }
 
+    // 导入进度（由 Settings 组件回调）
+    function handleImport(newState: import("./types").StoredState): void {
+        // 将 StoredState 转为 RuntimeState 再重建（pendingIds 由 rebuildRuntimeState 计算）
+        const stateWithPending: import("./types").RuntimeState = { ...newState, pendingIds: [] };
+        appState = rebuildRuntimeState(questions, stateWithPending, newState.filterType);
+        saveState(appState);
+        selectNextQuestion();
+    }
+
     function markCurrentAsMastered(): void {
         if (!currentQuestion) return;
 
@@ -506,6 +515,7 @@
         {appState}
         onReset={handleReset}
         onSettingsChange={handleSettingsChange}
+        onImport={handleImport}
     />
 
     <!-- 预览答案按钮 -->
