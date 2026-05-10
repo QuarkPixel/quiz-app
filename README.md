@@ -27,9 +27,6 @@ npm run build
 
 # 预览生产版本
 npm run preview
-
-# 运行测试
-npm test
 ```
 
 ## 导入自定义题库
@@ -129,7 +126,7 @@ npm test
 | `(A/B)` | 括号内词级替换 | `(be/get) used to` → `be used to` 或 `get used to` |
 | 全角符号 | 自动转半角 | `（an）`、`／` 与半角等价 |
 
-匹配时忽略大小写、空格和标点，只比较英文字母。斜杠分支支持共享前缀/后缀，例如 `draw/reach/come to a conclusion`，输入 `draw a conclusion` 也会被判为正确（宽松原则：存在合理解读即算对）。
+匹配时忽略大小写、空格和标点，只比较英文字母。斜杠分支支持共享前缀/后缀，例如 `draw/reach/come to a conclusion`，输入 `draw conclusion` 也会被判为正确（宽松原则：存在合理解读即算对）。
 
 ### 完整示例
 
