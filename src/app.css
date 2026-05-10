@@ -273,6 +273,24 @@ h1 {
     color: white;
 }
 
+.btn-restart {
+    display: block;
+    margin: 20px auto 0;
+    padding: 8px 12px;
+    background: transparent;
+    color: #007bff;
+    border: 1px solid #007bff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.btn-restart:hover {
+    background: #007bff;
+    color: white;
+}
+
 .question-text {
     font-size: 18px;
     line-height: 1.6;

@@ -6,10 +6,14 @@
     interface Props {
         questions: Question[];
         filterType: QuestionType | "all";
+        masteredIds: string[];
         onClose: () => void;
     }
 
-    let { questions, filterType, onClose }: Props = $props();
+    let { questions, filterType, masteredIds, onClose }: Props = $props();
+
+    // 「仅看未掌握」开关
+    let showUnmasteredOnly = $state(false);
 
     function getTypeName(type: QuestionType): string {
         switch (type) {
@@ -41,11 +45,17 @@
         return answer ? "正确 ✓" : "错误 ✗";
     }
 
-    let filteredQuestions = $derived(
-        filterType === "all"
-            ? questions
-            : questions.filter((q) => q.type === filterType),
-    );
+    const masteredSet = $derived(new Set(masteredIds));
+
+    let filteredQuestions = $derived.by(() => {
+        const byType =
+            filterType === "all"
+                ? questions
+                : questions.filter((q) => q.type === filterType);
+        return showUnmasteredOnly
+            ? byType.filter((q) => !masteredSet.has(q.id))
+            : byType;
+    });
 
     // 按题型分组
     const typeOrder: QuestionType[] = [
@@ -77,7 +87,7 @@
         return {
             destroy() {
                 node.close();
-            }
+            },
         };
     }
 </script>
@@ -99,9 +109,15 @@
                 <h2>答案预览</h2>
                 <span class="review-count">{filteredQuestions.length} 题</span>
             </div>
-            <button class="close-btn" onclick={onClose} aria-label="关闭"
-                >✕</button
-            >
+            <div class="review-header-actions">
+                <label class="unmastered-toggle">
+                    <input type="checkbox" bind:checked={showUnmasteredOnly} />
+                    仅看未掌握
+                </label>
+                <button class="close-btn" onclick={onClose} aria-label="关闭"
+                    >✕</button
+                >
+            </div>
         </div>
 
         <div class="review-content">
@@ -265,6 +281,37 @@
         display: flex;
         align-items: center;
         gap: 8px;
+    }
+
+    .review-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
+    }
+
+    .unmastered-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: #555;
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .unmastered-toggle {
+            color: #aaa;
+        }
+    }
+
+    .unmastered-toggle input[type="checkbox"] {
+        width: 15px;
+        height: 15px;
+        cursor: pointer;
+        accent-color: #007bff;
     }
 
     .review-icon {
@@ -481,13 +528,13 @@
     }
 
     .blank-answer {
-        color: #1d4ed8;
+        color: #16a34a;
         letter-spacing: 0.03em;
     }
 
     @media (prefers-color-scheme: dark) {
         .blank-answer {
-            color: #60a5fa;
+            color: #4ade80;
         }
     }
 

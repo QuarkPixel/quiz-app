@@ -13,9 +13,12 @@ import {
   resetStoredState,
   saveState,
 } from "../../store";
+import type { LoadStoredStateResult } from "../../store";
 import type { Question, QuestionType, RuntimeState } from "../../types";
 import { normalizeFilterType } from "./filters";
 import { sanitizeUserSettings } from "./settings";
+
+export type { LoadStoredStateResult } from "../../store";
 
 export {
   fillActivePool,
@@ -28,11 +31,21 @@ export {
   shuffle,
 };
 
-export function loadRuntimeState(questions: Question[]): RuntimeState {
-  const storedState = loadStoredState();
+export type LoadRuntimeStateResult =
+  | { kind: "ok"; state: RuntimeState }
+  | { kind: "hash_mismatch"; state: RuntimeState; savedHash: string; currentHash: string };
+
+export function loadRuntimeState(questions: Question[]): LoadRuntimeStateResult {
+  const result: LoadStoredStateResult = loadStoredState();
+  const storedState = result.state;
   storedState.filterType = normalizeFilterType(storedState.filterType, questions);
   storedState.settings = sanitizeUserSettings(storedState.settings);
-  return buildRuntimeState(questions, storedState);
+  const state = buildRuntimeState(questions, storedState);
+
+  if (result.kind === "hash_mismatch") {
+    return { kind: "hash_mismatch", state, savedHash: result.savedHash, currentHash: result.currentHash };
+  }
+  return { kind: "ok", state };
 }
 
 export function rebuildRuntimeState(

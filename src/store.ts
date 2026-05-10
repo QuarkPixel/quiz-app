@@ -18,6 +18,9 @@ import {
   CORRECT_STREAK_AFTER_MISTAKE,
 } from "./config";
 
+// 由 vite.config.ts 在编译期注入的题库哈希常量
+declare const __QUESTIONS_HASH__: string;
+
 /** 创建默认的用户设置 */
 export function createDefaultSettings(): UserSettings {
   return {
@@ -52,14 +55,19 @@ function createDefaultStoredState(): StoredState {
   };
 }
 
-/** 从 localStorage 加载状态 */
-export function loadStoredState(): StoredState {
+/** loadStoredState 的返回结果 */
+export type LoadStoredStateResult =
+  | { kind: "ok"; state: StoredState }
+  | { kind: "hash_mismatch"; state: StoredState; savedHash: string; currentHash: string };
+
+/** 从 localStorage 加载状态，同时校验题库哈希 */
+export function loadStoredState(): LoadStoredStateResult {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved) as StoredState;
+      const parsed = JSON.parse(saved) as StoredState & { questionsHash?: string };
       const defaultState = createDefaultStoredState();
-      return {
+      const state: StoredState = {
         ...defaultState,
         ...parsed,
         // 确保 settings 对象存在且包含所有字段
@@ -68,21 +76,29 @@ export function loadStoredState(): StoredState {
           ...parsed.settings,
         },
       };
+
+      // 校验题库哈希：有记录且不一致时返回 hash_mismatch
+      if (parsed.questionsHash && parsed.questionsHash !== __QUESTIONS_HASH__) {
+        return { kind: "hash_mismatch", state, savedHash: parsed.questionsHash, currentHash: __QUESTIONS_HASH__ };
+      }
+
+      return { kind: "ok", state };
     }
   } catch (e) {
     console.error("Failed to load state:", e);
   }
-  return createDefaultStoredState();
+  return { kind: "ok", state: createDefaultStoredState() };
 }
 
-/** 保存状态到 localStorage（只保存需要持久化的部分） */
+/** 保存状态到 localStorage（只保存需要持久化的部分，同时写入当前题库哈希） */
 export function saveState(state: RuntimeState): void {
-  const toStore: StoredState = {
+  const toStore = {
     masteredIds: state.masteredIds,
     activePool: state.activePool,
     currentRound: state.currentRound,
     filterType: state.filterType,
     settings: state.settings,
+    questionsHash: __QUESTIONS_HASH__,
   };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
@@ -93,7 +109,7 @@ export function saveState(state: RuntimeState): void {
 
 /** 重置所有进度 */
 export function resetStoredState(): StoredState {
-  const previousState = loadStoredState();
+  const previousState = loadStoredState().state;
   const defaultState = createDefaultStoredState();
 
   localStorage.removeItem(STORAGE_KEY);
@@ -138,8 +154,11 @@ export function buildRuntimeState(
   const filtered = filterQuestions(questions, storedState.filterType);
   const filteredIds = new Set(filtered.map((q) => q.id));
 
-  const cleanedActivePool = storedState.activePool.filter((item) =>
-    filteredIds.has(item.id),
+  // 同时剔除从未被展示过的题目（lastSelectedRound 仍为初始值 -activePoolSize*2）
+  // 这样在切换筛选后，旧筛选遗留的"未展示"项不会聚集在活动池里导致连续出现同类题
+  const initialRound = -(storedState.settings.activePoolSize ?? 25) * 2;
+  const cleanedActivePool = storedState.activePool.filter(
+    (item) => filteredIds.has(item.id) && item.lastSelectedRound !== initialRound,
   );
 
   // 清理已掌握列表中不在当前筛选范围内的（保留，但不计入统计）

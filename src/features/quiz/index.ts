@@ -19,3 +19,4 @@ export {
   selectNextFromPool,
   shuffle,
 } from "./runtime";
+export type { LoadRuntimeStateResult } from "./runtime";

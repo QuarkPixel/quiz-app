@@ -44,7 +44,24 @@
     const filterOptions = buildFilterOptions(questions);
 
     function createInitialState(): RuntimeState {
-        return loadRuntimeState(questions);
+        const result = loadRuntimeState(questions);
+        if (result.kind === "hash_mismatch") {
+            // 延迟提示，等组件挂载后执行
+            setTimeout(() => {
+                if (
+                    confirm(
+                        `检测到题库已更新` +
+                            `
+
+存档数据可能不兼容，是否清空所有进度重新开始？`,
+                    )
+                ) {
+                    appState = createResetRuntimeState(questions);
+                    initialize();
+                }
+            }, 0);
+        }
+        return result.state;
     }
 
     // 应用状态
@@ -220,8 +237,15 @@
     // 导入进度（由 Settings 组件回调）
     function handleImport(newState: import("./types").StoredState): void {
         // 将 StoredState 转为 RuntimeState 再重建（pendingIds 由 rebuildRuntimeState 计算）
-        const stateWithPending: import("./types").RuntimeState = { ...newState, pendingIds: [] };
-        appState = rebuildRuntimeState(questions, stateWithPending, newState.filterType);
+        const stateWithPending: import("./types").RuntimeState = {
+            ...newState,
+            pendingIds: [],
+        };
+        appState = rebuildRuntimeState(
+            questions,
+            stateWithPending,
+            newState.filterType,
+        );
         saveState(appState);
         selectNextQuestion();
     }
@@ -271,13 +295,6 @@
     );
     let requiredStreak = $derived(
         currentPoolItem ? getRequiredStreak(currentPoolItem, appState) : 1,
-    );
-    let canSubmitCurrent = $derived(
-        canSubmitCurrentAnswer(
-            currentQuestion,
-            selectedAnswers,
-            blankAnswerInput,
-        ),
     );
     let masteredWidth = $derived(
         stats.total > 0 ? (stats.mastered / stats.total) * 100 : 0,
@@ -447,19 +464,11 @@
 
             <div class="actions">
                 {#if !showResult && currentQuestion.type === "multiple"}
-                    <button
-                        class="btn-primary"
-                        onclick={submitAnswer}
-                        disabled={!canSubmitCurrent}
-                    >
+                    <button class="btn-primary" onclick={submitAnswer}>
                         提交答案
                     </button>
                 {:else if !showResult && currentQuestion.type === "blank"}
-                    <button
-                        class="btn-primary"
-                        onclick={submitAnswer}
-                        disabled={!canSubmitCurrent}
-                    >
+                    <button class="btn-primary" onclick={submitAnswer}>
                         提交答案
                     </button>
                 {:else if showResult}
@@ -483,6 +492,9 @@
                 当前筛选条件下没有题目
             {:else if stats.mastered === stats.total}
                 恭喜！所有题目已掌握！
+                <button class="btn-restart" onclick={handleReset}>
+                    重新开始
+                </button>
             {:else}
                 正在加载...
             {/if}
@@ -532,8 +544,9 @@
 <!-- 答案预览面板 -->
 {#if showReview}
     <ReviewView
-        questions={questions}
+        {questions}
         filterType={appState.filterType}
+        masteredIds={appState.masteredIds}
         onClose={() => (showReview = false)}
     />
 {/if}

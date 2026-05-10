@@ -17,10 +17,9 @@
     let showMenu = $state(false);
 
     // 导入/导出状态
-    let importText = $state("");
     let importError = $state("");
-    let exportStatus = $state<"idle" | "copied" | "fallback">("idle");
-    let exportFallbackText = $state("");
+    let exportStatus = $state<"idle" | "copied" | "error">("idle");
+    let exportErrorMsg = $state("");
 
     // 更新设置并保存
     function updateSettings() {
@@ -35,32 +34,40 @@
         }
     }
 
-    // 导出进度
+    // 导出进度（写入剪贴板）
     async function handleExport() {
-        const encoded = await exportProgress(appState);
         try {
+            const encoded = await exportProgress(appState);
             await navigator.clipboard.writeText(encoded);
             exportStatus = "copied";
             setTimeout(() => (exportStatus = "idle"), 2000);
-        } catch {
-            // 剪贴板不可用时降级为 prompt
-            exportFallbackText = encoded;
-            exportStatus = "fallback";
+        } catch (e) {
+            exportErrorMsg = e instanceof Error ? e.message : "导出失败";
+            exportStatus = "error";
+            setTimeout(() => (exportStatus = "idle"), 3000);
         }
     }
 
-    // 导入进度
+    // 导入进度（从剪贴板读取）
     async function handleImport() {
-        if (!importText.trim()) {
-            importError = "请先粘贴导出的进度字符串。";
+        let text: string;
+        try {
+            text = await navigator.clipboard.readText();
+        } catch {
+            importError = "无法访问剪贴板，请检查浏览器权限。";
             return;
         }
+
+        if (!text.trim()) {
+            importError = "剪贴板为空，请先复制导出的进度字符串。";
+            return;
+        }
+
         if (!confirm("导入进度将覆盖当前所有进度，确定继续吗？")) return;
 
         try {
-            const state = await importProgress(importText.trim());
+            const state = await importProgress(text.trim());
             onImport(state);
-            importText = "";
             importError = "";
         } catch (e) {
             importError = e instanceof Error ? e.message : "未知错误";
@@ -134,39 +141,25 @@
             <div class="settings-section">
                 <h3>进度备份</h3>
 
-                <!-- 导出 -->
-                <button
-                    class="btn-export"
-                    class:btn-export--success={exportStatus === "copied"}
-                    onclick={handleExport}
-                    disabled={exportStatus === "copied"}
-                >
-                    {exportStatus === "copied" ? "已复制到剪贴板 ✓" : "导出进度"}
-                </button>
-
-                {#if exportStatus === "fallback"}
-                    <div class="export-fallback">
-                        <p class="export-fallback-hint">无法访问剪贴板，请手动复制：</p>
-                        <textarea
-                            class="export-fallback-text"
-                            readonly
-                            rows="3"
-                            value={exportFallbackText}
-                            onclick={(e) => (e.target as HTMLTextAreaElement).select()}
-                        ></textarea>
-                    </div>
-                {/if}
-
-                <!-- 导入 -->
-                <div class="import-area">
-                    <textarea
-                        class="import-input"
-                        placeholder="粘贴进度字符串…"
-                        rows="3"
-                        bind:value={importText}
-                        oninput={() => (importError = "")}
-                    ></textarea>
-                    <button class="btn-import" onclick={handleImport}>
+                <!-- 导出 / 导入 一行 -->
+                <div class="backup-row">
+                    <button
+                        class="btn-backup"
+                        class:btn-backup--success={exportStatus === "copied"}
+                        class:btn-backup--error={exportStatus === "error"}
+                        onclick={handleExport}
+                        disabled={exportStatus !== "idle"}
+                        title={exportStatus === "error" ? exportErrorMsg : "将进度复制到剪贴板"}
+                    >
+                        {#if exportStatus === "copied"}已复制 ✓
+                        {:else if exportStatus === "error"}导出失败
+                        {:else}导出进度{/if}
+                    </button>
+                    <button
+                        class="btn-backup btn-backup--import"
+                        onclick={handleImport}
+                        title="从剪贴板读取并导入进度"
+                    >
                         导入进度
                     </button>
                 </div>
@@ -328,121 +321,64 @@
         color: white;
     }
 
-    /* ── 导出 ── */
-    .btn-export {
-        width: 100%;
-        padding: 10px 16px;
-        background: #007bff;
-        color: white;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.2s;
-        margin-bottom: 10px;
-    }
-
-    .btn-export:hover:not(:disabled) {
-        background: #0056b3;
-    }
-
-    .btn-export--success {
-        background: #28a745 !important;
-        cursor: default;
-    }
-
-    .btn-export:disabled {
-        opacity: 0.85;
-    }
-
-    .export-fallback {
-        margin-bottom: 10px;
-    }
-
-    .export-fallback-hint {
-        margin: 0 0 6px 0;
-        font-size: 12px;
-        color: #888;
-    }
-
-    .export-fallback-text {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 6px 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 11px;
-        font-family: monospace;
-        resize: none;
-        background: #f8f9fa;
-        color: #333;
-        word-break: break-all;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .export-fallback-text {
-            background: #2a2a2a;
-            border-color: #555;
-            color: #e0e0e0;
-        }
-    }
-
-    /* ── 导入 ── */
-    .import-area {
+    /* ── 导出 / 导入 ── */
+    .backup-row {
         display: flex;
-        flex-direction: column;
         gap: 8px;
     }
 
-    .import-input {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 12px;
-        font-family: monospace;
-        resize: none;
-        background: white;
-        color: #333;
-        word-break: break-all;
-        transition: border-color 0.2s;
+    .btn-backup {
+        flex: 1;
+        padding: 9px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 0.2s;
+        /* 默认：导出样式（实心蓝） */
+        background: #007bff;
+        color: white;
+        border: none;
     }
 
-    .import-input:focus {
-        outline: none;
-        border-color: #007bff;
+    .btn-backup:hover:not(:disabled) {
+        background: #0056b3;
     }
 
-    @media (prefers-color-scheme: dark) {
-        .import-input {
-            background: #2a2a2a;
-            border-color: #555;
-            color: #e0e0e0;
-        }
-
-        .import-input:focus {
-            border-color: #4da6ff;
-        }
+    .btn-backup:disabled {
+        opacity: 0.8;
+        cursor: default;
     }
 
-    .btn-import {
-        width: 100%;
-        padding: 10px 16px;
+    .btn-backup--success {
+        background: #28a745 !important;
+    }
+
+    .btn-backup--error {
+        background: #dc3545 !important;
+    }
+
+    /* 导入按钮：空心蓝 */
+    .btn-backup--import {
         background: transparent;
         color: #007bff;
         border: 1px solid #007bff;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.2s;
     }
 
-    .btn-import:hover {
+    .btn-backup--import:hover {
         background: #007bff;
         color: white;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .btn-backup--import {
+            color: #4da6ff;
+            border-color: #4da6ff;
+        }
+        .btn-backup--import:hover {
+            background: #4da6ff;
+            color: #111;
+        }
     }
 
     .import-error {

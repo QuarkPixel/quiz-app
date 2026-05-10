@@ -27,6 +27,9 @@ npm run build
 
 # 预览生产版本
 npm run preview
+
+# 运行测试
+npm test
 ```
 
 ## 导入自定义题库
@@ -117,52 +120,54 @@ npm run preview
 | `question` | string | 中文提示（展示给用户） |
 | `answer` | string | 英文答案（用于比对） |
 
-判题规则（宽松）：
+填空题答案支持以下语法，系统会自动宽松匹配：
 
-1. 先对输入使用 `.trim()` 去除首尾空格
-2. 忽略所有符号（标点、空格等）
-3. 仅比较 26 个英文字母（不区分大小写）
+| 语法 | 含义 | 示例 |
+|------|------|------|
+| `(xxx)` | 括号内容可选 | `on (an) average` → 写不写 `an` 都算对 |
+| `A/B` | 斜杠两侧任选其一 | `fall ill/sick` → `fall ill` 或 `fall sick` 均可 |
+| `(A/B)` | 括号内词级替换 | `(be/get) used to` → `be used to` 或 `get used to` |
+| 全角符号 | 自动转半角 | `（an）`、`／` 与半角等价 |
+
+匹配时忽略大小写、空格和标点，只比较英文字母。斜杠分支支持共享前缀/后缀，例如 `draw/reach/come to a conclusion`，输入 `draw a conclusion` 也会被判为正确（宽松原则：存在合理解读即算对）。
 
 ### 完整示例
 
+完整示例见 [`assets/questions.example.json`](assets/questions.example.json)，内容如下：
+
 ```json
 [
-  {
-    "id": "judgment_1",
-    "type": "judgment",
-    "question": "地球是太阳系中最大的行星。",
-    "answer": false
-  },
+  { "id": "judgment_1", "type": "judgment", "question": "地球是太阳系中最大的行星。", "answer": false },
+  { "id": "judgment_2", "type": "judgment", "question": "水的化学式是 H2O。", "answer": true },
   {
     "id": "single_1",
     "type": "single",
     "question": "以下哪个是 JavaScript 的包管理器？",
-    "options": [
-      { "text": "pip" },
-      { "text": "npm" },
-      { "text": "cargo" },
-      { "text": "gem" }
-    ],
+    "options": [ { "text": "pip" }, { "text": "npm" }, { "text": "cargo" }, { "text": "gem" } ],
     "answer": [1]
+  },
+  {
+    "id": "single_2",
+    "type": "single",
+    "question": "光在真空中的传播速度约为多少？",
+    "options": [ { "text": "3×10⁶ m/s" }, { "text": "3×10⁷ m/s" }, { "text": "3×10⁸ m/s" }, { "text": "3×10⁹ m/s" } ],
+    "answer": [2]
   },
   {
     "id": "multiple_1",
     "type": "multiple",
-    "question": "以下哪些是前端框架？",
-    "options": [
-      { "text": "React" },
-      { "text": "Django" },
-      { "text": "Vue" },
-      { "text": "Flask" }
-    ],
+    "question": "以下哪些是前端框架/库？",
+    "options": [ { "text": "React" }, { "text": "Django" }, { "text": "Vue" }, { "text": "Flask" } ],
     "answer": [0, 2]
   },
   {
-    "id": "blank_1",
-    "type": "blank",
-    "question": "照顾",
-    "answer": "take care of"
-  }
+    "id": "multiple_2",
+    "type": "multiple",
+    "question": "以下哪些元素属于惰性气体？",
+    "options": [ { "text": "氦 (He)" }, { "text": "氧 (O)" }, { "text": "氖 (Ne)" }, { "text": "氮 (N)" } ],
+    "answer": [0, 2]
+  },
+  { "id": "blank_1", "type": "blank", "question": "取得进步", "answer": "make progress" }
 ]
 ```
 

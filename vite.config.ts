@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { viteSingleFile } from "vite-plugin-singlefile";
 import { createHash } from "node:crypto";
@@ -9,19 +9,21 @@ import { fileURLToPath } from "node:url";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 // 在编译期计算题库哈希，取 SHA-1 前 8 字节（16 位 hex）
-const questionsJson = readFileSync(
-  resolve(__dirname, "assets/questions.json"),
-  "utf-8",
-);
-const questionsHash = createHash("sha1")
-  .update(questionsJson)
-  .digest("hex")
-  .slice(0, 16);
+const isTest = process.env.NODE_ENV === "test";
+const questionsHash = isTest
+  ? "test"
+  : createHash("sha1")
+      .update(readFileSync(resolve(__dirname, "assets/questions.json"), "utf-8"))
+      .digest("hex")
+      .slice(0, 16);
 
 export default defineConfig({
   plugins: [svelte(), viteSingleFile({ useRecommendedBuildConfig: false })],
   define: {
     __QUESTIONS_HASH__: JSON.stringify(questionsHash),
+  },
+  test: {
+    include: ["tests/**/*.test.ts"],
   },
   build: {
     target: "esnext",
