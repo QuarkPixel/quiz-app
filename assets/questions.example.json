@@ -64,5 +64,29 @@
     "type": "blank",
     "question": "取得进步",
     "answer": "make progress"
+  },
+  {
+    "id": "blank_2",
+    "type": "blank",
+    "question": "平均而言（括号内容可选：写不写 an 都算对）",
+    "answer": "on (an) average"
+  },
+  {
+    "id": "blank_3",
+    "type": "blank",
+    "question": "生病（斜杠分支：ill 或 sick 均可）",
+    "answer": "fall ill/sick"
+  },
+  {
+    "id": "blank_4",
+    "type": "blank",
+    "question": "得出结论（多动词可选）",
+    "answer": "draw/reach/come to a conclusion"
+  },
+  {
+    "id": "blank_5",
+    "type": "blank",
+    "question": "习惯于……（括号内词级替换：be 或 get 均可，used to 可省略 be/get）",
+    "answer": "(be/get) used to"
   }
 ]

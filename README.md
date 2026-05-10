@@ -164,7 +164,11 @@ npm run preview
     "options": [ { "text": "氦 (He)" }, { "text": "氧 (O)" }, { "text": "氖 (Ne)" }, { "text": "氮 (N)" } ],
     "answer": [0, 2]
   },
-  { "id": "blank_1", "type": "blank", "question": "取得进步", "answer": "make progress" }
+  { "id": "blank_1", "type": "blank", "question": "取得进步", "answer": "make progress" },
+  { "id": "blank_2", "type": "blank", "question": "平均而言（括号内容可选）", "answer": "on (an) average" },
+  { "id": "blank_3", "type": "blank", "question": "生病（斜杠分支）", "answer": "fall ill/sick" },
+  { "id": "blank_4", "type": "blank", "question": "得出结论（多动词可选）", "answer": "draw/reach/come to a conclusion" },
+  { "id": "blank_5", "type": "blank", "question": "习惯于……（括号内词级替换）", "answer": "(be/get) used to" }
 ]
 ```
 
