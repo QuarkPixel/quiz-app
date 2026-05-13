@@ -114,8 +114,8 @@ npm run preview
 |------|------|------|
 | `id` | string | 题目唯一标识，建议格式：`blank_序号` |
 | `type` | string | 固定为 `"blank"` |
-| `question` | string | 中文提示（展示给用户） |
-| `answer` | string | 英文答案（用于比对） |
+| `question` | string | 提示内容（展示给用户） |
+| `answer` | string \| string[] | 答案。为 `string` 时展示单个输入框；为 `string[]` 时按元素数量展示多个输入框，每空逐一匹配对应答案 |
 
 填空题答案支持以下语法，系统会自动宽松匹配：
 
@@ -126,8 +126,9 @@ npm run preview
 | `(A/B)` | 括号内词级替换 | `(be/get) used to` → `be used to` 或 `get used to` |
 | 全角符号 | 自动转半角 | `（an）`、`／` 与半角等价 |
 
-匹配时忽略大小写、空格和标点，只比较英文字母。斜杠分支支持共享前缀/后缀，例如 `draw/reach/come to a conclusion`，输入 `draw conclusion` 也会被判为正确（宽松原则：存在合理解读即算对）。
+匹配时忽略大小写、空格和标点，保留字母、数字和中文进行比对。斜杠分支支持共享前缀/后缀，例如 `draw/reach/come to a conclusion`，输入 `draw conclusion` 也会被判为正确。
 
+常见占位词（用户可不输入）：`sb`、`sth`、`sb's`、`one's`、`oneself`、`doing`、`to do`。
 ### 完整示例
 
 完整示例见 [`assets/questions.example.json`](assets/questions.example.json)，内容如下：
@@ -168,7 +169,8 @@ npm run preview
   { "id": "blank_2", "type": "blank", "question": "平均而言（括号内容可选）", "answer": "on (an) average" },
   { "id": "blank_3", "type": "blank", "question": "生病（斜杠分支）", "answer": "fall ill/sick" },
   { "id": "blank_4", "type": "blank", "question": "得出结论（多动词可选）", "answer": "draw/reach/come to a conclusion" },
-  { "id": "blank_5", "type": "blank", "question": "习惯于……（括号内词级替换）", "answer": "(be/get) used to" }
+  { "id": "blank_5", "type": "blank", "question": "习惯于……（括号内词级替换）", "answer": "(be/get) used to" },
+  { "id": "blank_6", "type": "blank", "question": "3 × 3 = ___，4 × 4 = ___（数字填空，两空）", "answer": ["9", "16"] }
 ]
 ```
 

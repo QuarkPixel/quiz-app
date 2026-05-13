@@ -136,7 +136,7 @@ function expandParens(s: string): string[] {
 export function canSubmitCurrentAnswer(
   question: Question | null,
   _selectedAnswers: number[],
-  _blankAnswerInput: string,
+  _blankAnswerInputs: string[],
 ): boolean {
   return question !== null;
 }
@@ -144,11 +144,14 @@ export function canSubmitCurrentAnswer(
 export function evaluateAnswer(
   question: Question,
   selectedAnswers: number[],
-  blankAnswerInput: string,
+  blankAnswerInputs: string[],
 ): boolean {
   if (question.type === "blank") {
-    if (blankAnswerInput.trim().length === 0) return false;
-    return matchAnswer(question.answer as string, blankAnswerInput);
+    const answers = Array.isArray(question.answer)
+      ? (question.answer as string[])
+      : [question.answer as string];
+    if (blankAnswerInputs.some((s) => s.trim().length === 0)) return false;
+    return answers.every((ans, i) => matchAnswer(ans, blankAnswerInputs[i] ?? ""));
   }
 
   if (question.type === "judgment") {

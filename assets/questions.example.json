@@ -88,5 +88,11 @@
     "type": "blank",
     "question": "习惯于……（括号内词级替换：be 或 get 均可，used to 可省略 be/get）",
     "answer": "(be/get) used to"
+  },
+  {
+    "id": "blank_6",
+    "type": "blank",
+    "question": "3 × 3 = ___，4 × 4 = ___（数字填空，两空）",
+    "answer": ["9", "16"]
   }
 ]

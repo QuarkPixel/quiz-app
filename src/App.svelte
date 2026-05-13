@@ -71,18 +71,18 @@
     let currentQuestion = $state<Question | null>(null);
     let shuffledOptions = $state<(Option & { originalIndex: number })[]>([]);
     let selectedAnswers = $state<number[]>([]);
-    let blankAnswerInput = $state("");
+    let blankAnswerInputs = $state<string[]>([]);
     let showResult = $state(false);
     let isCorrect = $state(false);
     let flashContainer: FlashContainer;
-    let blankInputElement = $state<HTMLInputElement | null>(null);
+    let blankInputElements = $state<(HTMLInputElement | null)[]>([]);
     let showReview = $state(false);
 
     function focusBlankInputIfNeeded(): void {
         if (currentQuestion?.type !== "blank") return;
 
         void tick().then(() => {
-            blankInputElement?.focus();
+            blankInputElements[0]?.focus();
         });
     }
 
@@ -114,7 +114,9 @@
         }
 
         selectedAnswers = [];
-        blankAnswerInput = "";
+        const answerCount = Array.isArray(currentQuestion?.answer) ? (currentQuestion.answer as string[]).length : 1;
+        blankAnswerInputs = Array(answerCount).fill("");
+        blankInputElements = Array(answerCount).fill(null);
         showResult = false;
         isCorrect = false;
         focusBlankInputIfNeeded();
@@ -148,7 +150,7 @@
             !canSubmitCurrentAnswer(
                 currentQuestion,
                 selectedAnswers,
-                blankAnswerInput,
+                blankAnswerInputs,
             )
         ) {
             return;
@@ -157,7 +159,7 @@
         const nextIsCorrect = evaluateAnswer(
             currentQuestion,
             selectedAnswers,
-            blankAnswerInput,
+            blankAnswerInputs,
         );
 
         showResult = true;
@@ -381,17 +383,20 @@
                     </button>
                 {:else if currentQuestion.type === "blank"}
                     <div class="blank-answer">
-                        <input
-                            class="blank-input"
-                            type="text"
-                            bind:value={blankAnswerInput}
-                            bind:this={blankInputElement}
-                            placeholder="根据中文默写英文词组"
-                            autocomplete="off"
-                            autocapitalize="off"
-                            spellcheck="false"
-                            disabled={showResult}
-                        />
+                        {#each (Array.isArray(currentQuestion.answer) ? currentQuestion.answer : [currentQuestion.answer]) as _ans, i}
+                            <input
+                                class="blank-input"
+                                type="text"
+                                value={blankAnswerInputs[i] ?? ""}
+                                oninput={(e) => { blankAnswerInputs[i] = (e.target as HTMLInputElement).value; }}
+                                bind:this={blankInputElements[i]}
+                                placeholder={Array.isArray(currentQuestion.answer) ? `第 ${i + 1} 空` : "根据提示默写答案"}
+                                autocomplete="off"
+                                autocapitalize="off"
+                                spellcheck="false"
+                                disabled={showResult}
+                            />
+                        {/each}
                     </div>
                 {:else}
                     {#each shuffledOptions as opt, idx}
@@ -432,14 +437,14 @@
                             已掌握！
                             {#if currentQuestion.type === "blank"}
                                 <div class="correct-answer">
-                                    {currentQuestion.answer}
+                                    {Array.isArray(currentQuestion.answer) ? (currentQuestion.answer as string[]).join(' | ') : currentQuestion.answer as string}
                                 </div>
                             {/if}
                         {:else}
                             回答正确
                             {#if currentQuestion.type === "blank"}
                                 <div class="correct-answer">
-                                    {currentQuestion.answer}
+                                    {Array.isArray(currentQuestion.answer) ? (currentQuestion.answer as string[]).join(' | ') : currentQuestion.answer as string}
                                 </div>
                             {/if}
                         {/if}
@@ -447,7 +452,7 @@
                         回答错误
                         {#if currentQuestion.type === "blank"}
                             <div class="correct-answer">
-                                正确答案: {currentQuestion.answer as string}
+                                正确答案: {Array.isArray(currentQuestion.answer) ? (currentQuestion.answer as string[]).join(' | ') : currentQuestion.answer as string}
                             </div>
                         {:else if currentQuestion.type !== "judgment"}
                             <div class="correct-answer">

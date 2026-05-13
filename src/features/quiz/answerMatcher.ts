@@ -33,10 +33,37 @@ function normalizeSymbols(s: string): string {
     .replace(/／/g, "/");
 }
 
-/** 把字符串压缩成纯小写字母序列，用于逐字符匹配 */
+/** 把字符串压缩成纯小写字母/数字/中文序列，用于逐字符匹配 */
 function toLetters(s: string): string {
-  return normalizeSymbols(s).toLowerCase().replace(/[^a-z]/g, "");
+  return normalizeSymbols(s).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
 }
+
+// ---------------------------------------------------------------------------
+// 占位词
+// ---------------------------------------------------------------------------
+
+/**
+ * 英语习题中常见的占位词（规范化为纯字母序列）。
+ * 这些词用户不输入也算正确（视为可选 Group 节点）。
+ *
+ * 原始形式 → 规范化：
+ *   sb       → sb
+ *   sth      → sth
+ *   sb's     → sbs
+ *   one's / ones → ones
+ *   oneself  → oneself
+ *   doing    → doing
+ *   to do    → todo
+ */
+export const PLACEHOLDER_WORDS: readonly string[] = [
+  "sb",
+  "sth",
+  "sbs",      // sb's
+  "ones",     // one's / ones
+  "oneself",
+  "doing",
+  "todo",     // to do（连在一起的字母序列）
+];
 
 // ---------------------------------------------------------------------------
 // AST 节点类型
@@ -137,8 +164,8 @@ function parseAnswer(raw: string): AnswerPattern {
         break;
       }
     }
-    // sb 和 sth 是占位词，视为可选
-    if (letters === "sb" || letters === "sth") {
+    // 占位词视为可选
+    if (PLACEHOLDER_WORDS.includes(letters)) {
       const literal: Literal = { kind: "literal", letters };
       return { kind: "group", branches: [[literal]], optional: true };
     }

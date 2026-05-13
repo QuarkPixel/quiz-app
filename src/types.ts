@@ -16,7 +16,7 @@ export interface Question {
   type: QuestionType;
   question: string;
   options?: Option[];
-  answer: boolean | number[] | string;
+  answer: boolean | number[] | string | string[];
 }
 
 /** 活动池中的题目 */
