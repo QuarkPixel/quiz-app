@@ -115,6 +115,23 @@ describe("多词前缀共享（外层斜杠跨词传递）", () => {
   });
 });
 
+describe("sth / sb 占位词自动可选", () => {
+  it("remind sb of sth", () => {
+    expect(matchAnswer("remind sb of sth", "remind sb of sth")).toBe(true);
+    expect(matchAnswer("remind sb of sth", "remind of")).toBe(true);
+    expect(matchAnswer("remind sb of sth", "remind of sth")).toBe(true);
+    expect(matchAnswer("remind sb of sth", "remind sb of")).toBe(true);
+  });
+  it("ask sb to do sth", () => {
+    expect(matchAnswer("ask sb to do sth", "ask to do")).toBe(true);
+    expect(matchAnswer("ask sb to do sth", "ask sb to do")).toBe(true);
+  });
+  it("make progress 不含 sb/sth，不受影响", () => {
+    expect(matchAnswer("make progress", "make progress")).toBe(true);
+    expect(matchAnswer("make progress", "make")).toBe(false);
+  });
+});
+
 describe("边界情况", () => {
   it("空输入返回 false", () => {
     expect(matchAnswer("something", "")).toBe(false);

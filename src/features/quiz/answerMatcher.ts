@@ -120,8 +120,9 @@ function parseAnswer(raw: string): AnswerPattern {
     return { kind: "group", branches, optional: true };
   }
 
-  /** 解析一个连续的字母词（遇到非字母、括号、斜杠停止） */
-  function parseWord(insideGroup: boolean): Literal {
+  /** 解析一个连续的字母词（遇到非字母、括号、斜杠停止）。
+   * sb 和 sth 被解析为可选的 Group 节点，用户可以不输入它们。 */
+  function parseWord(insideGroup: boolean): Literal | Group {
     let letters = "";
     while (pos < s.length) {
       const ch = s[pos];
@@ -135,6 +136,11 @@ function parseAnswer(raw: string): AnswerPattern {
         pos++;
         break;
       }
+    }
+    // sb 和 sth 是占位词，视为可选
+    if (letters === "sb" || letters === "sth") {
+      const literal: Literal = { kind: "literal", letters };
+      return { kind: "group", branches: [[literal]], optional: true };
     }
     return { kind: "literal", letters };
   }
