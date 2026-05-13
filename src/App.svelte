@@ -75,14 +75,15 @@
     let showResult = $state(false);
     let isCorrect = $state(false);
     let flashContainer: FlashContainer;
-    let blankInputElements = $state<(HTMLInputElement | null)[]>([]);
+
     let showReview = $state(false);
 
     function focusBlankInputIfNeeded(): void {
         if (currentQuestion?.type !== "blank") return;
 
         void tick().then(() => {
-            blankInputElements[0]?.focus();
+            const el = document.querySelector<HTMLInputElement>(".blank-input:not(:disabled)");
+            el?.focus();
         });
     }
 
@@ -116,7 +117,7 @@
         selectedAnswers = [];
         const answerCount = Array.isArray(currentQuestion?.answer) ? (currentQuestion.answer as string[]).length : 1;
         blankAnswerInputs = Array(answerCount).fill("");
-        blankInputElements = Array(answerCount).fill(null);
+
         showResult = false;
         isCorrect = false;
         focusBlankInputIfNeeded();
@@ -389,7 +390,7 @@
                                 type="text"
                                 value={blankAnswerInputs[i] ?? ""}
                                 oninput={(e) => { blankAnswerInputs[i] = (e.target as HTMLInputElement).value; }}
-                                bind:this={blankInputElements[i]}
+
                                 placeholder={Array.isArray(currentQuestion.answer) ? `第 ${i + 1} 空` : "根据提示默写答案"}
                                 autocomplete="off"
                                 autocapitalize="off"
