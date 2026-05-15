@@ -11,6 +11,9 @@
  *
  *   - id 编码：'single_3' → 's3', 'multiple_12' → 'm12',
  *              'judgment_5' → 'j5', 'blank_2' → 'b2'
+ *   - 若 id 不符合上述规则（自定义 id），编码时在前面加 '^' 前缀原样存储，
+ *     例如 'hardest' → '^hardest'，'b11' → '^b11'（避免与 'blank_11' 编码后的 'b11' 混淆）
+ *   - '^' 是保留字符，题目 id 不可以以 '^' 开头
  *   - activePool 每项：[encodedId, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound]
  *   - filterTypeCode：all=0, single=1, multiple=2, judgment=3, blank=4
  *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake]
@@ -37,20 +40,46 @@ const PREFIX_TO_TYPE: Record<string, QuestionType> = {
   b: "blank",
 };
 
+/**
+ * 编码规则：
+ *   - 已知类型（single/multiple/judgment/blank）且数字部分为纯数字：压缩为单字母前缀
+ *     e.g. 'single_3' → 's3'
+ *   - 其他所有情况（自定义 id、未知类型等）：原样存储并加 '^' 前缀
+ *     e.g. 'hardest' → '^hardest'，'b11' → '^b11'
+ */
 function encodeId(id: string): string {
   const underscore = id.indexOf("_");
-  if (underscore === -1) return id;
-  const type = id.slice(0, underscore);
-  const num = id.slice(underscore + 1);
-  const prefix = TYPE_TO_PREFIX[type];
-  return prefix !== undefined ? prefix + num : id;
+  if (underscore !== -1) {
+    const type = id.slice(0, underscore);
+    const num = id.slice(underscore + 1);
+    const prefix = TYPE_TO_PREFIX[type];
+    // 只有已知类型且数字部分为纯数字时才压缩，避免解码歧义
+    if (prefix !== undefined && /^\d+$/.test(num)) {
+      return prefix + num;
+    }
+  }
+  // 其余情况：原样保留，加 '^' 标记
+  return "^" + id;
 }
 
+/**
+ * 解码规则：
+ *   - '^' 开头：去掉前缀，原样还原
+ *   - 已知单字母前缀 + 纯数字：还原为 type_num 格式
+ *   - 其他（理论上不会出现）：原样返回
+ */
 function decodeId(encoded: string): string {
+  if (encoded[0] === "^") {
+    return encoded.slice(1);
+  }
   const prefix = encoded[0];
+  const rest = encoded.slice(1);
   const type = PREFIX_TO_TYPE[prefix];
-  if (type === undefined) return encoded;
-  return type + "_" + encoded.slice(1);
+  if (type !== undefined && /^\d+$/.test(rest)) {
+    return type + "_" + rest;
+  }
+  // 兜底：原样返回（不应走到这里）
+  return encoded;
 }
 
 // ── filterType 编解码 ──────────────────────────────────────────────────────────
