@@ -230,10 +230,7 @@
         event.preventDefault();
         if (showResult) {
             selectNextQuestion();
-        } else if (
-            currentQuestion?.type === "multiple" ||
-            currentQuestion?.type === "blank"
-        ) {
+        } else {
             submitAnswer();
         }
     }
@@ -347,6 +344,11 @@
     let pendingWidth = $derived(
         stats.total > 0 ? (stats.pending / stats.total) * 100 : 0,
     );
+    let allMastered = $derived.by(() => {
+        if (questions.length === 0) return false;
+        const masteredSet = new Set(appState.masteredIds);
+        return questions.every((q) => masteredSet.has(q.id));
+    });
 
     let masteredDisplayWidth = $derived(
         progressFocused
@@ -398,9 +400,7 @@
                         stroke={1.75}
                         class="text-muted-foreground"
                     />
-                    <span
-                        class="text-muted-foreground text-xs font-mono"
-                    >
+                    <span class="text-muted-foreground text-xs font-mono">
                         {currentQuestion.id}
                     </span>
 
@@ -412,8 +412,7 @@
                                 <span
                                     class={cn(
                                         "block size-1.5 rounded-full transition-colors",
-                                        i <
-                                            currentPoolItem.consecutiveCorrect
+                                        i < currentPoolItem.consecutiveCorrect
                                             ? currentPoolItem.hasEverMistaken
                                                 ? "bg-warning"
                                                 : "bg-success"
@@ -517,8 +516,7 @@
                                     isWrong &&
                                         "border-destructive bg-destructive/8",
                                 )}
-                                onclick={() =>
-                                    toggleAnswer(opt.originalIndex)}
+                                onclick={() => toggleAnswer(opt.originalIndex)}
                                 disabled={showResult}
                             >
                                 <span
@@ -561,9 +559,7 @@
                         >
                             <span class="text-base font-semibold">
                                 {#if isCorrect}
-                                    {currentPoolItem
-                                        ? "回答正确"
-                                        : "已掌握"}
+                                    {currentPoolItem ? "回答正确" : "已掌握"}
                                 {:else}
                                     回答错误
                                 {/if}
@@ -591,33 +587,29 @@
                 </div>
 
                 <div class="flex h-9 items-center justify-end gap-2 pt-2">
-                    {#if !showResult && (currentQuestion.type === "multiple" || currentQuestion.type === "blank")}
-                        <Button
-                            size="lg"
-                            class="px-8"
-                            onclick={submitAnswer}
-                        >
+                    <Button
+                        variant="outline"
+                        size="icon-lg"
+                        onclick={handleMasteredClick}
+                        disabled={!currentPoolItem}
+                        title={masteredConfirming
+                            ? "再次点击以确认"
+                            : "标记为已掌握"}
+                        aria-label={masteredConfirming
+                            ? "再次点击以确认"
+                            : "标记为已掌握"}
+                        class={cn(
+                            masteredConfirming &&
+                                "border-success text-success ring-success/30 ring-2",
+                        )}
+                    >
+                        <IconCircleCheck stroke={1.75} />
+                    </Button>
+                    {#if !showResult}
+                        <Button size="lg" class="px-8" onclick={submitAnswer}>
                             提交答案
                         </Button>
                     {:else if showResult}
-                        <Button
-                            variant="outline"
-                            size="icon-lg"
-                            onclick={handleMasteredClick}
-                            disabled={!currentPoolItem}
-                            title={masteredConfirming
-                                ? "再次点击以确认"
-                                : "标记为已掌握"}
-                            aria-label={masteredConfirming
-                                ? "再次点击以确认"
-                                : "标记为已掌握"}
-                            class={cn(
-                                masteredConfirming &&
-                                    "border-success text-success ring-success/30 ring-2",
-                            )}
-                        >
-                            <IconCircleCheck stroke={1.75} />
-                        </Button>
                         <Button
                             size="lg"
                             class="px-8"
@@ -632,15 +624,26 @@
                     class="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-4 text-center"
                 >
                     {#if stats.total === 0}
-                        <span class="text-base">当前筛选条件下没有题目</span
-                        >
+                        <span class="text-base">当前筛选条件下没有题目</span>
                     {:else if stats.mastered === stats.total}
-                        <span class="text-foreground text-lg font-medium">
-                            恭喜！所有题目已掌握
-                        </span>
-                        <Button variant="outline" onclick={handleReset}>
-                            重新开始
-                        </Button>
+                        {#if allMastered}
+                            <span class="text-foreground text-lg font-medium">
+                                恭喜！所有题目已掌握
+                            </span>
+                            <Button variant="outline" onclick={handleReset}>
+                                重新开始
+                            </Button>
+                        {:else}
+                            <span class="text-foreground text-lg font-medium">
+                                当前题型筛选下所有题目已掌握
+                            </span>
+                            <Button
+                                variant="outline"
+                                onclick={() => setFilterType("all")}
+                            >
+                                切换到全部题型
+                            </Button>
+                        {/if}
                     {:else}
                         <span class="text-sm">正在加载...</span>
                     {/if}
@@ -671,7 +674,7 @@
             <div
                 class={cn(
                     "progress-bar flex h-[3px] gap-1 transition-all duration-300",
-                    "[&_*]:transition-all [&_*]:duration-700 [&_*]:ease-[cubic-bezier(0.32,1.3,0.41,1)]",
+                    "[&_*]:transition-all [&_*]:duration-500 [&_*]:ease-[cubic-bezier(0.32,1.3,0.41,1)]",
                     progressFocused && "h-[7px]",
                 )}
             >

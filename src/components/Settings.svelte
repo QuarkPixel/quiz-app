@@ -123,8 +123,8 @@
 <Dialog.Root bind:open>
     <Dialog.Trigger
         class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[30deg]"
-        aria-label="设置"
-        title="设置"
+        aria-label="当前题库设置"
+        title="当前题库设置"
     >
         <IconSettings size={22} stroke={1.5} />
     </Dialog.Trigger>
@@ -132,7 +132,7 @@
         class="bg-card flex max-h-[calc(100vh-4rem)] w-[calc(100vw-2rem)] max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
     >
         <Dialog.Header class="border-b px-5 py-3.5">
-            <Dialog.Title class="text-base font-semibold">设置</Dialog.Title>
+            <Dialog.Title class="text-base font-semibold">当前题库设置</Dialog.Title>
         </Dialog.Header>
 
         <div class="flex flex-col gap-4 overflow-y-auto px-5 py-4">
