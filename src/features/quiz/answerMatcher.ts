@@ -22,48 +22,22 @@
  *   "(be/get) used to"    匹配 "be used to" ✓  "get used to" ✓
  */
 
+import { PLACEHOLDER_WORDS } from "../../config";
+
 // ---------------------------------------------------------------------------
 // 规范化
 // ---------------------------------------------------------------------------
 
 function normalizeSymbols(s: string): string {
-  return s
-    .replace(/（/g, "(")
-    .replace(/）/g, ")")
-    .replace(/／/g, "/");
+  return s.replace(/（/g, "(").replace(/）/g, ")").replace(/／/g, "/");
 }
 
 /** 把字符串压缩成纯小写字母/数字/中文序列，用于逐字符匹配 */
 function toLetters(s: string): string {
-  return normalizeSymbols(s).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
+  return normalizeSymbols(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
 }
-
-// ---------------------------------------------------------------------------
-// 占位词
-// ---------------------------------------------------------------------------
-
-/**
- * 英语习题中常见的占位词（规范化为纯字母序列）。
- * 这些词用户不输入也算正确（视为可选 Group 节点）。
- *
- * 原始形式 → 规范化：
- *   sb       → sb
- *   sth      → sth
- *   sb's     → sbs
- *   one's / ones → ones
- *   oneself  → oneself
- *   doing    → doing
- *   to do    → todo
- */
-export const PLACEHOLDER_WORDS: readonly string[] = [
-  "sb",
-  "sth",
-  "sbs",      // sb's
-  "ones",     // one's / ones
-  "oneself",
-  "doing",
-  "todo",     // to do（连在一起的字母序列）
-];
 
 // ---------------------------------------------------------------------------
 // AST 节点类型
@@ -79,7 +53,7 @@ interface Literal {
 interface Group {
   kind: "group";
   branches: Branch[]; // 至少一个分支
-  optional: boolean;  // 括号是否可省略（目前所有括号都视为可选）
+  optional: boolean; // 括号是否可省略（目前所有括号都视为可选）
 }
 
 /** 一个分支由若干 Token 组成 */
@@ -258,11 +232,19 @@ function matchOuterBranches(
     // 取已消耗到的位置：full/exhausted 用 pos，failed 用 consumedPos
     // failed.consumedPos 是失败前最后一个成功匹配的位置，
     // 如果它 > startPos 说明已有部分匹配，可以作为前缀传递
-    const consumedPos = result.kind === "failed" ? result.consumedPos : result.pos;
+    const consumedPos =
+      result.kind === "failed" ? result.consumedPos : result.pos;
     if (consumedPos > startPos && i + 1 < branches.length) {
-      if (continueWithRemainingBranches(
-        branches, i + 1, input, startPos, consumedPos
-      )) return true;
+      if (
+        continueWithRemainingBranches(
+          branches,
+          i + 1,
+          input,
+          startPos,
+          consumedPos,
+        )
+      )
+        return true;
     }
   }
   return false;
@@ -290,11 +272,19 @@ function continueWithRemainingBranches(
     for (let tokenIdx = 0; tokenIdx < branch.length; tokenIdx++) {
       const result = matchBranchPartial(branch, input, consumedPos, tokenIdx);
       if (result.kind === "full" && result.pos === input.length) return true;
-      const nextConsumed = result.kind === "failed" ? result.consumedPos : result.pos;
+      const nextConsumed =
+        result.kind === "failed" ? result.consumedPos : result.pos;
       if (nextConsumed > consumedPos && i + 1 < branches.length) {
-        if (continueWithRemainingBranches(
-          branches, i + 1, input, consumedPos, nextConsumed
-        )) return true;
+        if (
+          continueWithRemainingBranches(
+            branches,
+            i + 1,
+            input,
+            consumedPos,
+            nextConsumed,
+          )
+        )
+          return true;
       }
     }
   }
@@ -302,8 +292,8 @@ function continueWithRemainingBranches(
 }
 
 type PartialResult =
-  | { kind: "full"; pos: number }        // 分支全部匹配，且输入恰好耗尽
-  | { kind: "exhausted"; pos: number }   // 分支全部匹配，但输入还有剩余
+  | { kind: "full"; pos: number } // 分支全部匹配，且输入恰好耗尽
+  | { kind: "exhausted"; pos: number } // 分支全部匹配，但输入还有剩余
   | { kind: "failed"; consumedPos: number }; // 匹配失败，consumedPos 是失败前成功消耗到的位置
 
 function matchBranchPartial(

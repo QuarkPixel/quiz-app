@@ -13,9 +13,11 @@
     import ReviewView from "./components/ReviewView.svelte";
     import Settings from "./components/Settings.svelte";
     import QuestionFilters from "./components/QuestionFilters.svelte";
+
     import {
         buildFilterOptions,
         canSubmitCurrentAnswer,
+        computeLearningSegments,
         createResetRuntimeState,
         evaluateAnswer,
         fillActivePool,
@@ -39,6 +41,7 @@
     import faviconRaw from "../icons/MaterialSymbolsBookmarkCheckRounded.svg?raw";
     // @ts-ignore
     import bookIconRaw from "../icons/MaterialSymbolsBook5Rounded.svg?raw";
+    import { PROGRESS_SIDE_CAP_PERCENT } from "./config";
     const faviconUrl = `data:image/svg+xml,${encodeURIComponent(faviconRaw)}`;
 
     const filterOptions = buildFilterOptions(questions);
@@ -78,11 +81,21 @@
 
     let showReview = $state(false);
 
+    // 进度条聚焦模式：点击放大学习中区段
+    let progressFocused = $state(false);
+
+    function toggleProgressFocus(): void {
+        if (stats.learning === 0) return;
+        progressFocused = !progressFocused;
+    }
+
     function focusBlankInputIfNeeded(): void {
         if (currentQuestion?.type !== "blank") return;
 
         void tick().then(() => {
-            const el = document.querySelector<HTMLInputElement>(".blank-input:not(:disabled)");
+            const el = document.querySelector<HTMLInputElement>(
+                ".blank-input:not(:disabled)",
+            );
             el?.focus();
         });
     }
@@ -115,7 +128,9 @@
         }
 
         selectedAnswers = [];
-        const answerCount = Array.isArray(currentQuestion?.answer) ? (currentQuestion.answer as string[]).length : 1;
+        const answerCount = Array.isArray(currentQuestion?.answer)
+            ? (currentQuestion.answer as string[]).length
+            : 1;
         blankAnswerInputs = Array(answerCount).fill("");
 
         showResult = false;
@@ -305,8 +320,28 @@
     let learningWidth = $derived(
         stats.total > 0 ? (stats.learning / stats.total) * 100 : 0,
     );
+    let learningSegments = $derived(
+        computeLearningSegments(questions, appState),
+    );
     let pendingWidth = $derived(
         stats.total > 0 ? (stats.pending / stats.total) * 100 : 0,
+    );
+
+    // 聚焦时压缩两边、放大中间
+    let masteredDisplayWidth = $derived(
+        progressFocused
+            ? Math.min(masteredWidth, PROGRESS_SIDE_CAP_PERCENT)
+            : masteredWidth,
+    );
+    let pendingDisplayWidth = $derived(
+        progressFocused
+            ? Math.min(pendingWidth, PROGRESS_SIDE_CAP_PERCENT)
+            : pendingWidth,
+    );
+    let learningDisplayWidth = $derived(
+        progressFocused
+            ? Math.max(0, 100 - masteredDisplayWidth - pendingDisplayWidth)
+            : learningWidth,
     );
 </script>
 
@@ -384,14 +419,21 @@
                     </button>
                 {:else if currentQuestion.type === "blank"}
                     <div class="blank-answer">
-                        {#each (Array.isArray(currentQuestion.answer) ? currentQuestion.answer : [currentQuestion.answer]) as _ans, i}
+                        {#each Array.isArray(currentQuestion.answer) ? currentQuestion.answer : [currentQuestion.answer] as _ans, i}
                             <input
                                 class="blank-input"
                                 type="text"
                                 value={blankAnswerInputs[i] ?? ""}
-                                oninput={(e) => { blankAnswerInputs[i] = (e.target as HTMLInputElement).value; }}
-
-                                placeholder={Array.isArray(currentQuestion.answer) ? `第 ${i + 1} 空` : "根据提示默写答案"}
+                                oninput={(e) => {
+                                    blankAnswerInputs[i] = (
+                                        e.target as HTMLInputElement
+                                    ).value;
+                                }}
+                                placeholder={Array.isArray(
+                                    currentQuestion.answer,
+                                )
+                                    ? `第 ${i + 1} 空`
+                                    : "根据提示默写答案"}
                                 autocomplete="off"
                                 autocapitalize="off"
                                 spellcheck="false"
@@ -438,14 +480,22 @@
                             已掌握！
                             {#if currentQuestion.type === "blank"}
                                 <div class="correct-answer">
-                                    {Array.isArray(currentQuestion.answer) ? (currentQuestion.answer as string[]).join(' | ') : currentQuestion.answer as string}
+                                    {Array.isArray(currentQuestion.answer)
+                                        ? (
+                                              currentQuestion.answer as string[]
+                                          ).join(" | ")
+                                        : (currentQuestion.answer as string)}
                                 </div>
                             {/if}
                         {:else}
                             回答正确
                             {#if currentQuestion.type === "blank"}
                                 <div class="correct-answer">
-                                    {Array.isArray(currentQuestion.answer) ? (currentQuestion.answer as string[]).join(' | ') : currentQuestion.answer as string}
+                                    {Array.isArray(currentQuestion.answer)
+                                        ? (
+                                              currentQuestion.answer as string[]
+                                          ).join(" | ")
+                                        : (currentQuestion.answer as string)}
                                 </div>
                             {/if}
                         {/if}
@@ -453,7 +503,11 @@
                         回答错误
                         {#if currentQuestion.type === "blank"}
                             <div class="correct-answer">
-                                正确答案: {Array.isArray(currentQuestion.answer) ? (currentQuestion.answer as string[]).join(' | ') : currentQuestion.answer as string}
+                                正确答案: {Array.isArray(currentQuestion.answer)
+                                    ? (currentQuestion.answer as string[]).join(
+                                          " | ",
+                                      )
+                                    : (currentQuestion.answer as string)}
                             </div>
                         {:else if currentQuestion.type !== "judgment"}
                             <div class="correct-answer">
@@ -507,26 +561,44 @@
         </div>
     {/if}
     <!-- 进度条 -->
-    <div class="progress-bar-container">
+    <button
+        type="button"
+        class="progress-bar-container"
+        class:focused={progressFocused}
+        onclick={toggleProgressFocus}
+        disabled={stats.learning === 0}
+        aria-label={progressFocused ? "显示完整进度" : "聚焦学习中进度"}
+    >
         <div class="progress-labels">
             <span class="label-left">{stats.mastered}</span>
-            <span class="label-right">{stats.learning + stats.pending}</span>
+            <span class="label-right"
+                >{progressFocused
+                    ? stats.pending
+                    : stats.learning + stats.pending}</span
+            >
         </div>
         <div class="progress-bar">
             <div
                 class="progress-segment mastered"
-                style="width: {masteredWidth}%"
+                style="width: {masteredDisplayWidth}%"
             ></div>
             <div
                 class="progress-segment learning"
-                style="width: {learningWidth}%"
-            ></div>
+                style="width: {learningDisplayWidth}%"
+            >
+                {#each learningSegments as seg}
+                    <div
+                        class="progress-level"
+                        style="width: {seg.widthPercent}%; background: {seg.color}"
+                    ></div>
+                {/each}
+            </div>
             <div
                 class="progress-segment pending"
-                style="width: {pendingWidth}%"
+                style="width: {pendingDisplayWidth}%"
             ></div>
         </div>
-    </div>
+    </button>
 
     <!-- 设置按钮 -->
     <Settings

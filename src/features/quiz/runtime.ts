@@ -1,4 +1,5 @@
 import {
+  computeLearningSegments,
   fillActivePool,
   getRequiredStreak,
   getStats,
@@ -21,6 +22,7 @@ import { sanitizeUserSettings } from "./settings";
 export type { LoadStoredStateResult } from "../../store";
 
 export {
+  computeLearningSegments,
   fillActivePool,
   getActivePoolItem,
   getRequiredStreak,
@@ -30,6 +32,7 @@ export {
   selectNextFromPool,
   shuffle,
 };
+export type { LearningSegment } from "../../algorithm";
 
 export type LoadRuntimeStateResult =
   | { kind: "ok"; state: RuntimeState }

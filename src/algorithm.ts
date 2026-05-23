@@ -4,6 +4,7 @@
 
 import type { Question, RuntimeState, ActivePoolItem, Stats } from "./types";
 import { createActivePoolItem, filterQuestions } from "./store";
+import { LEARNING_COLOR_HIGH, LEARNING_COLOR_LOW } from "./config";
 
 /**
  * 获取统计信息
@@ -167,6 +168,65 @@ export function getRequiredStreak(
   return item.hasEverMistaken
     ? state.settings.correctStreakAfterMistake
     : state.settings.correctStreakToMaster;
+}
+
+/** 学习中进度条中的一段：颜色 + 占学习中总宽度的百分比 */
+export interface LearningSegment {
+  color: string;
+  widthPercent: number;
+}
+
+function mixOklch(t: number): string {
+  const l =
+    LEARNING_COLOR_LOW.l + (LEARNING_COLOR_HIGH.l - LEARNING_COLOR_LOW.l) * t;
+  const c =
+    LEARNING_COLOR_LOW.c + (LEARNING_COLOR_HIGH.c - LEARNING_COLOR_LOW.c) * t;
+  const h =
+    LEARNING_COLOR_LOW.h + (LEARNING_COLOR_HIGH.h - LEARNING_COLOR_LOW.h) * t;
+  return `oklch(${l.toFixed(4)} ${c.toFixed(4)} ${h.toFixed(2)})`;
+}
+
+/**
+ * 计算学习中进度条的颜色分段。
+ *
+ * 每道学习中的题目按"还需答对次数"（level = requiredStreak - consecutiveCorrect）
+ * 归类，level 越小越接近掌握。按 level 升序排列，相同 level 合并成一段。
+ *
+ * 颜色规则：
+ *   - maxLevel = 1：所有题目共享两端点中点色
+ *   - maxLevel > 1：level 在 [1, maxLevel] 间用 OKLCH 线性插值
+ */
+export function computeLearningSegments(
+  questions: Question[],
+  state: RuntimeState,
+): LearningSegment[] {
+  const filtered = filterQuestions(questions, state.filterType);
+  const filteredIds = new Set(filtered.map((q) => q.id));
+  const items = state.activePool.filter((item) => filteredIds.has(item.id));
+
+  if (items.length === 0) return [];
+
+  const maxLevel = Math.max(
+    state.settings.correctStreakToMaster,
+    state.settings.correctStreakAfterMistake,
+  );
+
+  const counts = new Map<number, number>();
+  for (const item of items) {
+    const level = getRequiredStreak(item, state) - item.consecutiveCorrect;
+    counts.set(level, (counts.get(level) ?? 0) + 1);
+  }
+
+  const sortedLevels = [...counts.keys()].sort((a, b) => a - b);
+  const total = items.length;
+
+  return sortedLevels.map((level) => {
+    const t = maxLevel <= 1 ? 0.5 : (level - 1) / (maxLevel - 1);
+    return {
+      color: mixOklch(t),
+      widthPercent: ((counts.get(level) ?? 0) / total) * 100,
+    };
+  });
 }
 
 /**

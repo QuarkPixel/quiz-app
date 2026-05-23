@@ -572,7 +572,29 @@ h1 {
 
 /* 进度条 */
 .progress-bar-container {
-    margin-top: 20px;
+    display: block;
+    width: 100%;
+    height: 40px;
+    margin-top: 14px;
+    padding: 6px 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.progress-bar-container:disabled {
+    cursor: default;
+}
+
+.progress-bar-container:focus-visible {
+    outline: 2px solid #007bff;
+    outline-offset: 4px;
+    border-radius: 4px;
 }
 
 .progress-labels {
@@ -598,12 +620,28 @@ h1 {
     height: 3px;
     display: flex;
     gap: 4px;
+    border-radius: 3px;
+    transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.progress-bar-container:not(:disabled):hover .progress-bar {
+    height: 4px;
+}
+
+.progress-bar-container.focused .progress-bar {
+    height: 7px;
+}
+
+.progress-bar-container.focused:hover .progress-bar {
+    height: 8px;
 }
 
 .progress-segment {
-    height: 3px;
+    height: 100%;
     border-radius: 3px;
-    transition: width 0.3s ease;
+    transition:
+        width 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.3s ease;
 }
 
 .progress-segment.mastered {
@@ -611,7 +649,15 @@ h1 {
 }
 
 .progress-segment.learning {
-    background: #ffc107;
+    display: flex;
+    overflow: hidden;
+}
+
+.progress-level {
+    height: 100%;
+    transition:
+        width 0.3s ease,
+        background 0.3s ease;
 }
 
 .progress-segment.pending {
@@ -622,6 +668,11 @@ h1 {
     .progress-segment.pending {
         background: #444;
     }
+}
+
+.progress-bar-container.focused .progress-segment.mastered,
+.progress-bar-container.focused .progress-segment.pending {
+    opacity: 0.55;
 }
 
 @media (max-width: 600px) {

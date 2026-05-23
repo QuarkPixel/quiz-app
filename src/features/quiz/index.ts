@@ -7,6 +7,7 @@ export { buildFilterOptions, getTypeName, normalizeFilterType } from "./filters"
 export { isEditingTarget } from "./keyboard";
 export { reconcileAfterSettingsChange, sanitizeUserSettings } from "./settings";
 export {
+  computeLearningSegments,
   createResetRuntimeState,
   fillActivePool,
   getActivePoolItem,
@@ -19,4 +20,4 @@ export {
   selectNextFromPool,
   shuffle,
 } from "./runtime";
-export type { LoadRuntimeStateResult } from "./runtime";
+export type { LearningSegment, LoadRuntimeStateResult } from "./runtime";
