@@ -4,10 +4,18 @@ import {
   STORAGE_PREFIX_QUESTIONS,
   STORAGE_PREFIX_STATE,
 } from "../config";
+import { exportProgress, importProgress } from "../features/importExport";
 import { hashQuestionsJson } from "../lib/hash";
 import { validateQuestions } from "../lib/validateQuestions";
+import { loadStoredState } from "../store";
 import type { Question } from "../types";
-import type { Bank, BankSummary, ImportBankResult, QuizSource } from "./types";
+import type {
+  ApplyStateResult,
+  Bank,
+  BankSummary,
+  ImportBankResult,
+  QuizSource,
+} from "./types";
 
 function questionsKey(hash: string): string {
   return STORAGE_PREFIX_QUESTIONS + hash;
@@ -109,17 +117,42 @@ export class LibrarySource implements QuizSource {
       return { kind: "invalid", errors: [`JSON 解析失败：${(e as Error).message}`] };
     }
 
-    const validation = validateQuestions(parsed);
+    // 检测两种形式：
+    //   1. 数组：纯题目
+    //   2. 对象 { state?: string, questions: [...] }：导出文件，带进度备份
+    let questionsData: unknown;
+    let stateStr: string | null = null;
+
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      "questions" in parsed
+    ) {
+      questionsData = (parsed as { questions: unknown }).questions;
+      const stateField = (parsed as { state?: unknown }).state;
+      if (typeof stateField === "string") stateStr = stateField;
+    } else {
+      questionsData = parsed;
+    }
+
+    const validation = validateQuestions(questionsData);
     if (!validation.ok) return { kind: "invalid", errors: validation.errors };
 
-    const hash = await hashQuestionsJson(rawJson);
+    // 统一规范化（minified）：hash / 存储 / 回灌全用这一份字节
+    const canonical = JSON.stringify(questionsData);
+    const hash = await hashQuestionsJson(canonical);
+
     if (this.index.some((b) => b.hash === hash)) {
-      return { kind: "duplicate", hash };
+      // 文件里若带进度，把 stateStr 透传给 UI，让用户决定要不要覆盖现有进度
+      return stateStr !== null
+        ? { kind: "duplicate", hash, stateStr }
+        : { kind: "duplicate", hash };
     }
 
     // 写入顺序：先写大 blob，再写索引；前者失败直接返回 quota，后者失败回滚 blob。
     try {
-      localStorage.setItem(questionsKey(hash), rawJson);
+      localStorage.setItem(questionsKey(hash), canonical);
     } catch (e) {
       if (isQuotaError(e)) return { kind: "quota" };
       throw e;
@@ -158,8 +191,81 @@ export class LibrarySource implements QuizSource {
       }
     }
 
+    // 还原进度（如有）。题库本身已经入库，state 失败用 stateError 让 UI 显式告知用户。
+    let stateError: string | undefined;
+    if (stateStr !== null) {
+      try {
+        const decoded = await importProgress(stateStr, hash);
+        try {
+          localStorage.setItem(stateKey(hash), JSON.stringify(decoded));
+        } catch (e) {
+          stateError = e instanceof Error ? e.message : "写入失败";
+        }
+      } catch (e) {
+        stateError = e instanceof Error ? e.message : "解码失败";
+      }
+    }
+
     this.emit();
-    return { kind: "ok", hash };
+    return stateError !== undefined
+      ? { kind: "ok", hash, stateError }
+      : { kind: "ok", hash };
+  }
+
+  async applyStateToBank(
+    hash: string,
+    stateStr: string,
+  ): Promise<ApplyStateResult> {
+    if (!this.index.some((b) => b.hash === hash)) {
+      return { ok: false, error: "题库不存在" };
+    }
+    let decoded;
+    try {
+      decoded = await importProgress(stateStr, hash);
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "解码失败" };
+    }
+    try {
+      localStorage.setItem(stateKey(hash), JSON.stringify(decoded));
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "写入失败" };
+    }
+    this.emit();
+    return { ok: true };
+  }
+
+  async exportBank(
+    hash: string,
+  ): Promise<{ filename: string; content: string } | null> {
+    const summary = this.index.find((b) => b.hash === hash);
+    if (!summary) return null;
+
+    const rawQuestions = localStorage.getItem(questionsKey(hash));
+    if (!rawQuestions) return null;
+
+    let parsedQuestions: Question[];
+    try {
+      parsedQuestions = JSON.parse(rawQuestions) as Question[];
+    } catch (e) {
+      console.error("Failed to parse questions for export:", e);
+      return null;
+    }
+
+    // 库里存的就是 canonical 形式，bank.hash 就是 canonical hash，直接用即可。
+    const storedState = loadStoredState(hash);
+    const stateEncoded = await exportProgress(storedState, hash);
+
+    const mastered = storedState.masteredIds.length;
+    const total = parsedQuestions.length;
+    const filename = `${summary.name} (${mastered} of ${total}).json`;
+
+    const fileContent = JSON.stringify(
+      { state: stateEncoded, questions: parsedQuestions },
+      null,
+      2,
+    );
+
+    return { filename, content: fileContent };
   }
 
   renameBank(hash: string, name: string): void {

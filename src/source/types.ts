@@ -17,10 +17,23 @@ export interface BankSummary {
 
 /** 导入题库的结果 */
 export type ImportBankResult =
-  | { kind: "ok"; hash: string }
+  | {
+      kind: "ok";
+      hash: string;
+      /** 题库导入成功，但文件里附带的进度备份解码/写入失败 */
+      stateError?: string;
+    }
   | { kind: "invalid"; errors: string[] }
-  | { kind: "duplicate"; hash: string }
+  | {
+      kind: "duplicate";
+      hash: string;
+      /** 文件里附带的进度备份字符串。UI 可据此询问用户是否覆盖现有进度 */
+      stateStr?: string;
+    }
   | { kind: "quota" };
+
+/** 进度覆盖结果 */
+export type ApplyStateResult = { ok: true } | { ok: false; error: string };
 
 /**
  * 题库源抽象。Bundled 与 Library 两种实现共用这一接口。
@@ -43,4 +56,17 @@ export interface QuizSource {
   importBank?(name: string, rawJson: string): Promise<ImportBankResult>;
   renameBank?(hash: string, name: string): void;
   removeBank?(hash: string): void;
+
+  /**
+   * 把进度备份字符串解码后覆盖到指定 bank 的 state。
+   * UI 在 importBank 返回 duplicate + stateStr 后让用户确认时调用。
+   */
+  applyStateToBank?(hash: string, stateStr: string): Promise<ApplyStateResult>;
+
+  /**
+   * 导出一份题库为可下载内容。
+   * 返回 null 表示该 hash 找不到。文件内容是 { state, questions } 对象，
+   * state 为 exportProgress 紧凑字符串，questions 为题目数组。
+   */
+  exportBank?(hash: string): Promise<{ filename: string; content: string } | null>;
 }

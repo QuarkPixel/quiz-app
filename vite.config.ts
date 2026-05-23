@@ -46,7 +46,8 @@ if (mode === "bundled" && !isTest) {
       `[quiz-app] 题库校验失败 (${bundledPath}):\n${result.errors.map((e) => "  " + e).join("\n")}`,
     );
   }
-  bundledHash = computeHash(bundledJsonText);
+  // 用规范化（minified）形式 hash：和 library 模式、导出回灌走同一算法
+  bundledHash = computeHash(JSON.stringify(parsed));
 }
 
 const outputName =

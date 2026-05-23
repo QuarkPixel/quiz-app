@@ -5,6 +5,7 @@
     import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
     import IconUpload from "@tabler/icons-svelte/icons/upload";
+    import IconDownload from "@tabler/icons-svelte/icons/download";
     import IconDots from "@tabler/icons-svelte/icons/dots";
     import IconEdit from "@tabler/icons-svelte/icons/edit";
     import IconTrash from "@tabler/icons-svelte/icons/trash";
@@ -28,13 +29,16 @@
     });
 
     let fileInput: HTMLInputElement | null = $state(null);
-    let importMessage = $state<{ kind: "info" | "error"; text: string } | null>(
-        null,
-    );
+    let importMessage = $state<{ title: string; text: string } | null>(null);
 
     let renameTarget = $state<{ hash: string; name: string } | null>(null);
     let renameInput = $state("");
     let deleteTarget = $state<{ hash: string; name: string } | null>(null);
+    let overwriteTarget = $state<{
+        hash: string;
+        stateStr: string;
+        name: string;
+    } | null>(null);
 
     async function onFileChosen(e: Event): Promise<void> {
         const input = e.currentTarget as HTMLInputElement;
@@ -48,13 +52,20 @@
 
         switch (result.kind) {
             case "ok":
-                importMessage = null;
+                if (result.stateError !== undefined) {
+                    importMessage = {
+                        title: "题目已导入，进度备份还原失败",
+                        text:
+                            "题库本身已经入库，但文件附带的进度备份无法解析，" +
+                            "该题库将以空进度开始。\n\n原因：" +
+                            result.stateError,
+                    };
+                }
                 break;
             case "invalid":
                 importMessage = {
-                    kind: "error",
+                    title: "题库校验失败",
                     text:
-                        `题库校验失败：\n` +
                         result.errors.slice(0, 5).join("\n") +
                         (result.errors.length > 5
                             ? `\n…还有 ${result.errors.length - 5} 条问题`
@@ -62,19 +73,43 @@
                 };
                 break;
             case "duplicate":
-                importMessage = {
-                    kind: "info",
-                    text: "这份题库已经在列表里了。",
-                };
+                if (result.stateStr !== undefined) {
+                    const existing = banks.find(
+                        (b) => b.hash === result.hash,
+                    );
+                    overwriteTarget = {
+                        hash: result.hash,
+                        stateStr: result.stateStr,
+                        name: existing?.name ?? "该题库",
+                    };
+                } else {
+                    importMessage = {
+                        title: "题库已存在",
+                        text: "这份题库已经在列表里了。",
+                    };
+                }
                 break;
             case "quota":
                 importMessage = {
-                    kind: "error",
+                    title: "存储空间不足",
                     text:
                         "浏览器存储空间不足，无法导入。\n" +
                         "如果只需要这一份题库，建议改用 Bundled 模式打包成单文件分发。",
                 };
                 break;
+        }
+    }
+
+    async function commitOverwrite(): Promise<void> {
+        if (!overwriteTarget || !source.applyStateToBank) return;
+        const target = overwriteTarget;
+        overwriteTarget = null;
+        const res = await source.applyStateToBank(target.hash, target.stateStr);
+        if (!res.ok) {
+            importMessage = {
+                title: "进度替换失败",
+                text: "文件中的进度备份无法应用到现有题库。\n\n原因：" + res.error,
+            };
         }
     }
 
@@ -108,6 +143,22 @@
 
     function pickBank(hash: string): void {
         source.setActiveBank?.(hash);
+    }
+
+    async function handleExport(hash: string): Promise<void> {
+        if (!source.exportBank) return;
+        const result = await source.exportBank(hash);
+        if (!result) return;
+
+        const blob = new Blob([result.content], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = result.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 </script>
 
@@ -148,12 +199,12 @@
             <Sidebar.GroupLabel>题库</Sidebar.GroupLabel>
             {#if banks.length != 0}
                 <Sidebar.GroupAction title="导入题库" onclick={openImport}>
-                    <IconUpload size={16} stroke={1.75} />
+                    <IconDownload size={16} stroke={1.75} />
                     <span class="sr-only">导入题库</span>
                 </Sidebar.GroupAction>
             {/if}
             <Sidebar.GroupContent>
-                <Sidebar.Menu>
+                <Sidebar.Menu class="gap-1">
                     {#each banks as bank (bank.hash)}
                         <Sidebar.MenuItem>
                             <Sidebar.MenuButton
@@ -203,6 +254,18 @@
                                         <IconEdit size={14} stroke={1.75} />
                                         <span>重命名</span>
                                     </DropdownMenu.Item>
+                                    <DropdownMenu.Item
+                                        onSelect={() => handleExport(bank.hash)}
+                                    >
+                                        <IconUpload size={14} stroke={1.75} />
+                                        <span>导出</span>
+                                    </DropdownMenu.Item>
+                                    <DropdownMenu.Separator />
+                                    <DropdownMenu.Label
+                                        class="text-muted-foreground/60 font-mono text-[11px] font-normal"
+                                    >
+                                        {bank.hash}
+                                    </DropdownMenu.Label>
                                     <DropdownMenu.Separator />
                                     <DropdownMenu.Item
                                         variant="destructive"
@@ -222,7 +285,7 @@
                                 tooltipContent="导入题库"
                                 class="text-sidebar-foreground/70 justify-center"
                             >
-                                <IconUpload size={16} stroke={1.75} />
+                                <IconDownload size={16} stroke={1.75} />
                             </Sidebar.MenuButton>
                         </Sidebar.MenuItem>
                     {/each}
@@ -231,20 +294,6 @@
         </Sidebar.Group>
     </Sidebar.Content>
 
-    <Sidebar.Footer>
-        {#if importMessage}
-            <div
-                class={[
-                    "rounded-md px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap",
-                    importMessage.kind === "error"
-                        ? "bg-destructive/10 text-destructive"
-                        : "bg-sidebar-accent text-sidebar-accent-foreground",
-                ]}
-            >
-                {importMessage.text}
-            </div>
-        {/if}
-    </Sidebar.Footer>
     <Sidebar.Rail />
 </Sidebar.Root>
 
@@ -286,6 +335,25 @@
 </Dialog.Root>
 
 <Dialog.Root
+    open={importMessage !== null}
+    onOpenChange={(open) => {
+        if (!open) importMessage = null;
+    }}
+>
+    <Dialog.Content class="max-w-sm">
+        <Dialog.Header>
+            <Dialog.Title>{importMessage?.title}</Dialog.Title>
+            <Dialog.Description class="whitespace-pre-wrap">
+                {importMessage?.text}
+            </Dialog.Description>
+        </Dialog.Header>
+        <Dialog.Footer>
+            <Button onclick={() => (importMessage = null)}>知道了</Button>
+        </Dialog.Footer>
+    </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
     open={deleteTarget !== null}
     onOpenChange={(open) => {
         if (!open) deleteTarget = null;
@@ -303,6 +371,30 @@
                 >取消</Button
             >
             <Button variant="destructive" onclick={commitDelete}>删除</Button>
+        </Dialog.Footer>
+    </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+    open={overwriteTarget !== null}
+    onOpenChange={(open) => {
+        if (!open) overwriteTarget = null;
+    }}
+>
+    <Dialog.Content class="max-w-sm">
+        <Dialog.Header>
+            <Dialog.Title>题库已存在</Dialog.Title>
+            <Dialog.Description>
+                「{overwriteTarget?.name}」已经在列表里，导入文件附带了进度备份。是否用文件中的进度替换当前进度？替换后无法撤销。
+            </Dialog.Description>
+        </Dialog.Header>
+        <Dialog.Footer>
+            <Button variant="outline" onclick={() => (overwriteTarget = null)}
+                >保留当前进度</Button
+            >
+            <Button variant="destructive" onclick={commitOverwrite}
+                >替换进度</Button
+            >
         </Dialog.Footer>
     </Dialog.Content>
 </Dialog.Root>
