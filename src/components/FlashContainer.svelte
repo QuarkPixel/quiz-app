@@ -3,7 +3,6 @@
 
     let container: HTMLDivElement;
 
-    // 触发闪烁效果
     export function flash(isCorrect: boolean): void {
         if (!container) return;
 
@@ -13,33 +12,22 @@
             : "flash-layer-wrong";
         container.appendChild(flashLayer);
 
-        // 动画结束后移除
         setTimeout(() => {
             flashLayer.remove();
         }, FLASH_ANIMATION_DURATION);
     }
 </script>
 
-<div id="flash-container" bind:this={container}></div>
+<div
+    bind:this={container}
+    class="pointer-events-none fixed inset-0 -z-10"
+></div>
 
 <style>
-    #flash-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-        z-index: -1;
-    }
-
     :global(.flash-layer-correct),
     :global(.flash-layer-wrong) {
         position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        inset: 0;
     }
 
     :global(.flash-layer-correct) {
@@ -56,7 +44,7 @@
             background: transparent;
         }
         10% {
-            background: rgba(40, 167, 69, 0.04);
+            background: rgba(129, 145, 47, 0.06);
         }
     }
 
@@ -66,7 +54,7 @@
             background: transparent;
         }
         10% {
-            background: rgba(220, 53, 69, 0.04);
+            background: rgba(224, 63, 79, 0.06);
         }
     }
 </style>

@@ -14,7 +14,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"]
 }

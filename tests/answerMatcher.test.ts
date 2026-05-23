@@ -67,7 +67,7 @@ describe("外层斜杠 A/B：带前缀共享的分支匹配", () => {
   it("整句级分支（be/get used to）", () => {
     expect(matchAnswer("be/get used to", "be")).toBe(true);
     expect(matchAnswer("be/get used to", "get used to")).toBe(true);
-    expect(matchAnswer("be/get used to", "be used to")).toBe(true);  // 宽松：be + 共享后缀
+    expect(matchAnswer("be/get used to", "be used to")).toBe(true); // 宽松：be + 共享后缀
   });
 });
 
@@ -85,16 +85,24 @@ describe("规范化：忽略大小写、空格、标点", () => {
 
 describe("多词前缀共享（外层斜杠跨词传递）", () => {
   it("draw/reach/come to a conclusion — 选 draw", () => {
-    expect(matchAnswer("draw/reach/come to a conclusion", "draw a conclusion")).toBe(true);
+    expect(
+      matchAnswer("draw/reach/come to a conclusion", "draw a conclusion"),
+    ).toBe(true);
   });
   it("draw/reach/come to a conclusion — 选 reach", () => {
-    expect(matchAnswer("draw/reach/come to a conclusion", "reach a conclusion")).toBe(true);
+    expect(
+      matchAnswer("draw/reach/come to a conclusion", "reach a conclusion"),
+    ).toBe(true);
   });
   it("draw/reach/come to a conclusion — 选 come", () => {
-    expect(matchAnswer("draw/reach/come to a conclusion", "come to a conclusion")).toBe(true);
+    expect(
+      matchAnswer("draw/reach/come to a conclusion", "come to a conclusion"),
+    ).toBe(true);
   });
   it("draw/reach/come to a conclusion — 错误动词", () => {
-    expect(matchAnswer("draw/reach/come to a conclusion", "make a conclusion")).toBe(false);
+    expect(
+      matchAnswer("draw/reach/come to a conclusion", "make a conclusion"),
+    ).toBe(false);
   });
   it("前缀跨多个分支传递：go/come back home", () => {
     expect(matchAnswer("go/come back home", "go back home")).toBe(true);
@@ -139,6 +147,8 @@ describe("边界情况", () => {
   });
   it("纯括号可选词", () => {
     expect(matchAnswer("make (both) ends meet", "make ends meet")).toBe(true);
-    expect(matchAnswer("make (both) ends meet", "make both ends meet")).toBe(true);
+    expect(matchAnswer("make (both) ends meet", "make both ends meet")).toBe(
+      true,
+    );
   });
 });

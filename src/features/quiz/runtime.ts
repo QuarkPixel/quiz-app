@@ -56,9 +56,15 @@ export function rebuildRuntimeState(
   state: RuntimeState,
   filterType: QuestionType | "all",
 ): RuntimeState {
+  // filter 切换时，剔除"加进 pool 但还没真正展示过"的旧 filter 题，
+  // 避免它们继续占据 pool 导致连续出同类
+  const initialRound = -(state.settings.activePoolSize ?? 25) * 2;
+  const cleanedActivePool = state.activePool.filter(
+    (item) => item.lastSelectedRound !== initialRound,
+  );
   return buildRuntimeState(questions, {
     masteredIds: state.masteredIds,
-    activePool: state.activePool,
+    activePool: cleanedActivePool,
     currentRound: state.currentRound,
     settings: state.settings,
     filterType,

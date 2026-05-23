@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { viteSingleFile } from "vite-plugin-singlefile";
+import tailwindcss from "@tailwindcss/vite";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -69,7 +70,12 @@ const questionsHash = isTest
       .slice(0, 16);
 
 export default defineConfig({
-  plugins: [validateQuestionIds(), svelte(), viteSingleFile({ useRecommendedBuildConfig: false })],
+  plugins: [tailwindcss(), validateQuestionIds(), svelte(), viteSingleFile({ useRecommendedBuildConfig: false })],
+  resolve: {
+    alias: {
+      $lib: resolve(__dirname, "src/lib"),
+    },
+  },
   define: {
     __QUESTIONS_HASH__: JSON.stringify(questionsHash),
   },

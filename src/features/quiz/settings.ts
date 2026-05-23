@@ -117,6 +117,8 @@ export function sanitizeUserSettings(settings: UserSettings): UserSettings {
       SETTINGS_BOUNDS.correctStreakAfterMistake.min,
       SETTINGS_BOUNDS.correctStreakAfterMistake.max,
     ),
+    selectionMode:
+      settings.selectionMode === "sequential" ? "sequential" : "random",
   };
 }
 

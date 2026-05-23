@@ -32,15 +32,15 @@ export function fillActivePool(state: RuntimeState): RuntimeState {
   const newPendingIds = [...state.pendingIds];
 
   const targetSize = state.settings.activePoolSize;
+  const isSequential = state.settings.selectionMode === "sequential";
 
-  // 填充到目标大小
   while (newActivePool.length < targetSize && newPendingIds.length > 0) {
-    // 从待学习中随机抽取
-    const randomIndex = Math.floor(Math.random() * newPendingIds.length);
-    const selectedId = newPendingIds[randomIndex];
+    const pickIndex = isSequential
+      ? 0
+      : Math.floor(Math.random() * newPendingIds.length);
+    const selectedId = newPendingIds[pickIndex];
 
-    // 从待学习移除，加入活动池
-    newPendingIds.splice(randomIndex, 1);
+    newPendingIds.splice(pickIndex, 1);
     newActivePool.push(createActivePoolItem(selectedId, targetSize));
   }
 
@@ -63,7 +63,18 @@ export function selectNextFromPool(
 
   if (length === 0) return null;
 
-  // 计算每个题目的选择权重
+  if (state.settings.selectionMode === "sequential") {
+    const questionIndex = new Map(questions.map((q, i) => [q.id, i]));
+    const sorted = [...state.activePool].sort(
+      (a, b) =>
+        (questionIndex.get(a.id) ?? Infinity) -
+        (questionIndex.get(b.id) ?? Infinity),
+    );
+    const next =
+      sorted.find((item) => item.id !== currentQuestionId) ?? sorted[0];
+    return questions.find((q) => q.id === next.id) ?? null;
+  }
+
   const weights: { id: string; weight: number }[] = [];
 
   for (const item of state.activePool) {
@@ -80,22 +91,14 @@ export function selectNextFromPool(
     const x = Math.max(roundsSinceSelected - length / 3, 0);
     const weight = smoothRamp(x, length / 2);
 
-    // let weight =
-    //   roundsSinceSelected === 0
-    //     ? RECENT_SELECTION_PENALTY
-    //     : Math.min(roundsSinceSelected, 5);
-
     weights.push({ id: item.id, weight });
   }
-  console.log(weights);
 
   if (weights.length === 0) {
-    // 只有一道题
     const onlyId = state.activePool[0].id;
     return questions.find((q) => q.id === onlyId) || null;
   }
 
-  // 加权随机选择
   const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
   let random = Math.random() * totalWeight;
 

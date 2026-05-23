@@ -1,40 +1,76 @@
 <script lang="ts">
-    import type { RuntimeState, StoredState } from "../types";
+    import type { QuestionType, RuntimeState, StoredState } from "../types";
+    import type { FilterOption } from "../features/quiz/filters";
     import { exportProgress, importProgress } from "../features/importExport";
-
-    // @ts-ignore
-    import settingsRaw from "../../icons/MaterialSymbolsSettingsOutlineRounded.svg?raw";
+    import * as Dialog from "$lib/components/ui/dialog";
+    import { Button } from "$lib/components/ui/button";
+    import { Switch } from "$lib/components/ui/switch";
+    import { Input } from "$lib/components/ui/input";
+    import { Label } from "$lib/components/ui/label";
+    import { Separator } from "$lib/components/ui/separator";
+    import * as ToggleGroup from "$lib/components/ui/toggle-group";
+    import { cn } from "$lib/utils";
+    import QuestionFilters from "./QuestionFilters.svelte";
+    import IconSettings from "@tabler/icons-svelte/icons/settings";
+    import IconShuffle from "@tabler/icons-svelte/icons/arrows-shuffle";
+    import IconArrowsRight from "@tabler/icons-svelte/icons/arrow-narrow-right";
+    import IconCopy from "@tabler/icons-svelte/icons/copy";
+    import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
+    import IconRefresh from "@tabler/icons-svelte/icons/refresh";
 
     interface Props {
         appState: RuntimeState;
+        filterOptions: FilterOption[];
+        onFilterChange: (type: QuestionType | "all") => void;
         onReset: () => void;
-        onSettingsChange: () => void;
+        onAlgorithmChange: () => void;
+        onPreferenceChange: () => void;
         onImport: (state: StoredState) => void;
     }
 
-    let { appState, onReset, onSettingsChange, onImport }: Props = $props();
+    let {
+        appState = $bindable(),
+        filterOptions,
+        onFilterChange,
+        onReset,
+        onAlgorithmChange,
+        onPreferenceChange,
+        onImport,
+    }: Props = $props();
 
-    let showMenu = $state(false);
+    let open = $state(false);
 
-    // 导入/导出状态
     let importError = $state("");
     let exportStatus = $state<"idle" | "copied" | "error">("idle");
     let exportErrorMsg = $state("");
 
-    // 更新设置并保存
-    function updateSettings() {
-        onSettingsChange();
-    }
+    let resetConfirming = $state(false);
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // 点击外部关闭菜单
-    function handleClickOutside(event: MouseEvent) {
-        const target = event.target as HTMLElement;
-        if (!target.closest(".settings-menu")) {
-            showMenu = false;
+    function handleResetClick() {
+        if (resetConfirming) {
+            if (resetTimer) clearTimeout(resetTimer);
+            resetConfirming = false;
+            resetTimer = null;
+            onReset();
+            return;
         }
+        resetConfirming = true;
+        if (resetTimer) clearTimeout(resetTimer);
+        resetTimer = setTimeout(() => {
+            resetConfirming = false;
+            resetTimer = null;
+        }, 3000);
     }
 
-    // 导出进度（写入剪贴板）
+    $effect(() => {
+        if (!open && resetConfirming) {
+            if (resetTimer) clearTimeout(resetTimer);
+            resetTimer = null;
+            resetConfirming = false;
+        }
+    });
+
     async function handleExport() {
         try {
             const encoded = await exportProgress(appState);
@@ -48,7 +84,6 @@
         }
     }
 
-    // 导入进度（从剪贴板读取）
     async function handleImport() {
         let text: string;
         try {
@@ -75,317 +110,208 @@
     }
 </script>
 
-<svelte:window onclick={handleClickOutside} />
-
-<div class="settings-menu">
-    <button
-        class="settings-toggle"
+<Dialog.Root bind:open>
+    <Dialog.Trigger
+        class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[30deg]"
         aria-label="设置"
-        onclick={() => (showMenu = !showMenu)}
+        title="设置"
     >
-        {@html settingsRaw}
-    </button>
-    {#if showMenu}
-        <div class="settings-dropdown">
-            <div class="settings-section">
-                <h3>界面设置</h3>
-                <div class="settings-option">
-                    <label for="auto-next">答题正确时自动下一题</label>
-                    <input
-                        type="checkbox"
+        <IconSettings size={22} stroke={1.5} />
+    </Dialog.Trigger>
+    <Dialog.Content
+        class="bg-card flex max-h-[calc(100vh-4rem)] w-[calc(100vw-2rem)] max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
+    >
+        <Dialog.Header class="border-b px-5 py-3.5">
+            <Dialog.Title class="text-base font-semibold">设置</Dialog.Title>
+        </Dialog.Header>
+
+        <div class="flex flex-col gap-4 overflow-y-auto px-5 py-4">
+            <section class="flex flex-col gap-2.5">
+                <h3
+                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
+                >
+                    题型筛选
+                </h3>
+                <QuestionFilters
+                    options={filterOptions}
+                    activeType={appState.filterType}
+                    onSelect={onFilterChange}
+                />
+            </section>
+
+            <Separator />
+
+            <section class="flex flex-col gap-2.5">
+                <h3
+                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
+                >
+                    刷题方式
+                </h3>
+                <ToggleGroup.Root
+                    type="single"
+                    value={appState.settings.selectionMode}
+                    onValueChange={(v) => {
+                        if (v === "random" || v === "sequential") {
+                            appState.settings.selectionMode = v;
+                            onAlgorithmChange();
+                        }
+                    }}
+                    variant="outline"
+                    size="sm"
+                    class="w-full gap-1.5"
+                >
+                    <ToggleGroup.Item
+                        value="random"
+                        aria-label="随机刷题"
+                        class="flex-1 gap-1.5"
+                    >
+                        <IconShuffle size={14} stroke={1.75} />
+                        <span class="text-xs">随机</span>
+                    </ToggleGroup.Item>
+                    <ToggleGroup.Item
+                        value="sequential"
+                        aria-label="顺序刷题"
+                        class="flex-1 gap-1.5"
+                    >
+                        <IconArrowsRight size={14} stroke={1.75} />
+                        <span class="text-xs">顺序</span>
+                    </ToggleGroup.Item>
+                </ToggleGroup.Root>
+            </section>
+
+            <Separator />
+
+            <section class="flex flex-col gap-2.5">
+                <h3
+                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
+                >
+                    答题行为
+                </h3>
+                <div class="flex items-center justify-between gap-3">
+                    <Label for="auto-next" class="text-sm font-normal">
+                        答对自动下一题
+                    </Label>
+                    <Switch
                         id="auto-next"
                         bind:checked={appState.settings.autoNextOnCorrect}
-                        onchange={updateSettings}
+                        onCheckedChange={onPreferenceChange}
+                        size="sm"
                     />
                 </div>
-            </div>
+            </section>
 
-            <div class="settings-section">
-                <h3>学习算法</h3>
-                <div class="settings-option">
-                    <label for="pool-size">活动题目池大小</label>
-                    <input
-                        type="number"
+            <Separator />
+
+            <section class="flex flex-col gap-2.5">
+                <h3
+                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
+                >
+                    学习算法
+                </h3>
+                <div class="flex items-center justify-between gap-3">
+                    <Label for="pool-size" class="text-sm font-normal">
+                        活动题目池大小
+                    </Label>
+                    <Input
                         id="pool-size"
-                        min="5"
-                        max="100"
+                        type="number"
+                        min={5}
+                        max={100}
                         bind:value={appState.settings.activePoolSize}
-                        onchange={updateSettings}
+                        onchange={onAlgorithmChange}
+                        class="h-7 w-20 text-center"
                     />
                 </div>
-                <div class="settings-option">
-                    <label for="streak-master">首次掌握所需连续正确次数</label>
-                    <input
-                        type="number"
+                <div class="flex items-center justify-between gap-3">
+                    <Label for="streak-master" class="text-sm font-normal">
+                        首次掌握需正确次数
+                    </Label>
+                    <Input
                         id="streak-master"
-                        min="1"
-                        max="10"
-                        bind:value={appState.settings.correctStreakToMaster}
-                        onchange={updateSettings}
-                    />
-                </div>
-                <div class="settings-option">
-                    <label for="streak-mistake">答错后掌握所需连续正确次数</label>
-                    <input
                         type="number"
-                        id="streak-mistake"
-                        min="1"
-                        max="20"
-                        bind:value={appState.settings.correctStreakAfterMistake}
-                        onchange={updateSettings}
+                        min={1}
+                        max={10}
+                        bind:value={appState.settings.correctStreakToMaster}
+                        onchange={onAlgorithmChange}
+                        class="h-7 w-20 text-center"
                     />
                 </div>
-            </div>
+                <div class="flex items-center justify-between gap-3">
+                    <Label for="streak-mistake" class="text-sm font-normal">
+                        答错后需正确次数
+                    </Label>
+                    <Input
+                        id="streak-mistake"
+                        type="number"
+                        min={1}
+                        max={20}
+                        bind:value={appState.settings.correctStreakAfterMistake}
+                        onchange={onAlgorithmChange}
+                        class="h-7 w-20 text-center"
+                    />
+                </div>
+            </section>
 
-            <!-- 进度备份 -->
-            <div class="settings-section">
-                <h3>进度备份</h3>
+            <Separator />
 
-                <!-- 导出 / 导入 一行 -->
-                <div class="backup-row">
-                    <button
-                        class="btn-backup"
-                        class:btn-backup--success={exportStatus === "copied"}
-                        class:btn-backup--error={exportStatus === "error"}
+            <section class="flex flex-col gap-2.5">
+                <h3
+                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
+                >
+                    进度备份
+                </h3>
+                <div class="flex gap-2">
+                    <Button
+                        variant={exportStatus === "copied"
+                            ? "default"
+                            : exportStatus === "error"
+                              ? "destructive"
+                              : "outline"}
+                        size="sm"
+                        class="flex-1"
                         onclick={handleExport}
                         disabled={exportStatus !== "idle"}
-                        title={exportStatus === "error" ? exportErrorMsg : "将进度复制到剪贴板"}
+                        title={exportStatus === "error"
+                            ? exportErrorMsg
+                            : "复制到剪贴板"}
                     >
-                        {#if exportStatus === "copied"}已复制 ✓
+                        <IconCopy size={14} stroke={1.75} />
+                        {#if exportStatus === "copied"}已复制
                         {:else if exportStatus === "error"}导出失败
-                        {:else}导出进度{/if}
-                    </button>
-                    <button
-                        class="btn-backup btn-backup--import"
+                        {:else}导出{/if}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        class="flex-1"
                         onclick={handleImport}
-                        title="从剪贴板读取并导入进度"
+                        title="从剪贴板导入"
                     >
-                        导入进度
-                    </button>
+                        <IconClipboard size={14} stroke={1.75} />
+                        导入
+                    </Button>
                 </div>
-
                 {#if importError}
-                    <p class="import-error">{importError}</p>
+                    <p class="text-destructive text-xs whitespace-pre-wrap">
+                        {importError}
+                    </p>
                 {/if}
-            </div>
+            </section>
 
-            <div class="settings-section">
-                <button class="btn-reset" onclick={onReset}>
-                    重置所有进度
-                </button>
-            </div>
+            <Separator />
+
+            <Button
+                variant="destructive"
+                size="sm"
+                class={cn(
+                    "w-full",
+                    resetConfirming && "ring-destructive/40 ring-2",
+                )}
+                onclick={handleResetClick}
+            >
+                <IconRefresh size={14} stroke={1.75} />
+                {resetConfirming ? "再次点击以确认" : "重置所有进度"}
+            </Button>
         </div>
-    {/if}
-</div>
-
-<style>
-    .settings-menu {
-        position: fixed;
-        left: 20px;
-        bottom: 20px;
-    }
-
-    .settings-toggle {
-        width: 40px;
-        height: 40px;
-        padding: 8px;
-        border: none;
-        background: unset;
-        border-radius: 50%;
-        cursor: pointer;
-        color: #0003;
-        transition: all 0.2s;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .settings-toggle {
-            color: #fff3;
-        }
-    }
-
-    .settings-toggle:hover {
-        color: #007bff;
-        transform: rotate(30deg);
-    }
-
-    .settings-dropdown {
-        position: absolute;
-        left: 0;
-        bottom: 100%;
-        margin-bottom: 8px;
-        padding: 16px;
-        background: white;
-        border: 1px solid #ddd;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        min-width: 280px;
-        max-width: 320px;
-        z-index: 10;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .settings-dropdown {
-            background: #333;
-            border-color: #444;
-        }
-    }
-
-    .settings-section {
-        margin-bottom: 16px;
-    }
-
-    .settings-section:last-child {
-        margin-bottom: 0;
-    }
-
-    .settings-section h3 {
-        margin: 0 0 12px 0;
-        font-size: 14px;
-        font-weight: 600;
-        color: #666;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .settings-section h3 {
-            color: #aaa;
-        }
-    }
-
-    .settings-option {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 8px 0;
-        gap: 12px;
-        font-size: 14px;
-        color: #333;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .settings-option {
-            color: #e0e0e0;
-        }
-    }
-
-    .settings-option label {
-        cursor: pointer;
-        user-select: none;
-        flex: 1;
-    }
-
-    .settings-option input[type="checkbox"] {
-        cursor: pointer;
-        width: 18px;
-        height: 18px;
-    }
-
-    .settings-option input[type="number"] {
-        width: 60px;
-        padding: 4px 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        background: white;
-        color: #333;
-        font-size: 14px;
-        text-align: center;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .settings-option input[type="number"] {
-            background: #2a2a2a;
-            border-color: #555;
-            color: #e0e0e0;
-        }
-    }
-
-    .btn-reset {
-        width: 100%;
-        padding: 10px 16px;
-        background: transparent;
-        color: #dc3545;
-        border: 1px solid #dc3545;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        transition: all 0.2s;
-        font-weight: 500;
-    }
-
-    .btn-reset:hover {
-        background: #dc3545;
-        color: white;
-    }
-
-    /* ── 导出 / 导入 ── */
-    .backup-row {
-        display: flex;
-        gap: 8px;
-    }
-
-    .btn-backup {
-        flex: 1;
-        padding: 9px 12px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 13px;
-        font-weight: 500;
-        transition: all 0.2s;
-        /* 默认：导出样式（实心蓝） */
-        background: #007bff;
-        color: white;
-        border: none;
-    }
-
-    .btn-backup:hover:not(:disabled) {
-        background: #0056b3;
-    }
-
-    .btn-backup:disabled {
-        opacity: 0.8;
-        cursor: default;
-    }
-
-    .btn-backup--success {
-        background: #28a745 !important;
-    }
-
-    .btn-backup--error {
-        background: #dc3545 !important;
-    }
-
-    /* 导入按钮：空心蓝 */
-    .btn-backup--import {
-        background: transparent;
-        color: #007bff;
-        border: 1px solid #007bff;
-    }
-
-    .btn-backup--import:hover {
-        background: #007bff;
-        color: white;
-    }
-
-    @media (prefers-color-scheme: dark) {
-        .btn-backup--import {
-            color: #4da6ff;
-            border-color: #4da6ff;
-        }
-        .btn-backup--import:hover {
-            background: #4da6ff;
-            color: #111;
-        }
-    }
-
-    .import-error {
-        margin: 6px 0 0 0;
-        font-size: 12px;
-        color: #dc3545;
-        white-space: pre-wrap;
-        word-break: break-word;
-    }
-</style>
+    </Dialog.Content>
+</Dialog.Root>

@@ -32,6 +32,8 @@ function normalizeSymbols(s: string): string {
   return s.replace(/（/g, "(").replace(/）/g, ")").replace(/／/g, "/");
 }
 
+const LITERAL_CHAR = /[a-zA-Z0-9\u4e00-\u9fff]/;
+
 /** 把字符串压缩成纯小写字母/数字/中文序列，用于逐字符匹配 */
 function toLetters(s: string): string {
   return normalizeSymbols(s)
@@ -99,7 +101,7 @@ function parseAnswer(raw: string): AnswerPattern {
         tokens.push(parseGroup());
       } else if (ch === "/" || (insideGroup && ch === ")")) {
         break;
-      } else if (/[a-zA-Z]/.test(ch)) {
+      } else if (LITERAL_CHAR.test(ch)) {
         // 每个连续字母序列（一个词）作为独立 Literal token
         tokens.push(parseWord(insideGroup));
       } else {
@@ -129,7 +131,7 @@ function parseAnswer(raw: string): AnswerPattern {
       const ch = s[pos];
       if (ch === "(" || ch === "/") break;
       if (insideGroup && ch === ")") break;
-      if (/[a-zA-Z]/.test(ch)) {
+      if (LITERAL_CHAR.test(ch)) {
         letters += ch.toLowerCase();
         pos++;
       } else {

@@ -12,7 +12,6 @@
     import FlashContainer from "./components/FlashContainer.svelte";
     import ReviewView from "./components/ReviewView.svelte";
     import Settings from "./components/Settings.svelte";
-    import QuestionFilters from "./components/QuestionFilters.svelte";
 
     import {
         buildFilterOptions,
@@ -25,7 +24,6 @@
         getCorrectChoiceLetters,
         getRequiredStreak,
         getStats,
-        getTypeName,
         isEditingTarget,
         loadRuntimeState,
         processAnswer,
@@ -36,11 +34,22 @@
         shuffle,
     } from "./features/quiz";
 
-    // 动态导入 favicon SVG
+    import { Button } from "$lib/components/ui/button";
+    import { Input } from "$lib/components/ui/input";
+    import { cn } from "$lib/utils";
+    import IconCircleHalf2 from "@tabler/icons-svelte/icons/circle-half-2";
+    import IconCircleDot from "@tabler/icons-svelte/icons/circle-dot";
+    import IconChecks from "@tabler/icons-svelte/icons/checks";
+    import IconCursorText from "@tabler/icons-svelte/icons/cursor-text";
+    import IconBook2 from "@tabler/icons-svelte/icons/book-2";
+    import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
+    import IconCheck from "@tabler/icons-svelte/icons/check";
+    import IconX from "@tabler/icons-svelte/icons/x";
+
     // @ts-ignore
-    import faviconRaw from "../icons/MaterialSymbolsBookmarkCheckRounded.svg?raw";
+    import faviconRaw from "../icons/icon.svg?raw";
     // @ts-ignore
-    import bookIconRaw from "../icons/MaterialSymbolsBook5Rounded.svg?raw";
+    import logoRaw from "../icons/logo.svg?raw";
     import { PROGRESS_SIDE_CAP_PERCENT } from "./config";
     const faviconUrl = `data:image/svg+xml,${encodeURIComponent(faviconRaw)}`;
 
@@ -49,14 +58,10 @@
     function createInitialState(): RuntimeState {
         const result = loadRuntimeState(questions);
         if (result.kind === "hash_mismatch") {
-            // 延迟提示，等组件挂载后执行
             setTimeout(() => {
                 if (
                     confirm(
-                        `检测到题库已更新` +
-                            `
-
-存档数据可能不兼容，是否清空所有进度重新开始？`,
+                        `检测到题库已更新\n\n存档数据可能不兼容，是否清空所有进度重新开始？`,
                     )
                 ) {
                     appState = createResetRuntimeState(questions);
@@ -67,10 +72,8 @@
         return result.state;
     }
 
-    // 应用状态
     let appState = $state<RuntimeState>(createInitialState());
 
-    // UI 状态
     let currentQuestion = $state<Question | null>(null);
     let shuffledOptions = $state<(Option & { originalIndex: number })[]>([]);
     let selectedAnswers = $state<number[]>([]);
@@ -81,8 +84,30 @@
 
     let showReview = $state(false);
 
-    // 进度条聚焦模式：点击放大学习中区段
     let progressFocused = $state(false);
+
+    let masteredConfirming = $state(false);
+    let masteredTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function resetMasteredConfirm(): void {
+        if (masteredTimer) clearTimeout(masteredTimer);
+        masteredTimer = null;
+        masteredConfirming = false;
+    }
+
+    function handleMasteredClick(): void {
+        if (masteredConfirming) {
+            resetMasteredConfirm();
+            markCurrentAsMastered();
+            return;
+        }
+        masteredConfirming = true;
+        if (masteredTimer) clearTimeout(masteredTimer);
+        masteredTimer = setTimeout(() => {
+            masteredConfirming = false;
+            masteredTimer = null;
+        }, 3000);
+    }
 
     function toggleProgressFocus(): void {
         if (stats.learning === 0) return;
@@ -100,14 +125,12 @@
         });
     }
 
-    // 初始化活动池并选择第一题
     function initialize(): void {
         appState = fillActivePool(appState);
         saveState(appState);
         selectNextQuestion();
     }
 
-    // 选择下一题
     function selectNextQuestion(): void {
         currentQuestion = selectNextFromPool(
             questions,
@@ -135,10 +158,10 @@
 
         showResult = false;
         isCorrect = false;
+        resetMasteredConfirm();
         focusBlankInputIfNeeded();
     }
 
-    // 切换选项
     function toggleAnswer(originalIndex: number): void {
         if (showResult) return;
 
@@ -159,7 +182,6 @@
         }
     }
 
-    // 提交答案
     function submitAnswer(): void {
         if (
             !currentQuestion ||
@@ -181,33 +203,46 @@
         showResult = true;
         isCorrect = nextIsCorrect;
 
-        // 触发背景闪烁
         flashContainer.flash(isCorrect);
 
-        // 更新状态
         appState = processAnswer(appState, currentQuestion.id, isCorrect);
-
-        // 如果掌握了，填充新题
         appState = fillActivePool(appState);
 
         saveState(appState);
 
-        // 如果答对且开启了自动下一题，立即跳转
         if (isCorrect && appState.settings.autoNextOnCorrect) {
             selectNextQuestion();
         }
     }
 
-    // 键盘事件
     function handleKeydown(event: KeyboardEvent): void {
-        if (
-            !(
-                (event.code === "Space" && !isEditingTarget(event)) ||
-                event.code === "Enter"
-            )
-        )
-            return;
+        if (event.code !== "Space" && event.code !== "Enter") return;
 
+        const target = event.target as HTMLElement | null;
+        const inDialog = !!target?.closest('[role="dialog"]');
+        const inBlankInput = !!target?.classList?.contains("blank-input");
+
+        // L2: 设置 / 答案预览 dialog 内 — Enter 让输入框 blur 触发 onchange
+        if (inDialog) {
+            if (event.code === "Enter" && isEditingTarget(event)) {
+                (target as HTMLInputElement).blur();
+            }
+            return;
+        }
+
+        // L1: 填空题输入框 — Enter 提交 / 下一题（Space 不抢，让浏览器打空格）
+        if (inBlankInput) {
+            if (event.code !== "Enter") return;
+            event.preventDefault();
+            if (showResult) selectNextQuestion();
+            else submitAnswer();
+            return;
+        }
+
+        // 其他编辑目标（兜底）：保留默认
+        if (isEditingTarget(event)) return;
+
+        // L3: 全局
         event.preventDefault();
         if (showResult) {
             selectNextQuestion();
@@ -219,7 +254,6 @@
         }
     }
 
-    // 切换题型筛选
     function setFilterType(type: QuestionType | "all"): void {
         if (appState.filterType === type) return;
         appState = rebuildRuntimeState(questions, appState, type);
@@ -228,8 +262,7 @@
         selectNextQuestion();
     }
 
-    // 参数变更后重建状态，保证活动池/统计/当前题一致
-    function handleSettingsChange(): void {
+    function handleAlgorithmChange(): void {
         const reconcileResult = reconcileAfterSettingsChange(
             questions,
             appState,
@@ -238,23 +271,18 @@
 
         appState = reconcileResult.state;
         saveState(appState);
-
-        if (reconcileResult.shouldSelectNext) {
-            selectNextQuestion();
-        }
     }
 
-    // 重置进度
+    function handlePreferenceChange(): void {
+        saveState(appState);
+    }
+
     function handleReset(): void {
-        if (confirm("确定要重置所有学习进度吗？")) {
-            appState = createResetRuntimeState(questions);
-            initialize();
-        }
+        appState = createResetRuntimeState(questions);
+        initialize();
     }
 
-    // 导入进度（由 Settings 组件回调）
     function handleImport(newState: import("./types").StoredState): void {
-        // 将 StoredState 转为 RuntimeState 再重建（pendingIds 由 rebuildRuntimeState 计算）
         const stateWithPending: import("./types").RuntimeState = {
             ...newState,
             pendingIds: [],
@@ -270,8 +298,6 @@
 
     function markCurrentAsMastered(): void {
         if (!currentQuestion) return;
-
-        if (!confirm("确定将本题直接标记为已掌握吗？")) return;
 
         const questionId = currentQuestion.id;
         const nextState: RuntimeState = {
@@ -301,10 +327,21 @@
         selectNextQuestion();
     }
 
-    // 初始化
+    function typeIconFor(type: QuestionType) {
+        switch (type) {
+            case "judgment":
+                return IconCircleHalf2;
+            case "single":
+                return IconCircleDot;
+            case "multiple":
+                return IconChecks;
+            case "blank":
+                return IconCursorText;
+        }
+    }
+
     initialize();
 
-    // 派生状态
     let stats = $derived(getStats(questions, appState));
     let currentPoolItem = $derived<ActivePoolItem | undefined>(
         currentQuestion
@@ -327,15 +364,14 @@
         stats.total > 0 ? (stats.pending / stats.total) * 100 : 0,
     );
 
-    // 聚焦时压缩两边、放大中间
     let masteredDisplayWidth = $derived(
         progressFocused
-            ? Math.min(masteredWidth, PROGRESS_SIDE_CAP_PERCENT)
+            ? Math.min(masteredWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
             : masteredWidth,
     );
     let pendingDisplayWidth = $derived(
         progressFocused
-            ? Math.min(pendingWidth, PROGRESS_SIDE_CAP_PERCENT)
+            ? Math.min(pendingWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
             : pendingWidth,
     );
     let learningDisplayWidth = $derived(
@@ -343,6 +379,24 @@
             ? Math.max(0, 100 - masteredDisplayWidth - pendingDisplayWidth)
             : learningWidth,
     );
+
+    // svelte-ignore state_referenced_locally
+    let prevMastered = stats.mastered;
+    let masteredCelebrating = $state(false);
+    let celebrateTimer: ReturnType<typeof setTimeout> | null = null;
+
+    $effect(() => {
+        const m = stats.mastered;
+        if (m > prevMastered) {
+            masteredCelebrating = true;
+            if (celebrateTimer) clearTimeout(celebrateTimer);
+            celebrateTimer = setTimeout(() => {
+                masteredCelebrating = false;
+                celebrateTimer = null;
+            }, 700);
+        }
+        prevMastered = m;
+    });
 </script>
 
 <svelte:head>
@@ -351,280 +405,395 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- 闪烁层容器 -->
 <FlashContainer bind:this={flashContainer} />
 
-<main>
-    <header>
-        <h1>Quiz! app</h1>
-        <QuestionFilters
-            options={filterOptions}
-            activeType={appState.filterType}
-            onSelect={setFilterType}
-        />
+<div class="flex min-h-screen flex-col">
+    <header class="flex items-center justify-center px-5 py-5 sm:px-8 sm:py-6">
+        <div
+            class="text-muted-foreground [&_svg]:h-4 [&_svg]:w-auto"
+            aria-label="Quiz! aPP."
+        >
+            {@html logoRaw}
+        </div>
     </header>
 
-    {#if currentQuestion && (currentPoolItem || showResult)}
-        <div class="question-card">
-            <div class="question-header">
-                <span class="question-type"
-                    >{getTypeName(currentQuestion.type)}</span
-                >
-                <span class="question-id">{currentQuestion.id}</span>
+    <main class="flex flex-1 items-center justify-center px-4 sm:px-6">
+        <div class="flex w-full max-w-2xl flex-col gap-5">
+            <div class="flex flex-col gap-5">
+                {#if currentQuestion && (currentPoolItem || showResult)}
+                    {@const TypeIcon = typeIconFor(currentQuestion.type)}
+                    <div class="flex items-center gap-3">
+                        <TypeIcon
+                            size={16}
+                            stroke={1.75}
+                            class="text-muted-foreground"
+                        />
+                        <span
+                            class="text-muted-foreground text-xs tabular-nums"
+                        >
+                            {currentQuestion.id}
+                        </span>
 
-                <!-- 进度指示器 -->
-                {#if currentPoolItem}
-                    <div class="progress-indicator">
-                        {#each Array(requiredStreak) as _, i}
-                            <span
-                                class="progress-dot"
-                                class:filled={i <
-                                    currentPoolItem.consecutiveCorrect}
-                                class:error={currentPoolItem.hasEverMistaken}
-                            ></span>
-                        {/each}
+                        {#if currentPoolItem}
+                            <div class="ml-auto flex items-center gap-1.5">
+                                {#each Array(requiredStreak) as _, i}
+                                    <span
+                                        class={cn(
+                                            "block size-1.5 rounded-full transition-colors",
+                                            i <
+                                                currentPoolItem.consecutiveCorrect
+                                                ? currentPoolItem.hasEverMistaken
+                                                    ? "bg-warning"
+                                                    : "bg-success"
+                                                : "bg-foreground/25",
+                                        )}
+                                    ></span>
+                                {/each}
+                            </div>
+                        {/if}
                     </div>
-                {/if}
-            </div>
 
-            <div class="question-text">{currentQuestion.question}</div>
+                    <p
+                        class="text-foreground text-lg leading-relaxed font-medium whitespace-pre-wrap"
+                    >
+                        {currentQuestion.question}
+                    </p>
 
-            <div class="options">
-                {#if currentQuestion.type === "judgment"}
-                    <button
-                        class="option"
-                        class:selected={selectedAnswers.includes(0)}
-                        class:correct={showResult &&
-                            currentQuestion.answer === true}
-                        class:wrong={showResult &&
-                            selectedAnswers.includes(0) &&
-                            currentQuestion.answer !== true}
-                        onclick={() => toggleAnswer(0)}
-                        disabled={showResult}
-                    >
-                        正确
-                    </button>
-                    <button
-                        class="option"
-                        class:selected={selectedAnswers.includes(1)}
-                        class:correct={showResult &&
-                            currentQuestion.answer === false}
-                        class:wrong={showResult &&
-                            selectedAnswers.includes(1) &&
-                            currentQuestion.answer !== false}
-                        onclick={() => toggleAnswer(1)}
-                        disabled={showResult}
-                    >
-                        错误
-                    </button>
-                {:else if currentQuestion.type === "blank"}
-                    <div class="blank-answer">
-                        {#each Array.isArray(currentQuestion.answer) ? currentQuestion.answer : [currentQuestion.answer] as _ans, i}
-                            <input
-                                class="blank-input"
-                                type="text"
-                                value={blankAnswerInputs[i] ?? ""}
-                                oninput={(e) => {
-                                    blankAnswerInputs[i] = (
-                                        e.target as HTMLInputElement
-                                    ).value;
-                                }}
-                                placeholder={Array.isArray(
-                                    currentQuestion.answer,
-                                )
-                                    ? `第 ${i + 1} 空`
-                                    : "根据提示默写答案"}
-                                autocomplete="off"
-                                autocapitalize="off"
-                                spellcheck="false"
-                                disabled={showResult}
-                            />
-                        {/each}
+                    <div class="flex flex-col gap-2.5">
+                        {#if currentQuestion.type === "judgment"}
+                            {#each [{ idx: 0, label: "正确", value: true, icon: IconCheck }, { idx: 1, label: "错误", value: false, icon: IconX }] as opt}
+                                {@const isSelected = selectedAnswers.includes(
+                                    opt.idx,
+                                )}
+                                {@const isOptionCorrect =
+                                    showResult &&
+                                    currentQuestion.answer === opt.value}
+                                {@const isWrong =
+                                    showResult &&
+                                    isSelected &&
+                                    currentQuestion.answer !== opt.value}
+                                {@const OptIcon = opt.icon}
+                                <button
+                                    type="button"
+                                    class={cn(
+                                        "border-border bg-background hover:bg-muted flex items-center gap-3 rounded-lg border px-4 py-3.5 text-left text-base transition-colors disabled:cursor-default",
+                                        isSelected &&
+                                            !showResult &&
+                                            "border-foreground bg-muted",
+                                        isOptionCorrect &&
+                                            "border-success bg-success/8 text-success",
+                                        isWrong &&
+                                            "border-destructive bg-destructive/8 text-destructive",
+                                    )}
+                                    onclick={() => toggleAnswer(opt.idx)}
+                                    disabled={showResult}
+                                >
+                                    <OptIcon size={18} stroke={2} />
+                                    {opt.label}
+                                </button>
+                            {/each}
+                        {:else if currentQuestion.type === "blank"}
+                            <div class="flex flex-col gap-2.5">
+                                {#each Array.isArray(currentQuestion.answer) ? currentQuestion.answer : [currentQuestion.answer] as _ans, i}
+                                    <Input
+                                        data-slot="input"
+                                        class="blank-input h-12 px-4 text-base"
+                                        value={blankAnswerInputs[i] ?? ""}
+                                        oninput={(e) => {
+                                            blankAnswerInputs[i] = (
+                                                e.target as HTMLInputElement
+                                            ).value;
+                                        }}
+                                        placeholder={Array.isArray(
+                                            currentQuestion.answer,
+                                        )
+                                            ? `第 ${i + 1} 空`
+                                            : "根据提示默写答案"}
+                                        autocomplete="off"
+                                        autocapitalize="off"
+                                        spellcheck="false"
+                                        disabled={showResult}
+                                    />
+                                {/each}
+                            </div>
+                        {:else}
+                            {#each shuffledOptions as opt, idx}
+                                {@const correctAnswers =
+                                    currentQuestion.answer as number[]}
+                                {@const isSelected = selectedAnswers.includes(
+                                    opt.originalIndex,
+                                )}
+                                {@const isOptionCorrect =
+                                    showResult &&
+                                    correctAnswers.includes(opt.originalIndex)}
+                                {@const isWrong =
+                                    showResult &&
+                                    isSelected &&
+                                    !correctAnswers.includes(opt.originalIndex)}
+                                {@const displayLetter = String.fromCharCode(
+                                    65 + idx,
+                                )}
+                                <button
+                                    type="button"
+                                    class={cn(
+                                        "border-border bg-background hover:bg-muted flex items-start gap-3 rounded-lg border px-4 py-3.5 text-left text-base transition-colors disabled:cursor-default",
+                                        isSelected &&
+                                            !showResult &&
+                                            "border-foreground bg-muted",
+                                        isOptionCorrect &&
+                                            "border-success bg-success/8",
+                                        isWrong &&
+                                            "border-destructive bg-destructive/8",
+                                    )}
+                                    onclick={() =>
+                                        toggleAnswer(opt.originalIndex)}
+                                    disabled={showResult}
+                                >
+                                    <span
+                                        class={cn(
+                                            "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
+                                            isOptionCorrect
+                                                ? "bg-success text-success-foreground"
+                                                : isWrong
+                                                  ? "bg-destructive text-destructive-foreground"
+                                                  : isSelected && !showResult
+                                                    ? "bg-foreground text-background"
+                                                    : "bg-foreground/10 text-muted-foreground",
+                                        )}
+                                    >
+                                        {displayLetter}
+                                    </span>
+                                    <span
+                                        class={cn(
+                                            "flex-1 leading-relaxed",
+                                            isOptionCorrect && "text-success",
+                                            isWrong && "text-destructive",
+                                        )}
+                                    >
+                                        {opt.text}
+                                    </span>
+                                </button>
+                            {/each}
+                        {/if}
+                    </div>
+
+                    <div class="h-[76px]">
+                        {#if showResult}
+                            <div
+                                class={cn(
+                                    "flex h-full flex-col items-center justify-center gap-1 rounded-lg px-4 text-center",
+                                    isCorrect
+                                        ? "bg-success/10 text-success"
+                                        : "bg-destructive/10 text-destructive",
+                                )}
+                            >
+                                <span class="text-base font-semibold">
+                                    {#if isCorrect}
+                                        {currentPoolItem
+                                            ? "回答正确"
+                                            : "已掌握"}
+                                    {:else}
+                                        回答错误
+                                    {/if}
+                                </span>
+                                {#if currentQuestion.type === "blank"}
+                                    <span class="text-sm font-normal">
+                                        {#if !isCorrect}正确答案：{/if}{Array.isArray(
+                                            currentQuestion.answer,
+                                        )
+                                            ? (
+                                                  currentQuestion.answer as string[]
+                                              ).join(" | ")
+                                            : (currentQuestion.answer as string)}
+                                    </span>
+                                {:else if !isCorrect && currentQuestion.type !== "judgment"}
+                                    <span class="text-sm font-normal">
+                                        正确答案：{getCorrectChoiceLetters(
+                                            currentQuestion,
+                                            shuffledOptions,
+                                        )}
+                                    </span>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+
+                    <div class="flex h-9 items-center justify-end gap-2 pt-2">
+                        {#if !showResult && (currentQuestion.type === "multiple" || currentQuestion.type === "blank")}
+                            <Button
+                                size="lg"
+                                class="px-8"
+                                onclick={submitAnswer}
+                            >
+                                提交答案
+                            </Button>
+                        {:else if showResult}
+                            <Button
+                                variant="outline"
+                                size="icon-lg"
+                                onclick={handleMasteredClick}
+                                disabled={!currentPoolItem}
+                                title={masteredConfirming
+                                    ? "再次点击以确认"
+                                    : "标记为已掌握"}
+                                aria-label={masteredConfirming
+                                    ? "再次点击以确认"
+                                    : "标记为已掌握"}
+                                class={cn(
+                                    masteredConfirming &&
+                                        "border-success text-success ring-success/30 ring-2",
+                                )}
+                            >
+                                <IconCircleCheck stroke={1.75} />
+                            </Button>
+                            <Button
+                                size="lg"
+                                class="px-8"
+                                onclick={selectNextQuestion}
+                            >
+                                下一题
+                            </Button>
+                        {/if}
                     </div>
                 {:else}
-                    {#each shuffledOptions as opt, idx}
-                        {@const correctAnswers =
-                            currentQuestion.answer as number[]}
-                        {@const isSelected = selectedAnswers.includes(
-                            opt.originalIndex,
-                        )}
-                        {@const isOptionCorrect = correctAnswers.includes(
-                            opt.originalIndex,
-                        )}
-                        {@const displayLetter = String.fromCharCode(65 + idx)}
-                        <button
-                            class="option"
-                            class:selected={isSelected}
-                            class:correct={showResult && isOptionCorrect}
-                            class:wrong={showResult &&
-                                isSelected &&
-                                !isOptionCorrect}
-                            onclick={() => toggleAnswer(opt.originalIndex)}
-                            disabled={showResult}
-                        >
-                            <span class="option-letter">{displayLetter}</span>
-                            <span class="option-text">{opt.text}</span>
-                        </button>
-                    {/each}
-                {/if}
-            </div>
-
-            {#if showResult}
-                <div
-                    class="result"
-                    class:correct={isCorrect}
-                    class:wrong={!isCorrect}
-                >
-                    {#if isCorrect}
-                        {#if !currentPoolItem}
-                            已掌握！
-                            {#if currentQuestion.type === "blank"}
-                                <div class="correct-answer">
-                                    {Array.isArray(currentQuestion.answer)
-                                        ? (
-                                              currentQuestion.answer as string[]
-                                          ).join(" | ")
-                                        : (currentQuestion.answer as string)}
-                                </div>
-                            {/if}
-                        {:else}
-                            回答正确
-                            {#if currentQuestion.type === "blank"}
-                                <div class="correct-answer">
-                                    {Array.isArray(currentQuestion.answer)
-                                        ? (
-                                              currentQuestion.answer as string[]
-                                          ).join(" | ")
-                                        : (currentQuestion.answer as string)}
-                                </div>
-                            {/if}
-                        {/if}
-                    {:else}
-                        回答错误
-                        {#if currentQuestion.type === "blank"}
-                            <div class="correct-answer">
-                                正确答案: {Array.isArray(currentQuestion.answer)
-                                    ? (currentQuestion.answer as string[]).join(
-                                          " | ",
-                                      )
-                                    : (currentQuestion.answer as string)}
-                            </div>
-                        {:else if currentQuestion.type !== "judgment"}
-                            <div class="correct-answer">
-                                正确答案:
-                                {getCorrectChoiceLetters(
-                                    currentQuestion,
-                                    shuffledOptions,
-                                )}
-                            </div>
-                        {/if}
-                    {/if}
-                </div>
-            {/if}
-
-            <div class="actions">
-                {#if !showResult && currentQuestion.type === "multiple"}
-                    <button class="btn-primary" onclick={submitAnswer}>
-                        提交答案
-                    </button>
-                {:else if !showResult && currentQuestion.type === "blank"}
-                    <button class="btn-primary" onclick={submitAnswer}>
-                        提交答案
-                    </button>
-                {:else if showResult}
-                    <button class="btn-primary" onclick={selectNextQuestion}>
-                        下一题
-                    </button>
-                    {#if currentPoolItem}
-                        <button
-                            class="btn-secondary btn-small"
-                            onclick={markCurrentAsMastered}
-                        >
-                            已掌握
-                        </button>
-                    {/if}
-                {/if}
-            </div>
-        </div>
-    {:else}
-        <div class="no-questions">
-            {#if stats.total === 0}
-                当前筛选条件下没有题目
-            {:else if stats.mastered === stats.total}
-                恭喜！所有题目已掌握！
-                <button class="btn-restart" onclick={handleReset}>
-                    重新开始
-                </button>
-            {:else}
-                正在加载...
-            {/if}
-        </div>
-    {/if}
-    <!-- 进度条 -->
-    <button
-        type="button"
-        class="progress-bar-container"
-        class:focused={progressFocused}
-        onclick={toggleProgressFocus}
-        disabled={stats.learning === 0}
-        aria-label={progressFocused ? "显示完整进度" : "聚焦学习中进度"}
-    >
-        <div class="progress-labels">
-            <span class="label-left">{stats.mastered}</span>
-            <span class="label-right"
-                >{progressFocused
-                    ? stats.pending
-                    : stats.learning + stats.pending}</span
-            >
-        </div>
-        <div class="progress-bar">
-            <div
-                class="progress-segment mastered"
-                style="width: {masteredDisplayWidth}%"
-            ></div>
-            <div
-                class="progress-segment learning"
-                style="width: {learningDisplayWidth}%"
-            >
-                {#each learningSegments as seg}
                     <div
-                        class="progress-level"
-                        style="width: {seg.widthPercent}%; background: {seg.color}"
-                    ></div>
-                {/each}
+                        class="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-4 text-center"
+                    >
+                        {#if stats.total === 0}
+                            <span class="text-base">当前筛选条件下没有题目</span
+                            >
+                        {:else if stats.mastered === stats.total}
+                            <span class="text-foreground text-lg font-medium">
+                                恭喜！所有题目已掌握
+                            </span>
+                            <Button variant="outline" onclick={handleReset}>
+                                重新开始
+                            </Button>
+                        {:else}
+                            <span class="text-sm">正在加载...</span>
+                        {/if}
+                    </div>
+                {/if}
             </div>
-            <div
-                class="progress-segment pending"
-                style="width: {pendingDisplayWidth}%"
-            ></div>
+
+            <button
+                type="button"
+                class={cn(
+                    "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
+                    progressFocused && "focused",
+                )}
+                onclick={toggleProgressFocus}
+                disabled={stats.learning === 0}
+                aria-label={progressFocused ? "显示完整进度" : "聚焦学习中进度"}
+            >
+                <div
+                    class="text-muted-foreground mb-1.5 flex justify-between text-xs tabular-nums"
+                >
+                    <span>{stats.mastered}</span>
+                    <span>
+                        {progressFocused
+                            ? stats.pending
+                            : stats.learning + stats.pending}
+                    </span>
+                </div>
+                <div
+                    class={cn(
+                        "progress-bar flex h-[3px] gap-1 transition-all duration-300",
+                        "[&_*]:transition-all [&_*]:duration-700 [&_*]:ease-[cubic-bezier(0.32,1.3,0.41,1)]",
+                        progressFocused && "h-[7px]",
+                    )}
+                >
+                    <div
+                        class={cn(
+                            "mastered-segment bg-success rounded-sm",
+                            progressFocused && "opacity-55",
+                            masteredCelebrating && "celebrate",
+                        )}
+                        style="--w: {masteredDisplayWidth}%; --focused: {progressFocused
+                            ? 1
+                            : 0}"
+                    ></div>
+                    <div
+                        class="flex overflow-hidden rounded-sm"
+                        style="width: {learningDisplayWidth}%"
+                    >
+                        {#each learningSegments as seg}
+                            <div
+                                style="width: {seg.widthPercent}%; background: {seg.color}"
+                            ></div>
+                        {/each}
+                    </div>
+                    <div
+                        class={cn(
+                            "bg-foreground/15 rounded-sm",
+                            progressFocused && "opacity-55",
+                        )}
+                        style="width: {pendingDisplayWidth}%"
+                    ></div>
+                </div>
+            </button>
         </div>
-    </button>
+    </main>
 
-    <!-- 设置按钮 -->
-    <Settings
-        {appState}
-        onReset={handleReset}
-        onSettingsChange={handleSettingsChange}
-        onImport={handleImport}
-    />
+    <footer class="flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
+        <Settings
+            bind:appState
+            {filterOptions}
+            onFilterChange={setFilterType}
+            onReset={handleReset}
+            onAlgorithmChange={handleAlgorithmChange}
+            onPreferenceChange={handlePreferenceChange}
+            onImport={handleImport}
+        />
+        <button
+            type="button"
+            class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[10deg]"
+            onclick={() => (showReview = true)}
+            aria-label="答案预览"
+            title="答案预览"
+        >
+            <IconBook2 size={22} stroke={1.5} />
+        </button>
+    </footer>
+</div>
 
-    <!-- 预览答案按钮 -->
-    <button
-        class="review-toggle"
-        onclick={() => (showReview = true)}
-        aria-label="答案预览"
-        title="答案预览"
-    >
-        {@html bookIconRaw}
-    </button>
-</main>
+<ReviewView
+    {questions}
+    filterType={appState.filterType}
+    masteredIds={appState.masteredIds}
+    bind:open={showReview}
+    onOpenChange={(o) => (showReview = o)}
+/>
 
-<!-- 答案预览面板 -->
-{#if showReview}
-    <ReviewView
-        {questions}
-        filterType={appState.filterType}
-        masteredIds={appState.masteredIds}
-        onClose={() => (showReview = false)}
-    />
-{/if}
+<style>
+    .group:not(:disabled):hover .progress-bar {
+        height: 4px;
+    }
+    .group.focused:not(:disabled):hover .progress-bar {
+        height: 8px;
+    }
+
+    .mastered-segment {
+        --offset: 0;
+        width: var(--w);
+        transform-origin: left center;
+        will-change: transform, filter;
+    }
+    .mastered-segment.celebrate {
+        animation: mastered-celebrate 700ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes mastered-celebrate {
+        0% {
+            filter: brightness(1) saturate(1);
+        }
+        35% {
+            /* 只有在聚焦状态下才变换长度 */
+            width: calc(var(--w) + (5% * var(--focused)));
+            filter: brightness(1.45) saturate(1.3);
+        }
+        100% {
+            filter: brightness(1) saturate(1);
+        }
+    }
+</style>

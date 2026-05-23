@@ -28,6 +28,7 @@ export function createDefaultSettings(): UserSettings {
     activePoolSize: ACTIVE_POOL_SIZE,
     correctStreakToMaster: CORRECT_STREAK_TO_MASTER,
     correctStreakAfterMistake: CORRECT_STREAK_AFTER_MISTAKE,
+    selectionMode: "random",
   };
 }
 
@@ -150,18 +151,13 @@ export function buildRuntimeState(
   questions: Question[],
   storedState: StoredState,
 ): RuntimeState {
-  // 清理活动池中不在当前筛选范围内的题目
   const filtered = filterQuestions(questions, storedState.filterType);
   const filteredIds = new Set(filtered.map((q) => q.id));
 
-  // 同时剔除从未被展示过的题目（lastSelectedRound 仍为初始值 -activePoolSize*2）
-  // 这样在切换筛选后，旧筛选遗留的"未展示"项不会聚集在活动池里导致连续出现同类题
-  const initialRound = -(storedState.settings.activePoolSize ?? 25) * 2;
-  const cleanedActivePool = storedState.activePool.filter(
-    (item) => filteredIds.has(item.id) && item.lastSelectedRound !== initialRound,
+  const cleanedActivePool = storedState.activePool.filter((item) =>
+    filteredIds.has(item.id),
   );
 
-  // 清理已掌握列表中不在当前筛选范围内的（保留，但不计入统计）
   const cleanedState: StoredState = {
     ...storedState,
     activePool: cleanedActivePool,

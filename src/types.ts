@@ -40,6 +40,8 @@ export interface UserSettings {
   correctStreakToMaster: number;
   /** 答错后掌握所需连续正确次数 */
   correctStreakAfterMistake: number;
+  /** 题目选择模式：random=随机加权，sequential=按题库顺序 */
+  selectionMode: 'random' | 'sequential';
 }
 
 /** 持久化存储的状态 */
