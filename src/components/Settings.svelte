@@ -132,7 +132,9 @@
         class="bg-card flex max-h-[calc(100vh-4rem)] w-[calc(100vw-2rem)] max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
     >
         <Dialog.Header class="border-b px-5 py-3.5">
-            <Dialog.Title class="text-base font-semibold">当前题库设置</Dialog.Title>
+            <Dialog.Title class="text-base font-semibold"
+                >当前题库设置</Dialog.Title
+            >
         </Dialog.Header>
 
         <div class="flex flex-col gap-4 overflow-y-auto px-5 py-4">
@@ -221,6 +223,11 @@
                 <div class="flex items-center justify-between gap-3">
                     <Label for="pool-size" class="text-sm font-normal">
                         活动题目池大小
+                        <div class="w-8 h-1 flex rounded-full overflow-hidden">
+                            <div class="bg-[#829A4C] h-full w-1/3"></div>
+                            <div class="bg-[#B9AC49] h-full w-1/3"></div>
+                            <div class="bg-[#F1BB58] h-full w-1/3"></div>
+                        </div>
                     </Label>
                     <Input
                         id="pool-size"
@@ -235,6 +242,7 @@
                 <div class="flex items-center justify-between gap-3">
                     <Label for="streak-master" class="text-sm font-normal">
                         首次掌握需正确次数
+                        <div class="w-2 h-2 bg-success rounded-full"></div>
                     </Label>
                     <Input
                         id="streak-master"
@@ -248,7 +256,9 @@
                 </div>
                 <div class="flex items-center justify-between gap-3">
                     <Label for="streak-mistake" class="text-sm font-normal">
-                        答错后需正确次数
+                        答错后需正确次数 <div
+                            class="w-2 h-2 bg-warning rounded-full"
+                        ></div>
                     </Label>
                     <Input
                         id="streak-mistake"

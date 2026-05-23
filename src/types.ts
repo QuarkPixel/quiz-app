@@ -8,7 +8,7 @@ export interface Option {
 }
 
 /** 题目类型 */
-export type QuestionType = 'judgment' | 'single' | 'multiple' | 'blank';
+export type QuestionType = "judgment" | "single" | "multiple" | "blank";
 
 /** 题目 */
 export interface Question {
@@ -41,7 +41,7 @@ export interface UserSettings {
   /** 答错后掌握所需连续正确次数 */
   correctStreakAfterMistake: number;
   /** 题目选择模式：random=随机加权，sequential=按题库顺序 */
-  selectionMode: 'random' | 'sequential';
+  selectionMode: "random" | "sequential";
 }
 
 /** 持久化存储的状态 */
@@ -53,7 +53,7 @@ export interface StoredState {
   /** 当前轮次 */
   currentRound: number;
   /** 题型筛选 */
-  filterType: QuestionType | 'all';
+  filterType: QuestionType | "all";
   /** 用户设置 */
   settings: UserSettings;
 }
