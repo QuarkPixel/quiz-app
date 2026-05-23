@@ -29,7 +29,13 @@ import { PLACEHOLDER_WORDS } from "../../config";
 // ---------------------------------------------------------------------------
 
 function normalizeSymbols(s: string): string {
-  return s.replace(/（/g, "(").replace(/）/g, ")").replace(/／/g, "/");
+  // apostrophe 直接删除：让 one's → ones、sb's → sbs，使 parseWord 能将其识别为
+  // 单个占位词（见 PLACEHOLDER_WORDS）。否则 ' 会把一个词切成两个 Literal token。
+  return s
+    .replace(/（/g, "(")
+    .replace(/）/g, ")")
+    .replace(/／/g, "/")
+    .replace(/['‘’]/g, "");
 }
 
 const LITERAL_CHAR = /[a-zA-Z0-9\u4e00-\u9fff]/;

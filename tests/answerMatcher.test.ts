@@ -138,6 +138,19 @@ describe("sth / sb 占位词自动可选", () => {
     expect(matchAnswer("make progress", "make progress")).toBe(true);
     expect(matchAnswer("make progress", "make")).toBe(false);
   });
+  it("one's 视为可选（do one's homework）", () => {
+    expect(matchAnswer("do one's homework", "do homework")).toBe(true);
+    expect(matchAnswer("do one's homework", "do one's homework")).toBe(true);
+    expect(matchAnswer("do one's homework", "do ones homework")).toBe(true);
+  });
+  it("sb's 视为可选", () => {
+    expect(matchAnswer("hurt sb's feelings", "hurt feelings")).toBe(true);
+    expect(matchAnswer("hurt sb's feelings", "hurt sb's feelings")).toBe(true);
+  });
+  it("全角/弯引号 apostrophe 也支持", () => {
+    expect(matchAnswer("do one’s homework", "do homework")).toBe(true);
+    expect(matchAnswer("do one‘s homework", "do homework")).toBe(true);
+  });
 });
 
 describe("边界情况", () => {
