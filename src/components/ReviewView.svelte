@@ -134,25 +134,25 @@
                         </span>
                     </div>
 
-                    {#each group.items as question, idx (question.id)}
+                    {#each group.items as question}
                         <div
                             class="border-border/60 bg-muted/40 flex flex-col gap-2 rounded-lg border px-4 py-3"
                         >
                             <div class="flex gap-2">
                                 <span
-                                    class="text-muted-foreground min-w-6 pt-0.5 text-xs tabular-nums"
-                                >
-                                    {idx + 1}.
-                                </span>
-                                <span
                                     class="text-foreground flex-1 text-sm leading-relaxed font-medium whitespace-pre-wrap"
                                 >
                                     {question.question}
                                 </span>
+                                <span
+                                    class="text-muted-foreground pt-0.5 text-xs font-mono"
+                                >
+                                    {question.id}
+                                </span>
                             </div>
 
                             {#if question.type === "judgment"}
-                                <div class="flex items-center gap-1.5 pl-8">
+                                <div class="flex items-center gap-1.5">
                                     <span class="text-muted-foreground text-xs">
                                         答案
                                     </span>
@@ -163,7 +163,7 @@
                                     </span>
                                 </div>
                             {:else if question.type === "blank"}
-                                <div class="flex items-center gap-1.5 pl-8">
+                                <div class="flex items-center gap-1.5">
                                     <span class="text-muted-foreground text-xs">
                                         答案
                                     </span>
@@ -180,7 +180,7 @@
                             {:else if question.options}
                                 {@const correctIndices =
                                     question.answer as number[]}
-                                <div class="flex flex-col gap-1 pl-8">
+                                <div class="flex flex-col gap-1">
                                     {#each question.options as opt, i}
                                         {@const isCorrect =
                                             correctIndices.includes(i)}

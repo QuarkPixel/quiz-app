@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "node scripts/cli.js dev",
+    "build": "node scripts/cli.js build",
+    "preview": "node scripts/cli.js preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "export-xml": "node scripts/export-xml.js"

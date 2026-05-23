@@ -1,0 +1,72 @@
+#!/usr/bin/env node
+/**
+ * vite 的薄封装：解析 --bundled [path]，把模式与路径塞进环境变量，再 spawn vite。
+ *
+ * 用法：
+ *   node scripts/cli.js dev                       → Library 模式
+ *   node scripts/cli.js dev -- --bundled          → Bundled，默认 assets/questions.example.json
+ *   node scripts/cli.js dev -- --bundled path.json
+ *   node scripts/cli.js build                     → Library 模式
+ *   node scripts/cli.js build -- --bundled        → Bundled，默认 assets/questions.json
+ *   node scripts/cli.js build -- --bundled path.json
+ *   node scripts/cli.js preview                   → Library 模式
+ *
+ * vite.config.ts 通过 process.env.QUIZ_MODE / QUIZ_BUNDLED_PATH 读取。
+ */
+import { spawn } from "node:child_process";
+import { resolve, dirname, isAbsolute } from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const projectRoot = resolve(__dirname, "..");
+
+const [, , subcommand, ...rest] = process.argv;
+if (!subcommand || !["dev", "build", "preview"].includes(subcommand)) {
+  console.error(`用法: node scripts/cli.js <dev|build|preview> [-- --bundled [path]]`);
+  process.exit(1);
+}
+
+// `npm run dev -- --bundled` 会把 `--bundled` 当 npm 的 flag，所以用户实际敲的是
+// `npm run dev -- --bundled`，npm 转发后我们收到 ['--bundled', ...]。如果用户
+// 出于谨慎用了 `npm run dev -- -- --bundled`，第一个 '--' 是 sep，去掉就行。
+const args = rest[0] === "--" ? rest.slice(1) : rest;
+
+const bundledIdx = args.indexOf("--bundled");
+const isBundled = bundledIdx !== -1;
+
+let bundledPath = null;
+if (isBundled) {
+  const next = args[bundledIdx + 1];
+  if (next && !next.startsWith("--")) {
+    bundledPath = next;
+  } else {
+    bundledPath =
+      subcommand === "dev"
+        ? "assets/questions.example.json"
+        : "assets/questions.json";
+  }
+  const absPath = isAbsolute(bundledPath)
+    ? bundledPath
+    : resolve(projectRoot, bundledPath);
+  if (!existsSync(absPath)) {
+    console.error(`[cli] 找不到题库文件: ${absPath}`);
+    process.exit(1);
+  }
+  bundledPath = absPath;
+}
+
+const env = { ...process.env };
+if (isBundled) {
+  env.QUIZ_MODE = "bundled";
+  env.QUIZ_BUNDLED_PATH = bundledPath;
+} else {
+  env.QUIZ_MODE = "library";
+  delete env.QUIZ_BUNDLED_PATH;
+}
+
+const viteArgs = subcommand === "dev" ? [] : [subcommand];
+const viteBin = resolve(projectRoot, "node_modules/.bin/vite");
+
+const child = spawn(viteBin, viteArgs, { env, stdio: "inherit", cwd: projectRoot });
+child.on("exit", (code) => process.exit(code ?? 0));

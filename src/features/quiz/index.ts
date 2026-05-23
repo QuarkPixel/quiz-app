@@ -20,4 +20,4 @@ export {
   selectNextFromPool,
   shuffle,
 } from "./runtime";
-export type { LearningSegment, LoadRuntimeStateResult } from "./runtime";
+export type { LearningSegment } from "./runtime";

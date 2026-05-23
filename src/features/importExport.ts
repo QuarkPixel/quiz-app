@@ -21,9 +21,6 @@
 
 import type { StoredState, ActivePoolItem, QuestionType, UserSettings } from "../types";
 
-// 由 vite.config.ts 在编译期注入的题库哈希常量
-declare const __QUESTIONS_HASH__: string;
-
 // ── ID 编解码 ─────────────────────────────────────────────────────────────────
 
 const TYPE_TO_PREFIX: Record<string, string> = {
@@ -179,7 +176,7 @@ function fromBase64url(str: string): Uint8Array {
  * 将学习进度导出为紧凑编码字符串（异步，因为压缩是异步的）
  * 返回格式：{16字符hash}.{Base64url压缩数据}
  */
-export async function exportProgress(state: StoredState): Promise<string> {
+export async function exportProgress(state: StoredState, hash: string): Promise<string> {
   const filterCode = FILTER_TO_CODE[state.filterType] ?? 0;
 
   const compact: unknown[] = [
@@ -197,6 +194,7 @@ export async function exportProgress(state: StoredState): Promise<string> {
       state.settings.activePoolSize,
       state.settings.correctStreakToMaster,
       state.settings.correctStreakAfterMistake,
+      state.settings.selectionMode,
     ],
   ];
 
@@ -205,14 +203,14 @@ export async function exportProgress(state: StoredState): Promise<string> {
   const compressed = await deflateRaw(bytes);
   const encoded = toBase64url(compressed);
 
-  return `${__QUESTIONS_HASH__}.${encoded}`;
+  return `${hash}.${encoded}`;
 }
 
 /**
  * 从编码字符串导入学习进度（异步）
  * 成功返回 StoredState，失败抛出 Error（message 为中文，可直接展示给用户）
  */
-export async function importProgress(encoded: string): Promise<StoredState> {
+export async function importProgress(encoded: string, hash: string): Promise<StoredState> {
   const dotIndex = encoded.indexOf(".");
   if (dotIndex === -1) {
     throw new Error("格式无效：找不到版本分隔符，请检查导入内容是否完整。");
@@ -222,9 +220,9 @@ export async function importProgress(encoded: string): Promise<StoredState> {
   const base64urlPart = encoded.slice(dotIndex + 1);
 
   // 校验题库版本
-  if (importedHash !== __QUESTIONS_HASH__) {
+  if (importedHash !== hash) {
     throw new Error(
-      `题库版本不匹配，无法导入。\n当前版本：${__QUESTIONS_HASH__}\n导入版本：${importedHash}\n请使用相同题库导出的进度数据。`,
+      `题库版本不匹配，无法导入。\n当前版本：${hash}\n导入版本：${importedHash}\n请使用相同题库导出的进度数据。`,
     );
   }
 
@@ -294,6 +292,7 @@ export async function importProgress(encoded: string): Promise<StoredState> {
     activePoolSize: settingsRaw[1] as number,
     correctStreakToMaster: settingsRaw[2] as number,
     correctStreakAfterMistake: settingsRaw[3] as number,
+    selectionMode: settingsRaw[4] === "sequential" ? "sequential" : "random",
   };
 
   return {

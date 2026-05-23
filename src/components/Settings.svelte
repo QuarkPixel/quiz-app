@@ -20,6 +20,7 @@
 
     interface Props {
         appState: RuntimeState;
+        hash: string;
         filterOptions: FilterOption[];
         onFilterChange: (type: QuestionType | "all") => void;
         onReset: () => void;
@@ -30,6 +31,7 @@
 
     let {
         appState = $bindable(),
+        hash,
         filterOptions,
         onFilterChange,
         onReset,
@@ -43,6 +45,8 @@
     let importError = $state("");
     let exportStatus = $state<"idle" | "copied" | "error">("idle");
     let exportErrorMsg = $state("");
+
+    let importConfirmText = $state<string | null>(null);
 
     let resetConfirming = $state(false);
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
@@ -73,7 +77,7 @@
 
     async function handleExport() {
         try {
-            const encoded = await exportProgress(appState);
+            const encoded = await exportProgress(appState, hash);
             await navigator.clipboard.writeText(encoded);
             exportStatus = "copied";
             setTimeout(() => (exportStatus = "idle"), 2000);
@@ -98,10 +102,16 @@
             return;
         }
 
-        if (!confirm("导入进度将覆盖当前所有进度，确定继续吗？")) return;
+        importError = "";
+        importConfirmText = text.trim();
+    }
 
+    async function commitImport() {
+        if (!importConfirmText) return;
+        const text = importConfirmText;
+        importConfirmText = null;
         try {
-            const state = await importProgress(text.trim());
+            const state = await importProgress(text, hash);
             onImport(state);
             importError = "";
         } catch (e) {
@@ -313,5 +323,27 @@
                 {resetConfirming ? "再次点击以确认" : "重置所有进度"}
             </Button>
         </div>
+    </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+    open={importConfirmText !== null}
+    onOpenChange={(open) => {
+        if (!open) importConfirmText = null;
+    }}
+>
+    <Dialog.Content class="max-w-sm">
+        <Dialog.Header>
+            <Dialog.Title>导入进度</Dialog.Title>
+            <Dialog.Description>
+                导入进度将覆盖当前所有进度，无法撤销，确定继续吗？
+            </Dialog.Description>
+        </Dialog.Header>
+        <Dialog.Footer>
+            <Button variant="outline" onclick={() => (importConfirmText = null)}
+                >取消</Button
+            >
+            <Button onclick={commitImport}>导入</Button>
+        </Dialog.Footer>
     </Dialog.Content>
 </Dialog.Root>

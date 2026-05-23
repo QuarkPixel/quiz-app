@@ -2,15 +2,18 @@
 
 一款基于间隔重复算法的刷题应用，帮助你高效记忆和掌握题目。支持判断题、单选题、多选题、填空题四种题型。
 
-构建后生成单个 HTML 文件，方便分享和离线使用。
+提供两种构建模式：
+
+- **Library 模式**（默认）：浏览器内导入和管理多份题库，像一款独立软件。
+- **Bundled 模式**：把题库在构建时打包进 HTML，一份题库一个单文件，便于分发和离线分享。
 
 ## 特性
 
 - **间隔重复算法**：根据答题情况智能安排复习，答错的题目需要更多次正确才能掌握
 - **四种题型**：支持判断题、单选题、多选题、填空题
+- **双模式**：Library 模式管理多份题库；Bundled 模式打包成单文件分发
 - **答案预览**：一键浏览全部题目与正确答案，按题型分组展示，方便快速过一遍
-- **进度持久化**：学习进度保存在浏览器 localStorage 中
-- **单文件部署**：构建产物为单个 HTML 文件，易于传输，随时随地可刷题
+- **进度持久化**：学习进度保存在浏览器 localStorage 中，每个题库独立
 - **可调参数**：活动池大小、掌握所需正确次数等均可在设置中调整
 
 ## 快速开始
@@ -19,19 +22,46 @@
 # 安装依赖
 npm install
 
-# 开发模式
+# Library 模式（默认）开发服务器：空壳应用，在浏览器里导入题库
 npm run dev
 
-# 构建生产版本（生成 dist/index.html）
+# Bundled 模式开发：默认使用 assets/questions.example.json
+npm run dev -- --bundled
+
+# Bundled 模式开发，自定义题库路径
+npm run dev -- --bundled assets/questions.json
+
+# 构建：Library 模式 → dist/quiz-app.html
 npm run build
 
-# 预览生产版本
+# 构建：Bundled 模式 → dist/bundled-<hash>.html
+npm run build -- --bundled
+npm run build -- --bundled path/to/questions.json
+
+# 预览最近一次构建（自动打开产物 HTML）
 npm run preview
 ```
 
+> `--bundled` 是 cli wrapper 的 flag，所以走 `npm run` 时要前置 `--` 给 npm 转发：`npm run dev -- --bundled`。
+
+### 两种模式怎么选
+
+- **Library 模式**：日常使用、需要在不同题库间切换、想随时导入新题库——选这个。学习进度存浏览器，每份题库一份独立进度。
+- **Bundled 模式**：发布给别人、希望离线打开就能用、题库体积大到担心浏览器存储限制——选这个。构建产物是 `dist/bundled-<hash>.html`，发邮件、丢 U 盘、传 GitHub Pages 都行。
+
+两种模式的存储 key 都按题库哈希分（`quiz_app_state_<hash>`），所以**同一份 JSON 内容**在两种模式下的进度是互通的。
+
 ## 导入自定义题库
 
-题库存储在 `assets/questions.json` 文件中。替换此文件即可使用自己的题库。
+### Library 模式
+
+直接在 UI 左侧栏点击「导入」按钮选择 JSON 文件即可。文件不会上传到任何服务器，只存在浏览器 localStorage 中。
+
+如果浏览器存储空间不足（导入返回配额错误），可以改用 Bundled 模式把题库直接打包进 HTML。
+
+### Bundled 模式
+
+替换 `assets/questions.json`（或用 `--bundled path/to/your.json` 指定别的路径），然后 `npm run build -- --bundled`。
 
 ### JSON 格式说明
 
@@ -177,24 +207,20 @@ npm run preview
 ### 注意事项
 
 1. **ID 必须唯一**：每道题目的 `id` 必须不同，否则会导致进度记录混乱
-2. **ID 不可以以 `^` 开头**：`^` 是进度导入/导出编码的保留前缀，用于区分自定义 ID 与压缩后的标准 ID（如 `s3`、`b11`）。若题目 `id` 以 `^` 开头，`npm run dev` 启动时或 `npm run build` 时会报错并中止
+2. **ID 不可以以 `^` 开头**：`^` 是进度导入/导出编码的保留前缀。Bundled 构建时若题库 `id` 以 `^` 开头会直接报错中止；Library 模式下导入会被拒绝
 3. **索引从 0 开始**：`answer` 中的索引对应 `options` 数组的位置，第一个选项是 0
 4. **JSON 格式要求**：确保 JSON 格式正确，可以使用在线 JSON 校验工具检查
 5. **换行使用 `\n`**：题目内容中如需换行，使用 `\n` 转义字符
-6. **替换后重新构建**：修改 `assets/questions.json` 后需要重新运行 `npm run build`
+6. **Library 模式**导入后即时生效；**Bundled 模式**需要重新 `npm run build -- --bundled`
 
 ### 进度重置
 
-如果更换了题库，建议清除浏览器中的学习进度：
+每份题库的进度可独立重置：打开应用，进入该题库，点击右下角设置图标 → 「重置进度」。
 
-1. 打开应用
-2. 点击右上角设置图标
-3. 点击「重置进度」按钮
-
-或者在浏览器开发者工具的 Console 中执行：
+或者在浏览器开发者工具的 Console 中执行（替换 `<hash>` 为题库哈希）：
 
 ```javascript
-localStorage.removeItem('quiz-state')
+localStorage.removeItem('quiz_app_state_<hash>')
 ```
 
 ## 算法说明
@@ -203,8 +229,8 @@ localStorage.removeItem('quiz-state')
 
 - **活动池**：同时学习的题目数量（默认 25 题）
 - **掌握条件**：
-  - 从未答错：连续答对 1 次即掌握
-  - 曾经答错：连续答对 5 次才能掌握
+  - 从未答错：连续答对 3 次即掌握
+  - 曾经答错：连续答对 4 次才能掌握
 - **选题策略**：优先选择距离上次回答轮次较远的题目，避免连续重复
 
 这些参数可以在应用设置中调整。
@@ -214,6 +240,7 @@ localStorage.removeItem('quiz-state')
 - [Svelte 5](https://svelte.dev/) - 前端框架
 - [Vite](https://vitejs.dev/) - 构建工具
 - [TypeScript](https://www.typescriptlang.org/) - 类型系统
+- [shadcn-svelte](https://shadcn-svelte.com/) - UI 组件
 - [vite-plugin-singlefile](https://github.com/nickreese/vite-plugin-singlefile) - 单文件打包
 
 ## License

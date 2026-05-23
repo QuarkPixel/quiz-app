@@ -14,12 +14,9 @@ import {
   resetStoredState,
   saveState,
 } from "../../store";
-import type { LoadStoredStateResult } from "../../store";
 import type { Question, QuestionType, RuntimeState } from "../../types";
 import { normalizeFilterType } from "./filters";
 import { sanitizeUserSettings } from "./settings";
-
-export type { LoadStoredStateResult } from "../../store";
 
 export {
   computeLearningSegments,
@@ -34,21 +31,14 @@ export {
 };
 export type { LearningSegment } from "../../algorithm";
 
-export type LoadRuntimeStateResult =
-  | { kind: "ok"; state: RuntimeState }
-  | { kind: "hash_mismatch"; state: RuntimeState; savedHash: string; currentHash: string };
-
-export function loadRuntimeState(questions: Question[]): LoadRuntimeStateResult {
-  const result: LoadStoredStateResult = loadStoredState();
-  const storedState = result.state;
+export function loadRuntimeState(
+  questions: Question[],
+  hash: string,
+): RuntimeState {
+  const storedState = loadStoredState(hash);
   storedState.filterType = normalizeFilterType(storedState.filterType, questions);
   storedState.settings = sanitizeUserSettings(storedState.settings);
-  const state = buildRuntimeState(questions, storedState);
-
-  if (result.kind === "hash_mismatch") {
-    return { kind: "hash_mismatch", state, savedHash: result.savedHash, currentHash: result.currentHash };
-  }
-  return { kind: "ok", state };
+  return buildRuntimeState(questions, storedState);
 }
 
 export function rebuildRuntimeState(
@@ -71,8 +61,11 @@ export function rebuildRuntimeState(
   });
 }
 
-export function createResetRuntimeState(questions: Question[]): RuntimeState {
-  const resetState = resetStoredState();
+export function createResetRuntimeState(
+  questions: Question[],
+  hash: string,
+): RuntimeState {
+  const resetState = resetStoredState(hash);
   resetState.filterType = normalizeFilterType(resetState.filterType, questions);
   resetState.settings = sanitizeUserSettings(resetState.settings);
   return buildRuntimeState(questions, resetState);

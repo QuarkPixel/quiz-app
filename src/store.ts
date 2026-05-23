@@ -1,5 +1,9 @@
 /**
  * 状态存储模块
+ *
+ * 所有函数均按 bank 的 hash 分 key 存储。hash 由调用方提供：
+ *   - Bundled 模式：来自编译期注入的 __QUESTIONS_HASH__
+ *   - Library 模式：来自当前 active bank
  */
 
 import type {
@@ -12,14 +16,11 @@ import type {
 } from "./types";
 
 import {
-  STORAGE_KEY,
+  STORAGE_PREFIX_STATE,
   ACTIVE_POOL_SIZE,
   CORRECT_STREAK_TO_MASTER,
   CORRECT_STREAK_AFTER_MISTAKE,
 } from "./config";
-
-// 由 vite.config.ts 在编译期注入的题库哈希常量
-declare const __QUESTIONS_HASH__: string;
 
 /** 创建默认的用户设置 */
 export function createDefaultSettings(): UserSettings {
@@ -56,70 +57,66 @@ function createDefaultStoredState(): StoredState {
   };
 }
 
-/** loadStoredState 的返回结果 */
-export type LoadStoredStateResult =
-  | { kind: "ok"; state: StoredState }
-  | { kind: "hash_mismatch"; state: StoredState; savedHash: string; currentHash: string };
+function stateKey(hash: string): string {
+  return STORAGE_PREFIX_STATE + hash;
+}
 
-/** 从 localStorage 加载状态，同时校验题库哈希 */
-export function loadStoredState(): LoadStoredStateResult {
+/** 从 localStorage 加载指定 bank 的状态 */
+export function loadStoredState(hash: string): StoredState {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = localStorage.getItem(stateKey(hash));
     if (saved) {
-      const parsed = JSON.parse(saved) as StoredState & { questionsHash?: string };
+      const parsed = JSON.parse(saved) as StoredState;
       const defaultState = createDefaultStoredState();
-      const state: StoredState = {
+      return {
         ...defaultState,
         ...parsed,
-        // 确保 settings 对象存在且包含所有字段
         settings: {
           ...defaultState.settings,
           ...parsed.settings,
         },
       };
-
-      // 校验题库哈希：有记录且不一致时返回 hash_mismatch
-      if (parsed.questionsHash && parsed.questionsHash !== __QUESTIONS_HASH__) {
-        return { kind: "hash_mismatch", state, savedHash: parsed.questionsHash, currentHash: __QUESTIONS_HASH__ };
-      }
-
-      return { kind: "ok", state };
     }
   } catch (e) {
     console.error("Failed to load state:", e);
   }
-  return { kind: "ok", state: createDefaultStoredState() };
+  return createDefaultStoredState();
 }
 
-/** 保存状态到 localStorage（只保存需要持久化的部分，同时写入当前题库哈希） */
-export function saveState(state: RuntimeState): void {
-  const toStore = {
+/**
+ * 保存指定 bank 的状态到 localStorage。
+ * 配额异常仅 warn 不抛错——做题流不应因此被打断。
+ */
+export function saveState(hash: string, state: RuntimeState): void {
+  const toStore: StoredState = {
     masteredIds: state.masteredIds,
     activePool: state.activePool,
     currentRound: state.currentRound,
     filterType: state.filterType,
     settings: state.settings,
-    questionsHash: __QUESTIONS_HASH__,
   };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    localStorage.setItem(stateKey(hash), JSON.stringify(toStore));
   } catch (e) {
-    console.error("Failed to save state:", e);
+    console.warn("Failed to save state:", e);
   }
 }
 
-/** 重置所有进度 */
-export function resetStoredState(): StoredState {
-  const previousState = loadStoredState().state;
+/** 重置指定 bank 的进度（保留 filterType 和 settings） */
+export function resetStoredState(hash: string): StoredState {
+  const previous = loadStoredState(hash);
   const defaultState = createDefaultStoredState();
 
-  localStorage.removeItem(STORAGE_KEY);
+  try {
+    localStorage.removeItem(stateKey(hash));
+  } catch (e) {
+    console.warn("Failed to remove state:", e);
+  }
 
   return {
     ...defaultState,
-    // 保留用户配置
-    filterType: previousState.filterType,
-    settings: previousState.settings,
+    filterType: previous.filterType,
+    settings: previous.settings,
   };
 }
 

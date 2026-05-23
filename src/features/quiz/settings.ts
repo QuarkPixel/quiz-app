@@ -14,9 +14,9 @@ import {
 } from "../../config";
 
 const SETTINGS_BOUNDS = {
-  activePoolSize: { min: 1, max: 200 },
-  correctStreakToMaster: { min: 1, max: 50 },
-  correctStreakAfterMistake: { min: 1, max: 50 },
+  activePoolSize: { min: 5, max: 100 },
+  correctStreakToMaster: { min: 1, max: 10 },
+  correctStreakAfterMistake: { min: 1, max: 20 },
 } as const;
 
 interface ReconcileSettingsResult {
