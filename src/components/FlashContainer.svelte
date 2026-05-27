@@ -1,60 +1,27 @@
 <script lang="ts">
+    import { onDestroy } from "svelte";
     import { FLASH_ANIMATION_DURATION } from "../config";
 
-    let container: HTMLDivElement;
+    // 直接挂到 document.body，避免落入任何祖先 stacking context / overflow 裁切
+    const active = new Set<HTMLDivElement>();
 
     export function flash(isCorrect: boolean): void {
-        if (!container) return;
-
-        const flashLayer = document.createElement("div");
-        flashLayer.className = isCorrect
+        const layer = document.createElement("div");
+        layer.className = isCorrect
             ? "flash-layer-correct"
             : "flash-layer-wrong";
-        container.appendChild(flashLayer);
+        document.body.appendChild(layer);
+        active.add(layer);
 
         setTimeout(() => {
-            flashLayer.remove();
+            layer.remove();
+            active.delete(layer);
         }, FLASH_ANIMATION_DURATION);
     }
+
+    onDestroy(() => {
+        active.forEach((layer) => layer.remove());
+        active.clear();
+    });
 </script>
 
-<div
-    bind:this={container}
-    class="pointer-events-none fixed inset-0 -z-10"
-></div>
-
-<style>
-    :global(.flash-layer-correct),
-    :global(.flash-layer-wrong) {
-        position: absolute;
-        inset: 0;
-    }
-
-    :global(.flash-layer-correct) {
-        animation: flashCorrect 6s ease;
-    }
-
-    :global(.flash-layer-wrong) {
-        animation: flashWrong 6s ease;
-    }
-
-    @keyframes flashCorrect {
-        0%,
-        100% {
-            background: transparent;
-        }
-        10% {
-            background: rgba(129, 145, 47, 0.06);
-        }
-    }
-
-    @keyframes flashWrong {
-        0%,
-        100% {
-            background: transparent;
-        }
-        10% {
-            background: rgba(224, 63, 79, 0.06);
-        }
-    }
-</style>

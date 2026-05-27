@@ -4,7 +4,9 @@
 
     import QuizView from "./components/QuizView.svelte";
     import Sidebar from "./components/Sidebar.svelte";
+    import HeaderSidebarTrigger from "./components/HeaderSidebarTrigger.svelte";
     import * as SidebarUI from "$lib/components/ui/sidebar";
+    import * as Tooltip from "$lib/components/ui/tooltip";
 
     import { createSource } from "./source";
     import type { Bank } from "./source/types";
@@ -34,7 +36,7 @@
 {#snippet contentBody()}
     <header class="flex items-center gap-3 px-5 py-5 sm:px-8 sm:py-6">
         {#if isLibrary}
-            <SidebarUI.Trigger class="-ml-1" />
+            <HeaderSidebarTrigger />
         {/if}
         <div
             class="text-muted-foreground mx-auto [&_svg]:h-4 [&_svg]:w-auto"
@@ -71,7 +73,10 @@
         </SidebarUI.Inset>
     </SidebarUI.Provider>
 {:else}
-    <div class="flex min-h-screen flex-col">
-        {@render contentBody()}
-    </div>
+    <Tooltip.Provider delayDuration={0}>
+        <div class="flex h-full flex-col">
+            {@render contentBody()}
+        </div>
+    </Tooltip.Provider>
 {/if}
+

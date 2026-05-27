@@ -145,9 +145,27 @@
     --radius-xl: calc(var(--radius) + 4px);
     --font-sans:
         -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    /* 弹簧曲线：进入（有 overshoot），用于"出现/打开" */
+    --ease-spring: cubic-bezier(0.32, 1.3, 0.41, 1);
+    /* 关闭曲线：去 overshoot 的 mirror，用于"消失/关闭" */
+    --ease-spring-out: cubic-bezier(0.32, 0, 0.41, 1);
+    /* 加重缓动：开头加速然后长长地缓出，适合大尺寸 layout 过渡 */
+    --ease-emphasized: cubic-bezier(0.42, 0, 0, 1);
 }
 
 @layer base {
+    html,
+    body,
+    #app {
+        /* 锁定根容器高度。让 main 内部出现 overflow-y-auto 滚动条，
+           而不是任何外层（body / Sidebar Provider / Inset）被内容撑高触发整页滚动 */
+        height: 100svh;
+        overflow: hidden;
+    }
+    #app {
+        display: flex;
+        flex-direction: column;
+    }
     * {
         border-color: var(--border);
     }
@@ -157,5 +175,38 @@
         font-family: var(--font-sans);
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+    }
+}
+
+/* FlashContainer 的 flash layer，直接挂在 document.body 下，全局样式 */
+.flash-layer-correct,
+.flash-layer-wrong {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+.flash-layer-correct {
+    animation: flashCorrect 6s ease;
+}
+.flash-layer-wrong {
+    animation: flashWrong 6s ease;
+}
+@keyframes flashCorrect {
+    0%,
+    100% {
+        background: transparent;
+    }
+    10% {
+        background: rgba(129, 145, 47, 0.06);
+    }
+}
+@keyframes flashWrong {
+    0%,
+    100% {
+        background: transparent;
+    }
+    10% {
+        background: rgba(224, 63, 79, 0.06);
     }
 }

@@ -6,10 +6,13 @@
         Option,
         RuntimeState,
         ActivePoolItem,
+        StoredState,
     } from "../types";
     import FlashContainer from "./FlashContainer.svelte";
     import ReviewView from "./ReviewView.svelte";
     import Settings from "./Settings.svelte";
+    import PoolPanel from "./PoolPanel.svelte";
+    import AlertToast from "./AlertToast.svelte";
 
     import {
         buildFilterOptions,
@@ -31,10 +34,19 @@
         selectNextFromPool,
         shuffle,
     } from "../features/quiz";
+    import {
+        copyProgressToClipboard,
+        readProgressFromClipboard,
+        parseImportedProgress,
+    } from "../features/quiz/progressActions";
 
     import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
+    import * as Dialog from "$lib/components/ui/dialog";
+    import * as Tooltip from "$lib/components/ui/tooltip";
+    import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { cn } from "$lib/utils";
+    import { modKeyLabel } from "$lib/platform";
     import IconCircleHalf2 from "@tabler/icons-svelte/icons/circle-half-2";
     import IconCircleDot from "@tabler/icons-svelte/icons/circle-dot";
     import IconChecks from "@tabler/icons-svelte/icons/checks";
@@ -43,8 +55,10 @@
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
     import IconCheck from "@tabler/icons-svelte/icons/check";
     import IconX from "@tabler/icons-svelte/icons/x";
+    import IconStack2 from "@tabler/icons-svelte/icons/stack-2";
+    import IconSettings from "@tabler/icons-svelte/icons/settings";
 
-    import { PROGRESS_SIDE_CAP_PERCENT } from "../config";
+    import { PROGRESS_SIDE_CAP_PERCENT, SHORTCUTS } from "../config";
     import type { Bank } from "../source/types";
 
     let { bank }: { bank: Bank } = $props();
@@ -65,8 +79,14 @@
     let showResult = $state(false);
     let isCorrect = $state(false);
     let flashContainer: FlashContainer;
+    let toast: AlertToast;
 
     let showReview = $state(false);
+    let showSettings = $state(false);
+    let showPool = $state(false);
+
+    let exportStatus = $state<"idle" | "copied" | "error">("idle");
+    let importConfirmText = $state<string | null>(null);
 
     let progressFocused = $state(false);
 
@@ -199,7 +219,104 @@
         }
     }
 
+    function togglePool(): void {
+        showPool = !showPool;
+    }
+    function toggleReview(): void {
+        showReview = !showReview;
+    }
+    function toggleSettings(): void {
+        showSettings = !showSettings;
+    }
+    function toggleAutoNext(): void {
+        const next = !appState.settings.autoNextOnCorrect;
+        appState.settings.autoNextOnCorrect = next;
+        handlePreferenceChange();
+        toast?.show(
+            next ? "答对自动下一题已开启" : "答对自动下一题已关闭",
+            next
+                ? "答对后会立即进入下一题，无需手动点击。"
+                : "答对后停留在结果页，按空格 / 回车继续。",
+        );
+    }
+
+    async function handleExport(): Promise<void> {
+        if (exportStatus !== "idle") return;
+        const result = await copyProgressToClipboard(appState, hash);
+        if (result.ok) {
+            exportStatus = "copied";
+            setTimeout(() => (exportStatus = "idle"), 2000);
+            toast?.show("进度已复制到剪贴板", "粘贴到任意位置即可备份。", "success");
+        } else {
+            exportStatus = "error";
+            setTimeout(() => (exportStatus = "idle"), 3000);
+            toast?.show("导出失败", result.error, "destructive");
+        }
+    }
+
+    async function handleImport(): Promise<void> {
+        const result = await readProgressFromClipboard();
+        if (!result.ok) {
+            toast?.show("无法导入", result.error, "destructive");
+            return;
+        }
+        importConfirmText = result.text;
+    }
+
+    async function commitImport(): Promise<void> {
+        if (!importConfirmText) return;
+        const text = importConfirmText;
+        importConfirmText = null;
+        const parsed = await parseImportedProgress(text, hash);
+        if (!parsed.ok) {
+            toast?.show("导入失败", parsed.error, "destructive");
+            return;
+        }
+        onImport(parsed.state);
+        toast?.show("进度已导入", "已覆盖当前进度。", "success");
+    }
+
     function handleKeydown(event: KeyboardEvent): void {
+        const isMod = event.metaKey || event.ctrlKey;
+
+        // Cmd/Ctrl + 单键：全局快捷键。在输入框内不抢，让 Cmd+A 等浏览器默认生效。
+        if (isMod && !event.altKey && !event.shiftKey && !isEditingTarget(event)) {
+            const key = event.key.toLowerCase();
+            // Cmd+B (sidebar) 留给 Sidebar context 处理
+            if (key === SHORTCUTS.sidebar) return;
+            if (key === SHORTCUTS.togglePool) {
+                event.preventDefault();
+                togglePool();
+                return;
+            }
+            if (key === SHORTCUTS.toggleReview) {
+                event.preventDefault();
+                toggleReview();
+                return;
+            }
+            if (key === SHORTCUTS.toggleSettings) {
+                event.preventDefault();
+                toggleSettings();
+                return;
+            }
+            if (key === SHORTCUTS.toggleAutoNext) {
+                event.preventDefault();
+                toggleAutoNext();
+                return;
+            }
+            if (key === SHORTCUTS.importProgress) {
+                event.preventDefault();
+                handleImport();
+                return;
+            }
+            if (key === SHORTCUTS.exportProgress) {
+                event.preventDefault();
+                handleExport();
+                return;
+            }
+            return;
+        }
+
         if (event.code !== "Space" && event.code !== "Enter") return;
 
         const target = event.target as HTMLElement | null;
@@ -263,8 +380,8 @@
         initialize();
     }
 
-    function handleImport(newState: import("../types").StoredState): void {
-        const stateWithPending: import("../types").RuntimeState = {
+    function onImport(newState: StoredState): void {
+        const stateWithPending: RuntimeState = {
             ...newState,
             pendingIds: [],
         };
@@ -388,10 +505,20 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <FlashContainer bind:this={flashContainer} />
+<AlertToast bind:this={toast} />
 
-<main class="flex flex-1 items-center justify-center px-4 sm:px-6">
-    <div class="flex w-full max-w-2xl flex-col gap-5">
-        <div class="flex flex-col gap-5">
+<main
+    class="flex flex-1 min-h-0 items-center justify-center px-4 sm:px-6 overflow-y-auto"
+>
+    <div
+        class={cn(
+            "grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
+            "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
+            showPool && "max-lg:grid-rows-[auto_min(45vh,300px)] max-lg:gap-y-6",
+            showPool && "lg:grid-cols-[minmax(0,42rem)_280px]",
+        )}
+    >
+        <div class="flex w-full min-w-0 flex-col gap-5">
             {#if currentQuestion && (currentPoolItem || showResult)}
                 {@const TypeIcon = typeIconFor(currentQuestion.type)}
                 <div class="flex items-center gap-3">
@@ -649,88 +776,181 @@
                     {/if}
                 </div>
             {/if}
-        </div>
 
-        <button
-            type="button"
-            class={cn(
-                "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
-                progressFocused && "focused",
-            )}
-            onclick={toggleProgressFocus}
-            disabled={stats.learning === 0}
-            aria-label={progressFocused ? "显示完整进度" : "聚焦学习中进度"}
-        >
-            <div
-                class="text-muted-foreground mb-1.5 flex justify-between text-xs tabular-nums"
-            >
-                <span>{stats.mastered}</span>
-                <span>
-                    {progressFocused
-                        ? stats.pending
-                        : stats.learning + stats.pending}
-                </span>
-            </div>
-            <div
+            <button
+                type="button"
                 class={cn(
-                    "progress-bar flex h-[3px] gap-1 transition-all duration-300",
-                    "[&_*]:transition-all [&_*]:duration-500 [&_*]:ease-[cubic-bezier(0.32,1.3,0.41,1)]",
-                    progressFocused && "h-[7px]",
+                    "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
+                    progressFocused && "focused",
                 )}
+                onclick={toggleProgressFocus}
+                disabled={stats.learning === 0}
+                aria-label={progressFocused ? "显示完整进度" : "聚焦学习中进度"}
             >
                 <div
-                    class={cn(
-                        "mastered-segment bg-success rounded-sm",
-                        progressFocused && "opacity-55",
-                        masteredCelebrating && "celebrate",
-                    )}
-                    style="--w: {masteredDisplayWidth}%; --focused: {progressFocused
-                        ? 1
-                        : 0}"
-                ></div>
-                <div
-                    class="flex overflow-hidden rounded-sm"
-                    style="width: {learningDisplayWidth}%"
+                    class="text-muted-foreground mb-1.5 flex justify-between text-xs tabular-nums"
                 >
-                    {#each learningSegments as seg}
-                        <div
-                            style="width: {seg.widthPercent}%; background: {seg.color}"
-                        ></div>
-                    {/each}
+                    <span>{stats.mastered}</span>
+                    <span>
+                        {progressFocused
+                            ? stats.pending
+                            : stats.learning + stats.pending}
+                    </span>
                 </div>
                 <div
                     class={cn(
-                        "bg-foreground/15 rounded-sm",
-                        progressFocused && "opacity-55",
+                        "progress-bar flex h-[3px] gap-1 transition-all duration-300",
+                        "[&_*]:transition-all [&_*]:duration-500 [&_*]:ease-spring",
+                        progressFocused && "h-[7px]",
                     )}
-                    style="width: {pendingDisplayWidth}%"
-                ></div>
+                >
+                    <div
+                        class={cn(
+                            "mastered-segment bg-success rounded-sm",
+                            progressFocused && "opacity-55",
+                            masteredCelebrating && "celebrate",
+                        )}
+                        style="--w: {masteredDisplayWidth}%; --focused: {progressFocused
+                            ? 1
+                            : 0}"
+                    ></div>
+                    <div
+                        class="flex overflow-hidden rounded-sm"
+                        style="width: {learningDisplayWidth}%"
+                    >
+                        {#each learningSegments as seg}
+                            <div
+                                style="width: {seg.widthPercent}%; background: {seg.color}"
+                            ></div>
+                        {/each}
+                    </div>
+                    <div
+                        class={cn(
+                            "bg-foreground/15 rounded-sm",
+                            progressFocused && "opacity-55",
+                        )}
+                        style="width: {pendingDisplayWidth}%"
+                    ></div>
+                </div>
+            </button>
+        </div>
+
+        <aside
+            class={cn(
+                "pool-edge-mask min-w-0 overflow-hidden",
+                "row-start-2 col-start-1",
+                "lg:row-start-1 lg:col-start-2 lg:flex lg:justify-end",
+            )}
+            aria-hidden={!showPool}
+        >
+            <div
+                class={cn(
+                    "flex h-full w-full flex-col",
+                    "lg:h-[min(70vh,520px)] lg:w-[280px] lg:shrink-0 lg:pl-8",
+                )}
+            >
+                <PoolPanel
+                    {questions}
+                    state={appState}
+                    currentQuestionId={currentQuestion?.id ?? null}
+                />
             </div>
-        </button>
+        </aside>
     </div>
 </main>
 
-<footer class="flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
-    <Settings
-        bind:appState
-        {hash}
-        {filterOptions}
-        onFilterChange={setFilterType}
-        onReset={handleReset}
-        onAlgorithmChange={handleAlgorithmChange}
-        onPreferenceChange={handlePreferenceChange}
-        onImport={handleImport}
-    />
-    <button
-        type="button"
-        class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[10deg]"
-        onclick={() => (showReview = true)}
-        aria-label="答案预览"
-        title="答案预览"
-    >
-        <IconBook2 size={22} stroke={1.5} />
-    </button>
+<footer
+    class="flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5"
+>
+    <Tooltip.Root>
+        <Tooltip.Trigger>
+            {#snippet child({ props })}
+                <button
+                    {...props}
+                    type="button"
+                    class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[30deg] aria-expanded:text-foreground"
+                    aria-expanded={showSettings}
+                    aria-label="当前题库设置"
+                    onclick={toggleSettings}
+                >
+                    <IconSettings size={22} stroke={1.5} />
+                </button>
+            {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content side="top">
+            <span>设置</span>
+            <KbdGroup>
+                <Kbd>{modKeyLabel}</Kbd>
+                <Kbd>{SHORTCUTS.toggleSettings.toUpperCase()}</Kbd>
+            </KbdGroup>
+        </Tooltip.Content>
+    </Tooltip.Root>
+
+    <div class="flex items-center gap-1">
+        <Tooltip.Root>
+            <Tooltip.Trigger>
+                {#snippet child({ props })}
+                    <button
+                        {...props}
+                        type="button"
+                        class={cn(
+                            "text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:-rotate-[8deg]",
+                            showPool && "text-foreground bg-foreground/8",
+                        )}
+                        aria-pressed={showPool}
+                        aria-label="查看活动池"
+                        onclick={togglePool}
+                    >
+                        <IconStack2 size={22} stroke={1.5} />
+                    </button>
+                {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content side="top">
+                <span>{showPool ? "收起" : "展开"}活动池</span>
+                <KbdGroup>
+                    <Kbd>{modKeyLabel}</Kbd>
+                    <Kbd>{SHORTCUTS.togglePool.toUpperCase()}</Kbd>
+                </KbdGroup>
+            </Tooltip.Content>
+        </Tooltip.Root>
+
+        <Tooltip.Root>
+            <Tooltip.Trigger>
+                {#snippet child({ props })}
+                    <button
+                        {...props}
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[10deg]"
+                        aria-label="答案预览"
+                        onclick={toggleReview}
+                    >
+                        <IconBook2 size={22} stroke={1.5} />
+                    </button>
+                {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content side="top">
+                <span>答案预览</span>
+                <KbdGroup>
+                    <Kbd>{modKeyLabel}</Kbd>
+                    <Kbd>{SHORTCUTS.toggleReview.toUpperCase()}</Kbd>
+                </KbdGroup>
+            </Tooltip.Content>
+        </Tooltip.Root>
+    </div>
 </footer>
+
+<Settings
+    bind:open={showSettings}
+    bind:appState
+    {filterOptions}
+    {exportStatus}
+    onFilterChange={setFilterType}
+    onReset={handleReset}
+    onAlgorithmChange={handleAlgorithmChange}
+    onPreferenceChange={handlePreferenceChange}
+    onExport={handleExport}
+    onImport={handleImport}
+/>
 
 <ReviewView
     {questions}
@@ -740,7 +960,52 @@
     onOpenChange={(o) => (showReview = o)}
 />
 
+<!-- 导入确认 dialog（独立于 Settings） -->
+<Dialog.Root
+    open={importConfirmText !== null}
+    onOpenChange={(open) => {
+        if (!open) importConfirmText = null;
+    }}
+>
+    <Dialog.Content class="max-w-sm">
+        <Dialog.Header>
+            <Dialog.Title>导入进度</Dialog.Title>
+            <Dialog.Description>
+                导入进度将覆盖当前所有进度，无法撤销，确定继续吗？
+            </Dialog.Description>
+        </Dialog.Header>
+        <Dialog.Footer>
+            <Button
+                variant="outline"
+                onclick={() => (importConfirmText = null)}
+            >
+                取消
+            </Button>
+            <Button onclick={commitImport}>导入</Button>
+        </Dialog.Footer>
+    </Dialog.Content>
+</Dialog.Root>
+
 <style>
+    /* 大屏左右布局时给活动池左侧加渐变 mask，柔化裁切边。
+       小屏上下布局时无需 mask（PoolPanel 自身顶/底有渐变）。 */
+    @media (min-width: 64rem) {
+        .pool-edge-mask {
+            -webkit-mask-image: linear-gradient(
+                to right,
+                transparent 0,
+                black 32px,
+                black 100%
+            );
+            mask-image: linear-gradient(
+                to right,
+                transparent 0,
+                black 32px,
+                black 100%
+            );
+        }
+    }
+
     .group:not(:disabled):hover .progress-bar {
         height: 4px;
     }

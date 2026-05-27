@@ -1,7 +1,8 @@
 <script lang="ts">
-    import type { QuestionType, RuntimeState, StoredState } from "../types";
+    import type { QuestionType, RuntimeState } from "../types";
     import type { FilterOption } from "../features/quiz/filters";
-    import { exportProgress, importProgress } from "../features/importExport";
+    import { SHORTCUTS } from "../config";
+    import { modKeyLabel } from "$lib/platform";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Button } from "$lib/components/ui/button";
     import { Switch } from "$lib/components/ui/switch";
@@ -9,9 +10,9 @@
     import { Label } from "$lib/components/ui/label";
     import { Separator } from "$lib/components/ui/separator";
     import * as ToggleGroup from "$lib/components/ui/toggle-group";
+    import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { cn } from "$lib/utils";
     import QuestionFilters from "./QuestionFilters.svelte";
-    import IconSettings from "@tabler/icons-svelte/icons/settings";
     import IconShuffle from "@tabler/icons-svelte/icons/arrows-shuffle";
     import IconArrowsRight from "@tabler/icons-svelte/icons/arrow-narrow-right";
     import IconCopy from "@tabler/icons-svelte/icons/copy";
@@ -19,34 +20,30 @@
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
 
     interface Props {
+        open?: boolean;
         appState: RuntimeState;
-        hash: string;
         filterOptions: FilterOption[];
+        exportStatus: "idle" | "copied" | "error";
         onFilterChange: (type: QuestionType | "all") => void;
         onReset: () => void;
         onAlgorithmChange: () => void;
         onPreferenceChange: () => void;
-        onImport: (state: StoredState) => void;
+        onExport: () => void;
+        onImport: () => void;
     }
 
     let {
+        open = $bindable(false),
         appState = $bindable(),
-        hash,
         filterOptions,
+        exportStatus,
         onFilterChange,
         onReset,
         onAlgorithmChange,
         onPreferenceChange,
+        onExport,
         onImport,
     }: Props = $props();
-
-    let open = $state(false);
-
-    let importError = $state("");
-    let exportStatus = $state<"idle" | "copied" | "error">("idle");
-    let exportErrorMsg = $state("");
-
-    let importConfirmText = $state<string | null>(null);
 
     let resetConfirming = $state(false);
     let resetTimer: ReturnType<typeof setTimeout> | null = null;
@@ -74,60 +71,9 @@
             resetConfirming = false;
         }
     });
-
-    async function handleExport() {
-        try {
-            const encoded = await exportProgress(appState, hash);
-            await navigator.clipboard.writeText(encoded);
-            exportStatus = "copied";
-            setTimeout(() => (exportStatus = "idle"), 2000);
-        } catch (e) {
-            exportErrorMsg = e instanceof Error ? e.message : "导出失败";
-            exportStatus = "error";
-            setTimeout(() => (exportStatus = "idle"), 3000);
-        }
-    }
-
-    async function handleImport() {
-        let text: string;
-        try {
-            text = await navigator.clipboard.readText();
-        } catch {
-            importError = "无法访问剪贴板，请检查浏览器权限。";
-            return;
-        }
-
-        if (!text.trim()) {
-            importError = "剪贴板为空，请先复制导出的进度字符串。";
-            return;
-        }
-
-        importError = "";
-        importConfirmText = text.trim();
-    }
-
-    async function commitImport() {
-        if (!importConfirmText) return;
-        const text = importConfirmText;
-        importConfirmText = null;
-        try {
-            const state = await importProgress(text, hash);
-            onImport(state);
-            importError = "";
-        } catch (e) {
-            importError = e instanceof Error ? e.message : "未知错误";
-        }
-    }
 </script>
 
 <Dialog.Root bind:open>
-    <Dialog.Trigger
-        class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[30deg]"
-        aria-label="当前题库设置"
-        title="当前题库设置"
-    >
-        <IconSettings size={22} stroke={1.5} />
-    </Dialog.Trigger>
     <Dialog.Content
         class="bg-card flex max-h-[calc(100vh-4rem)] w-[calc(100vw-2rem)] max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
     >
@@ -200,8 +146,15 @@
                     答题行为
                 </h3>
                 <div class="flex items-center justify-between gap-3">
-                    <Label for="auto-next" class="text-sm font-normal">
+                    <Label
+                        for="auto-next"
+                        class="flex items-center gap-2 text-sm font-normal"
+                    >
                         答对自动下一题
+                        <KbdGroup class="text-[10px]">
+                            <Kbd>{modKeyLabel}</Kbd>
+                            <Kbd>{SHORTCUTS.toggleAutoNext.toUpperCase()}</Kbd>
+                        </KbdGroup>
                     </Label>
                     <Switch
                         id="auto-next"
@@ -288,34 +241,37 @@
                               ? "destructive"
                               : "outline"}
                         size="sm"
-                        class="flex-1"
-                        onclick={handleExport}
+                        class="flex-1 justify-between gap-2"
+                        onclick={onExport}
                         disabled={exportStatus !== "idle"}
-                        title={exportStatus === "error"
-                            ? exportErrorMsg
-                            : "复制到剪贴板"}
                     >
-                        <IconCopy size={14} stroke={1.75} />
-                        {#if exportStatus === "copied"}已复制
-                        {:else if exportStatus === "error"}导出失败
-                        {:else}导出{/if}
+                        <span class="flex items-center gap-1.5">
+                            <IconCopy size={14} stroke={1.75} />
+                            {#if exportStatus === "copied"}已复制
+                            {:else if exportStatus === "error"}导出失败
+                            {:else}导出{/if}
+                        </span>
+                        <KbdGroup class="text-[10px]">
+                            <Kbd>{modKeyLabel}</Kbd>
+                            <Kbd>{SHORTCUTS.exportProgress.toUpperCase()}</Kbd>
+                        </KbdGroup>
                     </Button>
                     <Button
                         variant="outline"
                         size="sm"
-                        class="flex-1"
-                        onclick={handleImport}
-                        title="从剪贴板导入"
+                        class="flex-1 justify-between gap-2"
+                        onclick={onImport}
                     >
-                        <IconClipboard size={14} stroke={1.75} />
-                        导入
+                        <span class="flex items-center gap-1.5">
+                            <IconClipboard size={14} stroke={1.75} />
+                            导入
+                        </span>
+                        <KbdGroup class="text-[10px]">
+                            <Kbd>{modKeyLabel}</Kbd>
+                            <Kbd>{SHORTCUTS.importProgress.toUpperCase()}</Kbd>
+                        </KbdGroup>
                     </Button>
                 </div>
-                {#if importError}
-                    <p class="text-destructive text-xs whitespace-pre-wrap">
-                        {importError}
-                    </p>
-                {/if}
             </section>
 
             <Separator />
@@ -333,27 +289,5 @@
                 {resetConfirming ? "再次点击以确认" : "重置所有进度"}
             </Button>
         </div>
-    </Dialog.Content>
-</Dialog.Root>
-
-<Dialog.Root
-    open={importConfirmText !== null}
-    onOpenChange={(open) => {
-        if (!open) importConfirmText = null;
-    }}
->
-    <Dialog.Content class="max-w-sm">
-        <Dialog.Header>
-            <Dialog.Title>导入进度</Dialog.Title>
-            <Dialog.Description>
-                导入进度将覆盖当前所有进度，无法撤销，确定继续吗？
-            </Dialog.Description>
-        </Dialog.Header>
-        <Dialog.Footer>
-            <Button variant="outline" onclick={() => (importConfirmText = null)}
-                >取消</Button
-            >
-            <Button onclick={commitImport}>导入</Button>
-        </Dialog.Footer>
     </Dialog.Content>
 </Dialog.Root>
