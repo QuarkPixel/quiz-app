@@ -31,6 +31,9 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
       correctStreakAfterMistake: 5,
       selectionMode: "sequential",
     },
+    ui: {
+      progressFocused: false,
+    },
     ...overrides,
   };
 }
@@ -96,6 +99,7 @@ describe("exportProgress / importProgress round-trip", () => {
         correctStreakAfterMistake: 4,
         selectionMode: "random",
       },
+      ui: { progressFocused: false },
     };
     const encoded = await exportProgress(state, HASH);
     const restored = await importProgress(encoded, HASH);
@@ -334,5 +338,30 @@ describe("importProgress 错误处理", () => {
     const encoded = await encodeCompact([[], [], 0, 0, [1, 10, 3, 4]], HASH);
     const restored = await importProgress(encoded, HASH);
     expect(restored.settings.selectionMode).toBe("random");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 向后兼容：v1 格式（无 ui 段，compact.length === 5）
+// ---------------------------------------------------------------------------
+
+describe("向后兼容：v1 没有 ui 段", () => {
+  it("v1 格式可被导入，ui 字段为默认值", async () => {
+    // v1 compact 只有 5 段，没有第 6 段 ui
+    const v1Encoded = await encodeCompact(
+      [[], [], 0, 0, [0, 25, 3, 4, "random"]],
+      HASH,
+    );
+    const restored = await importProgress(v1Encoded, HASH);
+    expect(restored.ui).toEqual({ progressFocused: false });
+  });
+
+  it("v2 格式 ui.progressFocused=true round-trip", async () => {
+    const v2Encoded = await encodeCompact(
+      [[], [], 0, 0, [0, 25, 3, 4, "random"], [1]],
+      HASH,
+    );
+    const restored = await importProgress(v2Encoded, HASH);
+    expect(restored.ui.progressFocused).toBe(true);
   });
 });

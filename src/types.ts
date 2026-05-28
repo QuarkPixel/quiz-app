@@ -44,6 +44,12 @@ export interface UserSettings {
   selectionMode: "random" | "sequential";
 }
 
+/** UI 偏好（按 bank 持久化，但和「学习算法」分开） */
+export interface UiPreferences {
+  /** 进度条是否聚焦学习中部分 */
+  progressFocused: boolean;
+}
+
 /** 持久化存储的状态 */
 export interface StoredState {
   /** 已掌握的题目 ID */
@@ -54,8 +60,10 @@ export interface StoredState {
   currentRound: number;
   /** 题型筛选 */
   filterType: QuestionType | "all";
-  /** 用户设置 */
+  /** 用户设置（学习算法相关） */
   settings: UserSettings;
+  /** UI 偏好（不影响学习算法） */
+  ui: UiPreferences;
 }
 
 /** 运行时状态（包含计算出的待学习题目） */

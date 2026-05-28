@@ -89,8 +89,6 @@
     let exportStatus = $state<"idle" | "copied" | "error">("idle");
     let importConfirmText = $state<string | null>(null);
 
-    let progressFocused = $state(false);
-
     /**
      * submit 之前的 appState 快照。
      * 用于答错后用户点「当作正确」按钮：rewind 到 submit 前的状态再以 isCorrect=true 重跑，
@@ -104,7 +102,8 @@
 
     function toggleProgressFocus(): void {
         if (stats.learning === 0) return;
-        progressFocused = !progressFocused;
+        appState.ui.progressFocused = !appState.ui.progressFocused;
+        saveState(hash, appState);
     }
 
     function focusBlankInputIfNeeded(): void {
@@ -605,7 +604,7 @@
             <ProgressBar
                 {stats}
                 {learningSegments}
-                focused={progressFocused}
+                focused={appState.ui.progressFocused}
                 onToggleFocus={toggleProgressFocus}
             />
         </div>

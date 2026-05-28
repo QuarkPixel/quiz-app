@@ -19,7 +19,7 @@
  *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake]
  */
 
-import type { StoredState, ActivePoolItem, QuestionType, UserSettings } from "../types";
+import type { StoredState, ActivePoolItem, QuestionType, UserSettings, UiPreferences } from "../types";
 import { listQuestionTypesLogic } from "../quiz/types/registry-logic";
 
 // ── ID 编解码 ─────────────────────────────────────────────────────────────────
@@ -191,6 +191,8 @@ export async function exportProgress(state: StoredState, hash: string): Promise<
       state.settings.correctStreakAfterMistake,
       state.settings.selectionMode,
     ],
+    // 第 6 段（v2 新增）：UI 偏好。老版本导入时缺省段，按默认值处理。
+    [state.ui.progressFocused ? 1 : 0],
   ];
 
   const json = JSON.stringify(compact);
@@ -251,7 +253,7 @@ export async function importProgress(encoded: string, hash: string): Promise<Sto
     throw new Error("数据格式无效：结构不符合预期。");
   }
 
-  const [masteredRaw, activeRaw, currentRound, filterCode, settingsRaw] =
+  const [masteredRaw, activeRaw, currentRound, filterCode, settingsRaw, uiRaw] =
     compact as unknown[];
 
   if (!Array.isArray(masteredRaw)) {
@@ -290,11 +292,17 @@ export async function importProgress(encoded: string, hash: string): Promise<Sto
     selectionMode: settingsRaw[4] === "sequential" ? "sequential" : "random",
   };
 
+  // v2 新增的 ui 段；老版本（compact.length < 6）走默认值
+  const ui: UiPreferences = {
+    progressFocused: Array.isArray(uiRaw) ? uiRaw[0] === 1 : false,
+  };
+
   return {
     masteredIds,
     activePool,
     currentRound: currentRound as number,
     filterType,
     settings,
+    ui,
   };
 }

@@ -58,6 +58,7 @@ export function rebuildRuntimeState(
     currentRound: state.currentRound,
     settings: state.settings,
     filterType,
+    ui: state.ui,
   });
 }
 

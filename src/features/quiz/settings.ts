@@ -46,6 +46,7 @@ function toStoredStateLike(runtimeState: RuntimeState): StoredState {
     currentRound: runtimeState.currentRound,
     filterType: runtimeState.filterType,
     settings: runtimeState.settings,
+    ui: runtimeState.ui,
   };
 }
 

@@ -13,6 +13,7 @@ import type {
   Question,
   QuestionType,
   UserSettings,
+  UiPreferences,
 } from "./types";
 
 import {
@@ -30,6 +31,13 @@ export function createDefaultSettings(): UserSettings {
     correctStreakToMaster: CORRECT_STREAK_TO_MASTER,
     correctStreakAfterMistake: CORRECT_STREAK_AFTER_MISTAKE,
     selectionMode: "random",
+  };
+}
+
+/** 创建默认的 UI 偏好 */
+export function createDefaultUiPreferences(): UiPreferences {
+  return {
+    progressFocused: false,
   };
 }
 
@@ -54,6 +62,7 @@ function createDefaultStoredState(): StoredState {
     currentRound: 0,
     filterType: "all",
     settings: createDefaultSettings(),
+    ui: createDefaultUiPreferences(),
   };
 }
 
@@ -75,6 +84,10 @@ export function loadStoredState(hash: string): StoredState {
           ...defaultState.settings,
           ...parsed.settings,
         },
+        ui: {
+          ...defaultState.ui,
+          ...(parsed.ui ?? {}),
+        },
       };
     }
   } catch (e) {
@@ -94,6 +107,7 @@ export function saveState(hash: string, state: RuntimeState): void {
     currentRound: state.currentRound,
     filterType: state.filterType,
     settings: state.settings,
+    ui: state.ui,
   };
   try {
     localStorage.setItem(stateKey(hash), JSON.stringify(toStore));
@@ -102,7 +116,7 @@ export function saveState(hash: string, state: RuntimeState): void {
   }
 }
 
-/** 重置指定 bank 的进度（保留 filterType 和 settings） */
+/** 重置指定 bank 的进度（保留 filterType 和 settings 和 ui） */
 export function resetStoredState(hash: string): StoredState {
   const previous = loadStoredState(hash);
   const defaultState = createDefaultStoredState();
@@ -117,6 +131,7 @@ export function resetStoredState(hash: string): StoredState {
     ...defaultState,
     filterType: previous.filterType,
     settings: previous.settings,
+    ui: previous.ui,
   };
 }
 

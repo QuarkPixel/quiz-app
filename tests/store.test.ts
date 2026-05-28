@@ -145,6 +145,7 @@ describe("loadStoredState", () => {
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
+      ui: { progressFocused: false },
     });
   });
 
