@@ -10,6 +10,7 @@
     import { flip } from "svelte/animate";
     import { fly } from "svelte/transition";
     import { backOut, cubicOut } from "svelte/easing";
+    import StreakIndicator from "./StreakIndicator.svelte";
 
     interface Props {
         questions: Question[];
@@ -89,21 +90,12 @@
                         class="text-muted-foreground/70 flex items-center gap-2 text-[10px]"
                     >
                         <span class="font-mono">{entry.item.id}</span>
-                        <div
-                            class="bg-foreground/8 ml-auto flex items-center gap-1 rounded-full p-[3px]"
-                        >
-                            {#each Array(entry.requiredStreak) as _, i}
-                                <span
-                                    class={cn(
-                                        "block size-1 rounded-full",
-                                        i < entry.item.consecutiveCorrect
-                                            ? entry.item.hasEverMistaken
-                                                ? "bg-warning"
-                                                : "bg-success"
-                                            : "bg-background",
-                                    )}
-                                ></span>
-                            {/each}
+                        <div class="ml-auto">
+                            <StreakIndicator
+                                item={entry.item}
+                                requiredStreak={entry.requiredStreak}
+                                size="compact"
+                            />
                         </div>
                     </div>
 

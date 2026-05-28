@@ -13,6 +13,8 @@
     import Settings from "./Settings.svelte";
     import PoolPanel from "./PoolPanel.svelte";
     import AlertToast from "./AlertToast.svelte";
+    import StreakIndicator from "./StreakIndicator.svelte";
+    import ProgressBar from "./ProgressBar.svelte";
 
     import {
         buildFilterOptions,
@@ -46,6 +48,7 @@
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { cn } from "$lib/utils";
     import { modKeyLabel } from "$lib/platform";
+    import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
     import { QUESTION_TYPES } from "../quiz/types/registry";
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
     import IconBook2 from "@tabler/icons-svelte/icons/book-2";
@@ -53,10 +56,7 @@
     import IconSettings from "@tabler/icons-svelte/icons/settings";
 
     import {
-        PROGRESS_SIDE_CAP_PERCENT,
         SHORTCUTS,
-        CONFIRM_TIMEOUT_MS,
-        MASTERED_CELEBRATE_DURATION_MS,
         EXPORT_STATUS_SUCCESS_RESET_MS,
         EXPORT_STATUS_ERROR_RESET_MS,
     } from "../config";
@@ -91,28 +91,16 @@
 
     let progressFocused = $state(false);
 
-    let masteredConfirming = $state(false);
-    let masteredTimer: ReturnType<typeof setTimeout> | null = null;
+    /**
+     * submit 之前的 appState 快照。
+     * 用于答错后用户点「当作正确」按钮：rewind 到 submit 前的状态再以 isCorrect=true 重跑，
+     * 这样 hasEverMistaken 不会因为这次 typo 被打上、streak 自然 +1。
+     */
+    let preSubmitState: RuntimeState | null = null;
 
-    function resetMasteredConfirm(): void {
-        if (masteredTimer) clearTimeout(masteredTimer);
-        masteredTimer = null;
-        masteredConfirming = false;
-    }
-
-    function handleMasteredClick(): void {
-        if (masteredConfirming) {
-            resetMasteredConfirm();
-            markCurrentAsMastered();
-            return;
-        }
-        masteredConfirming = true;
-        if (masteredTimer) clearTimeout(masteredTimer);
-        masteredTimer = setTimeout(() => {
-            masteredConfirming = false;
-            masteredTimer = null;
-        }, CONFIRM_TIMEOUT_MS);
-    }
+    const treatCorrectAction = createConfirmAction(() =>
+        treatLastAnswerAsCorrect(),
+    );
 
     function toggleProgressFocus(): void {
         if (stats.learning === 0) return;
@@ -163,7 +151,8 @@
 
         showResult = false;
         isCorrect = false;
-        resetMasteredConfirm();
+        preSubmitState = null;
+        treatCorrectAction.reset();
         focusBlankInputIfNeeded();
     }
 
@@ -184,6 +173,9 @@
             selectedAnswers,
             blankAnswerInputs,
         );
+
+        // 快照 submit 前的 state，用于 treatLastAnswerAsCorrect 的 rewind
+        preSubmitState = appState;
 
         showResult = true;
         isCorrect = nextIsCorrect;
@@ -405,6 +397,23 @@
         selectNextQuestion();
     }
 
+    /**
+     * 「当作正确」：把上次 submit 时记下的 preSubmitState 当起点，
+     * 以 isCorrect=true 重新走 applyAnswer。这样：
+     *   - consecutiveCorrect 从 submit 前的值 +1（而不是从 0 起）
+     *   - hasEverMistaken 保持 submit 前的值（不会因为这次 typo 被打上）
+     *   - currentRound 只前进一格（rewind 后只重跑一次）
+     * 用户场景："这题我打错了，但我意思是对的"。
+     */
+    function treatLastAnswerAsCorrect(): void {
+        if (!preSubmitState || !currentQuestion) return;
+        appState = applyAnswer(preSubmitState, currentQuestion.id, true);
+        preSubmitState = null;
+        saveState(hash, appState);
+        isCorrect = true;
+        flashContainer.flash(true);
+    }
+
     initialize();
 
     let stats = $derived(getStats(questions, appState));
@@ -419,56 +428,13 @@
     let requiredStreak = $derived(
         currentPoolItem ? getRequiredStreak(currentPoolItem, appState) : 1,
     );
-    let masteredWidth = $derived(
-        stats.total > 0 ? (stats.mastered / stats.total) * 100 : 0,
-    );
-    let learningWidth = $derived(
-        stats.total > 0 ? (stats.learning / stats.total) * 100 : 0,
-    );
     let learningSegments = $derived(
         computeLearningSegments(questions, appState),
-    );
-    let pendingWidth = $derived(
-        stats.total > 0 ? (stats.pending / stats.total) * 100 : 0,
     );
     let allMastered = $derived.by(() => {
         if (questions.length === 0) return false;
         const masteredSet = new Set(appState.masteredIds);
         return questions.every((q) => masteredSet.has(q.id));
-    });
-
-    let masteredDisplayWidth = $derived(
-        progressFocused
-            ? Math.min(masteredWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
-            : masteredWidth,
-    );
-    let pendingDisplayWidth = $derived(
-        progressFocused
-            ? Math.min(pendingWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
-            : pendingWidth,
-    );
-    let learningDisplayWidth = $derived(
-        progressFocused
-            ? Math.max(0, 100 - masteredDisplayWidth - pendingDisplayWidth)
-            : learningWidth,
-    );
-
-    // svelte-ignore state_referenced_locally
-    let prevMastered = stats.mastered;
-    let masteredCelebrating = $state(false);
-    let celebrateTimer: ReturnType<typeof setTimeout> | null = null;
-
-    $effect(() => {
-        const m = stats.mastered;
-        if (m > prevMastered) {
-            masteredCelebrating = true;
-            if (celebrateTimer) clearTimeout(celebrateTimer);
-            celebrateTimer = setTimeout(() => {
-                masteredCelebrating = false;
-                celebrateTimer = null;
-            }, MASTERED_CELEBRATE_DURATION_MS);
-        }
-        prevMastered = m;
     });
 </script>
 
@@ -502,21 +468,12 @@
                     </span>
 
                     {#if currentPoolItem}
-                        <div
-                            class="ml-auto flex items-center gap-1.5 p-1 bg-foreground/10 rounded-full"
-                        >
-                            {#each Array(requiredStreak) as _, i}
-                                <span
-                                    class={cn(
-                                        "block size-1.5 rounded-full transition-colors",
-                                        i < currentPoolItem.consecutiveCorrect
-                                            ? currentPoolItem.hasEverMistaken
-                                                ? "bg-warning"
-                                                : "bg-success"
-                                            : "bg-background",
-                                    )}
-                                ></span>
-                            {/each}
+                        <div class="ml-auto">
+                            <StreakIndicator
+                                item={currentPoolItem}
+                                {requiredStreak}
+                                onMaster={markCurrentAsMastered}
+                            />
                         </div>
                     {/if}
                 </div>
@@ -581,24 +538,25 @@
                 </div>
 
                 <div class="flex h-9 items-center justify-end gap-2 pt-2">
-                    <Button
-                        variant="outline"
-                        size="icon-lg"
-                        onclick={handleMasteredClick}
-                        disabled={!currentPoolItem}
-                        title={masteredConfirming
-                            ? "再次点击以确认"
-                            : "标记为已掌握"}
-                        aria-label={masteredConfirming
-                            ? "再次点击以确认"
-                            : "标记为已掌握"}
-                        class={cn(
-                            masteredConfirming &&
-                                "border-success text-success ring-success/30 ring-2",
-                        )}
-                    >
-                        <IconCircleCheck stroke={1.75} />
-                    </Button>
+                    {#if showResult && !isCorrect}
+                        <Button
+                            variant="outline"
+                            size="icon-lg"
+                            onclick={treatCorrectAction.trigger}
+                            title={treatCorrectAction.confirming
+                                ? "再次点击确认当作正确"
+                                : "我打错了，当作正确"}
+                            aria-label={treatCorrectAction.confirming
+                                ? "再次点击确认当作正确"
+                                : "我打错了，当作正确"}
+                            class={cn(
+                                treatCorrectAction.confirming &&
+                                    "border-success text-success ring-success/30 ring-2",
+                            )}
+                        >
+                            <IconCircleCheck stroke={1.75} />
+                        </Button>
+                    {/if}
                     {#if !showResult}
                         <Button size="lg" class="px-8" onclick={submitAnswer}>
                             提交答案
@@ -644,62 +602,12 @@
                 </div>
             {/if}
 
-            <button
-                type="button"
-                class={cn(
-                    "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
-                    progressFocused && "focused",
-                )}
-                onclick={toggleProgressFocus}
-                disabled={stats.learning === 0}
-                aria-label={progressFocused ? "显示完整进度" : "聚焦学习中进度"}
-            >
-                <div
-                    class="text-muted-foreground mb-1.5 flex justify-between text-xs tabular-nums"
-                >
-                    <span>{stats.mastered}</span>
-                    <span>
-                        {progressFocused
-                            ? stats.pending
-                            : stats.learning + stats.pending}
-                    </span>
-                </div>
-                <div
-                    class={cn(
-                        "progress-bar flex h-[3px] gap-1 transition-all duration-300",
-                        "[&_*]:transition-all [&_*]:duration-500 [&_*]:ease-spring",
-                        progressFocused && "h-[7px]",
-                    )}
-                >
-                    <div
-                        class={cn(
-                            "mastered-segment bg-success rounded-sm",
-                            progressFocused && "opacity-55",
-                            masteredCelebrating && "celebrate",
-                        )}
-                        style="--w: {masteredDisplayWidth}%; --focused: {progressFocused
-                            ? 1
-                            : 0}"
-                    ></div>
-                    <div
-                        class="flex overflow-hidden rounded-sm"
-                        style="width: {learningDisplayWidth}%"
-                    >
-                        {#each learningSegments as seg}
-                            <div
-                                style="width: {seg.widthPercent}%; background: {seg.color}"
-                            ></div>
-                        {/each}
-                    </div>
-                    <div
-                        class={cn(
-                            "bg-foreground/15 rounded-sm",
-                            progressFocused && "opacity-55",
-                        )}
-                        style="width: {pendingDisplayWidth}%"
-                    ></div>
-                </div>
-            </button>
+            <ProgressBar
+                {stats}
+                {learningSegments}
+                focused={progressFocused}
+                onToggleFocus={toggleProgressFocus}
+            />
         </div>
 
         <aside
@@ -870,37 +778,6 @@
                 black 32px,
                 black 100%
             );
-        }
-    }
-
-    .group:not(:disabled):hover .progress-bar {
-        height: 4px;
-    }
-    .group.focused:not(:disabled):hover .progress-bar {
-        height: 8px;
-    }
-
-    .mastered-segment {
-        --offset: 0;
-        width: var(--w);
-        transform-origin: left center;
-        will-change: transform, filter;
-    }
-    .mastered-segment.celebrate {
-        animation: mastered-celebrate 700ms cubic-bezier(0.34, 1.56, 0.64, 1);
-    }
-
-    @keyframes mastered-celebrate {
-        0% {
-            filter: brightness(1) saturate(1);
-        }
-        35% {
-            /* 只有在聚焦状态下才变换长度 */
-            width: calc(var(--w) + (5% * var(--focused)));
-            filter: brightness(1.45) saturate(1.3);
-        }
-        100% {
-            filter: brightness(1) saturate(1);
         }
     }
 </style>

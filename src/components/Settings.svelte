@@ -1,8 +1,9 @@
 <script lang="ts">
     import type { QuestionType, RuntimeState } from "../types";
     import type { FilterOption } from "../features/quiz/filters";
-    import { SHORTCUTS, CONFIRM_TIMEOUT_MS } from "../config";
+    import { SHORTCUTS } from "../config";
     import { modKeyLabel } from "$lib/platform";
+    import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Button } from "$lib/components/ui/button";
     import { Switch } from "$lib/components/ui/switch";
@@ -45,30 +46,11 @@
         onImport,
     }: Props = $props();
 
-    let resetConfirming = $state(false);
-    let resetTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function handleResetClick() {
-        if (resetConfirming) {
-            if (resetTimer) clearTimeout(resetTimer);
-            resetConfirming = false;
-            resetTimer = null;
-            onReset();
-            return;
-        }
-        resetConfirming = true;
-        if (resetTimer) clearTimeout(resetTimer);
-        resetTimer = setTimeout(() => {
-            resetConfirming = false;
-            resetTimer = null;
-        }, CONFIRM_TIMEOUT_MS);
-    }
+    const resetAction = createConfirmAction(() => onReset());
 
     $effect(() => {
-        if (!open && resetConfirming) {
-            if (resetTimer) clearTimeout(resetTimer);
-            resetTimer = null;
-            resetConfirming = false;
+        if (!open && resetAction.confirming) {
+            resetAction.reset();
         }
     });
 </script>
@@ -281,12 +263,12 @@
                 size="sm"
                 class={cn(
                     "w-full",
-                    resetConfirming && "ring-destructive/40 ring-2",
+                    resetAction.confirming && "ring-destructive/40 ring-2",
                 )}
-                onclick={handleResetClick}
+                onclick={resetAction.trigger}
             >
                 <IconRefresh size={14} stroke={1.75} />
-                {resetConfirming ? "再次点击以确认" : "重置所有进度"}
+                {resetAction.confirming ? "再次点击以确认" : "重置所有进度"}
             </Button>
         </div>
     </Dialog.Content>
