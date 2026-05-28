@@ -290,8 +290,8 @@ export class QuizSession {
     );
     this.appState = reconcileResult.state;
     this.save();
-    // 注：reconcileResult.shouldSelectNext 在原 QuizView 中未消费；
-    // 保留原行为，Phase 3 不修改业务逻辑。
+    // 注：reconcileResult.shouldSelectNext 历史上未被消费（旧 QuizView 行为），
+    // 这里保留原行为。如未来需要"当前题被裁出池时自动 selectNext" 可在这里启用。
   }
 
   /** 非算法偏好变更（如 autoNextOnCorrect）：只持久化 */

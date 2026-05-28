@@ -4,10 +4,8 @@
     import Settings from "./Settings.svelte";
     import PoolPanel from "./PoolPanel.svelte";
     import AlertToast from "./AlertToast.svelte";
-    import StreakIndicator from "./StreakIndicator.svelte";
     import ProgressBar from "./ProgressBar.svelte";
-
-    import { getCorrectChoiceLetters } from "../features/quiz";
+    import QuestionArea from "./QuestionArea.svelte";
 
     import { Button } from "$lib/components/ui/button";
     import * as Dialog from "$lib/components/ui/dialog";
@@ -15,9 +13,6 @@
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { cn } from "$lib/utils";
     import { modKeyLabel } from "$lib/platform";
-    import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
-    import { QUESTION_TYPES } from "../quiz/types/registry";
-    import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
     import IconBook2 from "@tabler/icons-svelte/icons/book-2";
     import IconStack2 from "@tabler/icons-svelte/icons/stack-2";
     import IconSettings from "@tabler/icons-svelte/icons/settings";
@@ -47,10 +42,6 @@
     let showReview = $state(false);
     let showSettings = $state(false);
 
-    const treatCorrectAction = createConfirmAction(() =>
-        session.treatLastAnswerAsCorrect(),
-    );
-
     const handleKeydown = createKeyboardHandler(session, {
         toggleReview: () => (showReview = !showReview),
         toggleSettings: () => (showSettings = !showSettings),
@@ -65,166 +56,22 @@
 <AlertToast bind:this={toast} />
 
 <main
-    class="scrollbar-none flex flex-1 min-h-0 items-center justify-center px-4 sm:px-6 overflow-y-auto"
+    class="flex flex-1 min-h-0 items-center justify-center px-4 sm:px-6 overflow-y-auto"
 >
     <div
         class={cn(
             "grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
             "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
-            // max-lg + pool 展开：grid 撑满 main 高度，pool 用 1fr 填满剩余
-            // min-h-fit 保证 pool 撑不下时整体溢出，触发 main 滚动
+            // max-lg + pool 展开：max-h-full 让 grid 不超过 main，pool 行用
+            // minmax(180px, min(45vh,300px))：宽裕时 ≤300px，挤压时降到 180px，
+            // 不够再退化让 main 滚动。content 够装时 grid 仍是内容高度，被 items-center 垂直居中
             session.appState.ui.showPool &&
-                "max-lg:h-full max-lg:min-h-fit max-lg:grid-rows-[auto_minmax(180px,1fr)] max-lg:gap-y-6",
+                "max-lg:max-h-full max-lg:grid-rows-[auto_minmax(180px,min(45vh,300px))] max-lg:gap-y-6",
             session.appState.ui.showPool && "lg:grid-cols-[minmax(0,42rem)_280px]",
         )}
     >
         <div class="flex w-full min-w-0 flex-col gap-5">
-            {#if session.currentQuestion && (session.currentPoolItem || session.showResult)}
-                {@const TypeIcon = QUESTION_TYPES[session.currentQuestion.type].icon}
-                <div class="flex items-center gap-3">
-                    <TypeIcon
-                        size={16}
-                        stroke={1.75}
-                        class="text-muted-foreground"
-                    />
-                    <span class="text-muted-foreground text-xs font-mono">
-                        {session.currentQuestion.id}
-                    </span>
-
-                    {#if session.currentPoolItem}
-                        <div class="ml-auto">
-                            <StreakIndicator
-                                item={session.currentPoolItem}
-                                requiredStreak={session.requiredStreak}
-                                onMaster={() => session.markCurrentAsMastered()}
-                            />
-                        </div>
-                    {/if}
-                </div>
-
-                <p
-                    class="text-foreground text-lg leading-relaxed font-medium whitespace-pre-wrap"
-                >
-                    {session.currentQuestion.question}
-                </p>
-
-                <div class="flex flex-col gap-2.5">
-                    {#if session.currentTypeDef}
-                        <session.currentTypeDef.Input
-                            question={session.currentQuestion}
-                            showResult={session.showResult}
-                            isCorrect={session.isCorrect}
-                            shuffledOptions={session.shuffledOptions}
-                            bind:selectedAnswers={session.selectedAnswers}
-                            bind:blankAnswerInputs={session.blankAnswerInputs}
-                            onAutoSubmit={() => session.submit()}
-                        />
-                    {/if}
-                </div>
-
-                <div class="h-[76px]">
-                    {#if session.showResult}
-                        <div
-                            class={cn(
-                                "flex h-full flex-col items-center justify-center gap-1 rounded-lg px-4 text-center",
-                                session.isCorrect
-                                    ? "bg-success/10 text-success"
-                                    : "bg-destructive/10 text-destructive",
-                            )}
-                        >
-                            <span class="text-base font-semibold">
-                                {#if session.isCorrect}
-                                    {session.currentPoolItem ? "回答正确" : "已掌握"}
-                                {:else}
-                                    回答错误
-                                {/if}
-                            </span>
-                            {#if session.currentQuestion.type === "blank"}
-                                <span class="text-sm font-normal">
-                                    {#if !session.isCorrect}正确答案：{/if}{Array.isArray(
-                                        session.currentQuestion.answer,
-                                    )
-                                        ? (
-                                              session.currentQuestion.answer as string[]
-                                          ).join(" | ")
-                                        : (session.currentQuestion.answer as string)}
-                                </span>
-                            {:else if !session.isCorrect && session.currentQuestion.type !== "judgment"}
-                                <span class="text-sm font-normal">
-                                    正确答案：{getCorrectChoiceLetters(
-                                        session.currentQuestion,
-                                        session.shuffledOptions,
-                                    )}
-                                </span>
-                            {/if}
-                        </div>
-                    {/if}
-                </div>
-
-                <div class="flex h-9 items-center justify-end gap-2 pt-2">
-                    {#if session.showResult && !session.isCorrect}
-                        <Button
-                            variant="outline"
-                            size="icon-lg"
-                            onclick={treatCorrectAction.trigger}
-                            title={treatCorrectAction.confirming
-                                ? "再次点击确认当作正确"
-                                : "我打错了，当作正确"}
-                            aria-label={treatCorrectAction.confirming
-                                ? "再次点击确认当作正确"
-                                : "我打错了，当作正确"}
-                            class={cn(
-                                treatCorrectAction.confirming &&
-                                    "border-success text-success ring-success/30 ring-2",
-                            )}
-                        >
-                            <IconCircleCheck stroke={1.75} />
-                        </Button>
-                    {/if}
-                    {#if !session.showResult}
-                        <Button size="lg" class="px-8" onclick={() => session.submit()}>
-                            提交答案
-                        </Button>
-                    {:else}
-                        <Button
-                            size="lg"
-                            class="px-8"
-                            onclick={() => session.selectNext()}
-                        >
-                            下一题
-                        </Button>
-                    {/if}
-                </div>
-            {:else}
-                <div
-                    class="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-4 text-center"
-                >
-                    {#if session.stats.total === 0}
-                        <span class="text-base">当前筛选条件下没有题目</span>
-                    {:else if session.stats.mastered === session.stats.total}
-                        {#if session.allMastered}
-                            <span class="text-foreground text-lg font-medium">
-                                恭喜！所有题目已掌握
-                            </span>
-                            <Button variant="outline" onclick={() => session.reset()}>
-                                重新开始
-                            </Button>
-                        {:else}
-                            <span class="text-foreground text-lg font-medium">
-                                当前题型筛选下所有题目已掌握
-                            </span>
-                            <Button
-                                variant="outline"
-                                onclick={() => session.setFilter("all")}
-                            >
-                                切换到全部题型
-                            </Button>
-                        {/if}
-                    {:else}
-                        <span class="text-sm">正在加载...</span>
-                    {/if}
-                </div>
-            {/if}
+            <QuestionArea />
 
             <ProgressBar
                 stats={session.stats}

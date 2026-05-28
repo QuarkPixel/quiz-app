@@ -22,7 +22,7 @@ export function createKeyboardHandler(
     const isMod = event.metaKey || event.ctrlKey;
 
     // Cmd/Ctrl + 单键：全局快捷键。在输入框内不抢，让 Cmd+A 等浏览器默认生效。
-    if (isMod && !event.altKey && !event.shiftKey && !isEditingTarget(event)) {
+    if (isMod && !event.altKey && !event.shiftKey) {
       const key = event.key.toLowerCase();
       // Cmd+B (sidebar) 留给 Sidebar context 处理
       if (key === SHORTCUTS.sidebar) return;

@@ -7,7 +7,8 @@
     let {
         question,
         showResult,
-        selectedAnswers = $bindable(),
+        selectedAnswers,
+        onSelectedAnswersChange,
         onAutoSubmit,
     }: QuestionInputProps = $props();
 
@@ -18,7 +19,7 @@
 
     function handleClick(idx: number): void {
         if (showResult) return;
-        selectedAnswers = [idx];
+        onSelectedAnswersChange?.([idx]);
         onAutoSubmit?.();
     }
 </script>

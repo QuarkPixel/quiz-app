@@ -6,13 +6,14 @@
         question,
         showResult,
         shuffledOptions,
-        selectedAnswers = $bindable(),
+        selectedAnswers,
+        onSelectedAnswersChange,
         onAutoSubmit,
     }: QuestionInputProps = $props();
 
     function handleClick(originalIndex: number): void {
         if (showResult) return;
-        selectedAnswers = [originalIndex];
+        onSelectedAnswersChange?.([originalIndex]);
         onAutoSubmit?.();
     }
 </script>

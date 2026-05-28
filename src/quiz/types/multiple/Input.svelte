@@ -6,16 +6,16 @@
         question,
         showResult,
         shuffledOptions,
-        selectedAnswers = $bindable(),
+        selectedAnswers,
+        onSelectedAnswersChange,
     }: QuestionInputProps = $props();
 
     function handleClick(originalIndex: number): void {
         if (showResult) return;
-        if (selectedAnswers.includes(originalIndex)) {
-            selectedAnswers = selectedAnswers.filter((i) => i !== originalIndex);
-        } else {
-            selectedAnswers = [...selectedAnswers, originalIndex];
-        }
+        const next = selectedAnswers.includes(originalIndex)
+            ? selectedAnswers.filter((i) => i !== originalIndex)
+            : [...selectedAnswers, originalIndex];
+        onSelectedAnswersChange?.(next);
     }
 </script>
 

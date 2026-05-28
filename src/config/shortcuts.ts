@@ -13,11 +13,11 @@ export const SHORTCUTS = {
   /** 切换答案预览 */
   toggleReview: "d",
   /** 切换设置 */
-  toggleSettings: "c",
+  toggleSettings: "i",
   /** 切换"答对自动下一题" */
-  toggleAutoNext: "a",
+  toggleAutoNext: "n",
   /** 从剪贴板导入进度 */
-  importProgress: "i",
+  importProgress: "w",
   /** 导出进度到剪贴板 */
   exportProgress: "e",
 } as const;

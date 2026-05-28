@@ -20,10 +20,9 @@ export type IconComponent = any;
  * 自己挑用得上的字段（如 judgment 不用 shuffledOptions，blank 不用
  * selectedAnswers）。
  *
- * QuizView 持有 selectedAnswers / blankAnswerInputs 两个 $state，
- * 通过 bind: 双向绑定给 Input。这是过渡设计——Phase 4 不一定改造，
- * 因为现状已经足够干净（QuizView 只持有原始 state，由题型 Input
- * 决定怎么用）。
+ * 用 prop + callback 而非 bind: —— Svelte 5 的 bind: 对 class instance
+ * field 的 $state（getter/setter-backed）目前不太可靠，prop+callback
+ * 等价但稳定。
  */
 export interface QuestionInputProps {
   question: Question;
@@ -32,6 +31,10 @@ export interface QuestionInputProps {
   shuffledOptions: ShuffledOption[];
   selectedAnswers: number[];
   blankAnswerInputs: string[];
+  /** 单选 / 多选 / 判断题改 selectedAnswers 时调用 */
+  onSelectedAnswersChange?: (value: number[]) => void;
+  /** 填空题改 blankAnswerInputs 时调用 */
+  onBlankAnswerInputsChange?: (value: string[]) => void;
   /** 单选 / 判断题点击后自动触发提交。多选 / 填空不调用。 */
   onAutoSubmit?: () => void;
 }

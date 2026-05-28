@@ -18,27 +18,46 @@
     let { item, requiredStreak, size = "default", onMaster }: Props = $props();
 
     const masterAction = createConfirmAction(() => onMaster());
+
+    // 几何常量：与下面的 Tailwind 类一一对应。
+    //   default:  p-1 (4px) / size-1.5 (6px) / gap-1.5 (6px) / target 40px
+    //   compact:  p-[3px]   / size-1   (4px) / gap-1   (4px) / target 32px
+    // 把 width 算成纯像素，避免 `auto ↔ length` 不可动画 + min-width 卡顿问题。
+    const GEOMETRY = {
+        default: { dot: 6, gap: 6, pad: 4, target: 40 },
+        compact: { dot: 4, gap: 4, pad: 3, target: 32 },
+    } as const;
+
+    const geom = $derived(GEOMETRY[size]);
+    /** dots + gaps + 双侧 padding 的自然宽度 */
+    const naturalWidth = $derived(
+        requiredStreak * geom.dot +
+            Math.max(0, requiredStreak - 1) * geom.gap +
+            2 * geom.pad,
+    );
+    /** confirming 时撑开到至少 target，否则 natural */
+    const buttonWidth = $derived(
+        masterAction.confirming
+            ? Math.max(naturalWidth, geom.target)
+            : naturalWidth,
+    );
 </script>
 
 <button
     type="button"
     class={cn(
-        // 默认宽度由 dots 自然决定 —— 不设 min-width，避免 1 个点时变胶囊。
-        // 仅 confirming 时强制 min-width 撑开给 ✓ icon，带平滑动画。
-        "relative inline-flex items-center justify-center rounded-full cursor-pointer",
-        "transition-[min-width,background-color] duration-200",
+        "relative inline-flex items-center justify-center rounded-full",
+        "transition-[width,background-color] duration-200",
         size === "default" ? "p-1" : "p-[3px]",
-        !masterAction.confirming &&
-            "bg-foreground/10 hover:bg-foreground/15",
+        !masterAction.confirming && "bg-foreground/10 hover:bg-foreground/15",
         masterAction.confirming && "bg-success",
-        masterAction.confirming &&
-            (size === "default" ? "min-w-10" : "min-w-8"),
     )}
+    style:width="{buttonWidth}px"
     aria-label={masterAction.confirming ? "再次点击确认掌握" : "标记为已掌握"}
     title={masterAction.confirming ? "再次点击确认掌握" : "标记为已掌握"}
     onclick={() => masterAction.trigger()}
 >
-    <!-- dots 始终占位，confirming 时 invisible 保留尺寸 -->
+    <!-- dots 始终渲染，confirming 时 invisible 让位给 ✓ icon overlay -->
     <span
         class={cn(
             "flex items-center",

@@ -120,7 +120,9 @@
                     </Label>
                     <Switch
                         id="auto-next"
-                        bind:checked={session.appState.settings.autoNextOnCorrect}
+                        bind:checked={
+                            session.appState.settings.autoNextOnCorrect
+                        }
                         onCheckedChange={() => session.handlePreferenceChange()}
                         size="sm"
                     />
@@ -164,7 +166,9 @@
                         type="number"
                         min={1}
                         max={10}
-                        bind:value={session.appState.settings.correctStreakToMaster}
+                        bind:value={
+                            session.appState.settings.correctStreakToMaster
+                        }
                         onchange={() => session.handleAlgorithmChange()}
                         class="h-7 w-20 text-center"
                     />
@@ -180,7 +184,9 @@
                         type="number"
                         min={1}
                         max={20}
-                        bind:value={session.appState.settings.correctStreakAfterMistake}
+                        bind:value={
+                            session.appState.settings.correctStreakAfterMistake
+                        }
                         onchange={() => session.handleAlgorithmChange()}
                         class="h-7 w-20 text-center"
                     />
