@@ -66,7 +66,7 @@
 {/snippet}
 
 {#if isLibrary}
-    <SidebarUI.Provider>
+    <SidebarUI.Provider open={false}>
         <Sidebar {source} />
         <SidebarUI.Inset>
             {@render contentBody()}
