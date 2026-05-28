@@ -47,10 +47,7 @@
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { cn } from "$lib/utils";
     import { modKeyLabel } from "$lib/platform";
-    import IconCircleHalf2 from "@tabler/icons-svelte/icons/circle-half-2";
-    import IconCircleDot from "@tabler/icons-svelte/icons/circle-dot";
-    import IconChecks from "@tabler/icons-svelte/icons/checks";
-    import IconCursorText from "@tabler/icons-svelte/icons/cursor-text";
+    import { QUESTION_TYPES } from "../quiz/types/registry";
     import IconBook2 from "@tabler/icons-svelte/icons/book-2";
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
     import IconCheck from "@tabler/icons-svelte/icons/check";
@@ -431,19 +428,6 @@
         selectNextQuestion();
     }
 
-    function typeIconFor(type: QuestionType) {
-        switch (type) {
-            case "judgment":
-                return IconCircleHalf2;
-            case "single":
-                return IconCircleDot;
-            case "multiple":
-                return IconChecks;
-            case "blank":
-                return IconCursorText;
-        }
-    }
-
     initialize();
 
     let stats = $derived(getStats(questions, appState));
@@ -526,7 +510,7 @@
     >
         <div class="flex w-full min-w-0 flex-col gap-5">
             {#if currentQuestion && (currentPoolItem || showResult)}
-                {@const TypeIcon = typeIconFor(currentQuestion.type)}
+                {@const TypeIcon = QUESTION_TYPES[currentQuestion.type].icon}
                 <div class="flex items-center gap-3">
                     <TypeIcon
                         size={16}

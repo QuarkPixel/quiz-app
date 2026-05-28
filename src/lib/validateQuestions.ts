@@ -1,15 +1,14 @@
 import type { Question, QuestionType } from "../types";
+import {
+  QUESTION_TYPE_ORDER,
+  QUESTION_TYPES_LOGIC,
+} from "../quiz/types/registry-logic";
 
 export type ValidateResult =
   | { ok: true; questions: Question[] }
   | { ok: false; errors: string[] };
 
-const VALID_TYPES = new Set<QuestionType>([
-  "judgment",
-  "single",
-  "multiple",
-  "blank",
-]);
+const VALID_TYPES = new Set<QuestionType>(QUESTION_TYPE_ORDER);
 
 /**
  * 校验题库 JSON 结构。
@@ -64,48 +63,11 @@ export function validateQuestions(raw: unknown): ValidateResult {
       errors.push(`${label}（id=${id}）：question 不是字符串。`);
     }
 
-    const answer = item.answer;
-    switch (type) {
-      case "judgment":
-        if (typeof answer !== "boolean") {
-          errors.push(`${label}（id=${id}）：判断题 answer 必须是布尔值。`);
-        }
-        break;
-
-      case "single":
-      case "multiple": {
-        const options = item.options;
-        if (!Array.isArray(options) || options.length === 0) {
-          errors.push(`${label}（id=${id}）：选择题 options 必须是非空数组。`);
-          break;
-        }
-        for (let j = 0; j < options.length; j++) {
-          const opt = options[j] as Record<string, unknown>;
-          if (!opt || typeof opt.text !== "string") {
-            errors.push(`${label}（id=${id}）：选项 ${j} 缺少 text 字段。`);
-          }
-        }
-        if (!Array.isArray(answer) || !answer.every((n) => Number.isInteger(n))) {
-          errors.push(`${label}（id=${id}）：选择题 answer 必须是整数数组。`);
-          break;
-        }
-        if (type === "single" && answer.length !== 1) {
-          errors.push(`${label}（id=${id}）：单选题 answer 必须只有一个索引。`);
-        }
-        for (const n of answer as number[]) {
-          if (n < 0 || n >= options.length) {
-            errors.push(`${label}（id=${id}）：answer 索引 ${n} 超出 options 范围。`);
-          }
-        }
-        break;
-      }
-
-      case "blank":
-        if (typeof answer === "string") break;
-        if (Array.isArray(answer) && answer.every((s) => typeof s === "string")) break;
-        errors.push(`${label}（id=${id}）：填空题 answer 必须是字符串或字符串数组。`);
-        break;
-    }
+    const typeErrors = QUESTION_TYPES_LOGIC[type as QuestionType].validate(
+      item,
+      `${label}（id=${id}）`,
+    );
+    errors.push(...typeErrors);
   }
 
   if (errors.length > 0) return { ok: false, errors };

@@ -1,26 +1,16 @@
 import type { Question, QuestionType } from "../../types";
+import {
+  QUESTION_TYPE_ORDER,
+  QUESTION_TYPES_LOGIC,
+} from "../../quiz/types/registry-logic";
 
 export interface FilterOption {
   key: QuestionType | "all";
   label: string;
 }
 
-const QUESTION_TYPE_ORDER: QuestionType[] = [
-  "judgment",
-  "single",
-  "multiple",
-  "blank",
-];
-
-const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
-  judgment: "判断题",
-  single: "单选题",
-  multiple: "多选题",
-  blank: "填空题",
-};
-
 export function getTypeName(type: QuestionType): string {
-  return QUESTION_TYPE_LABELS[type];
+  return QUESTION_TYPES_LOGIC[type].name;
 }
 
 export function getAvailableQuestionTypes(questions: Question[]): QuestionType[] {

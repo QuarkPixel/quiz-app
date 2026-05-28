@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Question, RuntimeState, ActivePoolItem } from "../types";
     import { getRequiredStreak } from "../features/quiz";
+    import { QUESTION_TYPES } from "../quiz/types/registry";
     import {
         POOL_ITEM_FLIP_DURATION_MS,
         POOL_ITEM_OUT_DURATION_MS,
@@ -30,28 +31,6 @@
         answerText: string;
     };
 
-    function describeAnswer(q: Question): string {
-        switch (q.type) {
-            case "judgment":
-                return q.answer ? "正确" : "错误";
-            case "blank":
-                if (Array.isArray(q.answer)) {
-                    return (q.answer as string[]).join(" | ");
-                }
-                return q.answer as string;
-            default: {
-                const indices = q.answer as number[];
-                if (!q.options) return "";
-                return indices
-                    .slice()
-                    .sort((a, b) => a - b)
-                    .map((idx) => q.options![idx]?.text ?? "")
-                    .filter(Boolean)
-                    .join(" / ");
-            }
-        }
-    }
-
     let entries = $derived.by<PoolEntry[]>(() => {
         const visible = state.activePool.filter(
             (item) => item.id !== currentQuestionId,
@@ -70,7 +49,7 @@
                 question: q,
                 requiredStreak: getRequiredStreak(item, state),
                 isLatest: i === 0,
-                answerText: describeAnswer(q),
+                answerText: QUESTION_TYPES[q.type].formatAnswerText(q),
             });
         }
         return result;

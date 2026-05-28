@@ -20,22 +20,17 @@
  */
 
 import type { StoredState, ActivePoolItem, QuestionType, UserSettings } from "../types";
+import { listQuestionTypesLogic } from "../quiz/types/registry-logic";
 
 // ── ID 编解码 ─────────────────────────────────────────────────────────────────
 
-const TYPE_TO_PREFIX: Record<string, string> = {
-  single: "s",
-  multiple: "m",
-  judgment: "j",
-  blank: "b",
-};
+const TYPE_TO_PREFIX: Record<string, string> = Object.fromEntries(
+  listQuestionTypesLogic().map((t) => [t.id, t.exportPrefix]),
+);
 
-const PREFIX_TO_TYPE: Record<string, QuestionType> = {
-  s: "single",
-  m: "multiple",
-  j: "judgment",
-  b: "blank",
-};
+const PREFIX_TO_TYPE: Record<string, QuestionType> = Object.fromEntries(
+  listQuestionTypesLogic().map((t) => [t.exportPrefix, t.id]),
+);
 
 /**
  * 编码规则：

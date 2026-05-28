@@ -1,9 +1,6 @@
 import type { Question } from "../../types";
-import { matchAnswer } from "./answerMatcher";
-
-interface ShuffledOption {
-  originalIndex: number;
-}
+import { QUESTION_TYPES_LOGIC } from "../../quiz/types/registry-logic";
+import type { ShuffledOption } from "../../quiz/types/types";
 
 /** 全角括号/斜杠转半角 */
 function normalizeSymbols(value: string): string {
@@ -146,24 +143,10 @@ export function evaluateAnswer(
   selectedAnswers: number[],
   blankAnswerInputs: string[],
 ): boolean {
-  if (question.type === "blank") {
-    const answers = Array.isArray(question.answer)
-      ? (question.answer as string[])
-      : [question.answer as string];
-    if (blankAnswerInputs.some((s) => s.trim().length === 0)) return false;
-    return answers.every((ans, i) => matchAnswer(ans, blankAnswerInputs[i] ?? ""));
-  }
-
-  if (question.type === "judgment") {
-    if (selectedAnswers.length === 0) return false;
-    return (selectedAnswers[0] === 0) === question.answer;
-  }
-
-  const correctAnswers = question.answer as number[];
-  if (selectedAnswers.length === 0) return false;
-  return (
-    selectedAnswers.length === correctAnswers.length &&
-    selectedAnswers.every((answer) => correctAnswers.includes(answer))
+  return QUESTION_TYPES_LOGIC[question.type].evaluateAnswer(
+    question,
+    selectedAnswers,
+    blankAnswerInputs,
   );
 }
 
@@ -171,18 +154,8 @@ export function getCorrectChoiceLetters(
   question: Question,
   shuffledOptions: ShuffledOption[],
 ): string {
-  if (question.type === "judgment" || question.type === "blank") {
-    return "";
-  }
-
-  const correctAnswers = question.answer as number[];
-  return correctAnswers
-    .map((originalIndex) => {
-      const optionPosition = shuffledOptions.findIndex(
-        (option) => option.originalIndex === originalIndex,
-      );
-      return String.fromCharCode(65 + optionPosition);
-    })
-    .sort()
-    .join("");
+  return QUESTION_TYPES_LOGIC[question.type].getCorrectChoiceLetters(
+    question,
+    shuffledOptions,
+  );
 }

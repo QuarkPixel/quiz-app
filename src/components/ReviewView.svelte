@@ -4,10 +4,10 @@
     import { Switch } from "$lib/components/ui/switch";
     import { Label } from "$lib/components/ui/label";
     import { cn } from "$lib/utils";
-    import IconCircleHalf2 from "@tabler/icons-svelte/icons/circle-half-2";
-    import IconCircleDot from "@tabler/icons-svelte/icons/circle-dot";
-    import IconChecks from "@tabler/icons-svelte/icons/checks";
-    import IconCursorText from "@tabler/icons-svelte/icons/cursor-text";
+    import {
+        QUESTION_TYPES,
+        QUESTION_TYPE_ORDER,
+    } from "../quiz/types/registry";
     import IconCheck from "@tabler/icons-svelte/icons/check";
 
     interface Props {
@@ -23,32 +23,6 @@
 
     let showUnmasteredOnly = $state(false);
 
-    function getTypeName(type: QuestionType): string {
-        switch (type) {
-            case "judgment":
-                return "判断题";
-            case "single":
-                return "单选题";
-            case "multiple":
-                return "多选题";
-            case "blank":
-                return "填空题";
-        }
-    }
-
-    function getTypeIcon(type: QuestionType) {
-        switch (type) {
-            case "judgment":
-                return IconCircleHalf2;
-            case "single":
-                return IconCircleDot;
-            case "multiple":
-                return IconChecks;
-            case "blank":
-                return IconCursorText;
-        }
-    }
-
     const masteredSet = $derived(new Set(masteredIds));
 
     let filteredQuestions = $derived.by(() => {
@@ -61,22 +35,13 @@
             : byType;
     });
 
-    const typeOrder: QuestionType[] = [
-        "judgment",
-        "single",
-        "multiple",
-        "blank",
-    ];
-
     let grouped = $derived(
         filterType !== "all"
             ? [{ type: filterType as QuestionType, items: filteredQuestions }]
-            : typeOrder
-                  .map((type) => ({
-                      type,
-                      items: filteredQuestions.filter((q) => q.type === type),
-                  }))
-                  .filter((g) => g.items.length > 0),
+            : QUESTION_TYPE_ORDER.map((type) => ({
+                  type,
+                  items: filteredQuestions.filter((q) => q.type === type),
+              })).filter((g) => g.items.length > 0),
     );
 </script>
 
@@ -114,7 +79,7 @@
 
         <div class="flex flex-1 flex-col gap-6 overflow-y-auto px-5 py-4">
             {#each grouped as group (group.type)}
-                {@const Icon = getTypeIcon(group.type)}
+                {@const Icon = QUESTION_TYPES[group.type].icon}
                 <div class="flex flex-col gap-2">
                     <div
                         class="bg-card sticky -top-4 z-10 flex items-center gap-2 py-1.5"
@@ -125,7 +90,7 @@
                             class="text-muted-foreground"
                         />
                         <span class="text-xs font-medium tracking-wide">
-                            {getTypeName(group.type)}
+                            {QUESTION_TYPES[group.type].name}
                         </span>
                         <span
                             class="text-muted-foreground text-xs tabular-nums"

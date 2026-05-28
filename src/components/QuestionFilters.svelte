@@ -3,10 +3,7 @@
     import type { FilterOption } from "../features/quiz/filters";
     import * as ToggleGroup from "$lib/components/ui/toggle-group";
     import IconAsterisk from "@tabler/icons-svelte/icons/asterisk";
-    import IconCircleHalf2 from "@tabler/icons-svelte/icons/circle-half-2";
-    import IconCircleDot from "@tabler/icons-svelte/icons/circle-dot";
-    import IconChecks from "@tabler/icons-svelte/icons/checks";
-    import IconCursorText from "@tabler/icons-svelte/icons/cursor-text";
+    import { QUESTION_TYPES } from "../quiz/types/registry";
 
     interface Props {
         options: FilterOption[];
@@ -17,18 +14,7 @@
     let { options, activeType, onSelect }: Props = $props();
 
     function iconFor(key: QuestionType | "all") {
-        switch (key) {
-            case "all":
-                return IconAsterisk;
-            case "judgment":
-                return IconCircleHalf2;
-            case "single":
-                return IconCircleDot;
-            case "multiple":
-                return IconChecks;
-            case "blank":
-                return IconCursorText;
-        }
+        return key === "all" ? IconAsterisk : QUESTION_TYPES[key].icon;
     }
 
     let allOption = $derived(options.find((o) => o.key === "all"));
