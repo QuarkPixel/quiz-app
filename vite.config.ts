@@ -110,6 +110,8 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts"],
+    environment: "happy-dom",
+    setupFiles: ["./tests/_setup.ts"],
   },
   build: {
     target: "esnext",
