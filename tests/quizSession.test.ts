@@ -221,6 +221,37 @@ describe("markCurrentAsMastered", () => {
   });
 });
 
+describe("markAsMastered（任一池项）", () => {
+  it("掌握非当前题：进 masteredIds、出 activePool，不切下一题", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+    session.initialize();
+    const currentId = session.currentQuestion!.id;
+    // 找一道池内非当前的题
+    const other = session.appState.activePool.find((i) => i.id !== currentId);
+    if (!other) throw new Error("fixture 池中应有非当前题");
+
+    session.markAsMastered(other.id);
+    expect(session.appState.masteredIds).toContain(other.id);
+    expect(
+      session.appState.activePool.find((i) => i.id === other.id),
+    ).toBeUndefined();
+    // currentQuestion 不变（不掌握当前题就不切下一题）
+    expect(session.currentQuestion?.id).toBe(currentId);
+  });
+
+  it("掌握当前题：会自动切下一题", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+    session.initialize();
+    const before = session.currentQuestion!.id;
+    session.markAsMastered(before);
+    expect(session.appState.masteredIds).toContain(before);
+    // 题库总共 4 道，掌握 1 道还有 3 道可选
+    expect(session.currentQuestion?.id).not.toBe(before);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // setFilter
 // ---------------------------------------------------------------------------

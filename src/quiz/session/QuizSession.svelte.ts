@@ -213,34 +213,32 @@ export class QuizSession {
     this.deps.flash(true);
   }
 
-  /** 直接把当前题标为已掌握（顶部 indicator 双击） */
-  markCurrentAsMastered(): void {
-    if (!this.currentQuestion) return;
-
-    const questionId = this.currentQuestion.id;
+  /**
+   * 把任意一道题标为已掌握（顶部 indicator / PoolPanel 双击）。
+   * 如果掌握的就是当前题，自动 selectNext。
+   */
+  markAsMastered(questionId: string): void {
     const nextState: RuntimeState = {
       ...this.appState,
-      activePool: [...this.appState.activePool],
-      masteredIds: [...this.appState.masteredIds],
-      pendingIds: [...this.appState.pendingIds],
+      activePool: this.appState.activePool.filter(
+        (item) => item.id !== questionId,
+      ),
+      masteredIds: this.appState.masteredIds.includes(questionId)
+        ? [...this.appState.masteredIds]
+        : [...this.appState.masteredIds, questionId],
+      pendingIds: this.appState.pendingIds.filter((id) => id !== questionId),
     };
-
-    const activeIndex = nextState.activePool.findIndex(
-      (item) => item.id === questionId,
-    );
-    if (activeIndex !== -1) {
-      nextState.activePool.splice(activeIndex, 1);
-    }
-    if (!nextState.masteredIds.includes(questionId)) {
-      nextState.masteredIds.push(questionId);
-    }
-    nextState.pendingIds = nextState.pendingIds.filter(
-      (id) => id !== questionId,
-    );
-
     this.appState = fillActivePool(nextState);
     this.save();
-    this.selectNext();
+    if (this.currentQuestion?.id === questionId) {
+      this.selectNext();
+    }
+  }
+
+  /** 顶部 indicator 双击：掌握当前题 */
+  markCurrentAsMastered(): void {
+    if (!this.currentQuestion) return;
+    this.markAsMastered(this.currentQuestion.id);
   }
 
   // ────────────────────────────────────────────────────────────────

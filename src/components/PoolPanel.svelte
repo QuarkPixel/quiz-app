@@ -91,6 +91,7 @@
                                 item={entry.item}
                                 requiredStreak={entry.requiredStreak}
                                 size="compact"
+                                onMaster={() => session.markAsMastered(entry.item.id)}
                             />
                         </div>
                     </div>

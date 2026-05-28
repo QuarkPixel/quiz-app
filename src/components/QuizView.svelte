@@ -65,13 +65,16 @@
 <AlertToast bind:this={toast} />
 
 <main
-    class="flex flex-1 min-h-0 items-center justify-center px-4 sm:px-6 overflow-y-auto"
+    class="scrollbar-none flex flex-1 min-h-0 items-center justify-center px-4 sm:px-6 overflow-y-auto"
 >
     <div
         class={cn(
             "grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
             "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
-            session.appState.ui.showPool && "max-lg:grid-rows-[auto_min(45vh,300px)] max-lg:gap-y-6",
+            // max-lg + pool 展开：grid 撑满 main 高度，pool 用 1fr 填满剩余
+            // min-h-fit 保证 pool 撑不下时整体溢出，触发 main 滚动
+            session.appState.ui.showPool &&
+                "max-lg:h-full max-lg:min-h-fit max-lg:grid-rows-[auto_minmax(180px,1fr)] max-lg:gap-y-6",
             session.appState.ui.showPool && "lg:grid-cols-[minmax(0,42rem)_280px]",
         )}
     >
