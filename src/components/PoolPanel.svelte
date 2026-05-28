@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { Question, RuntimeState, ActivePoolItem } from "../types";
+    import type { Question, ActivePoolItem } from "../types";
     import { getRequiredStreak } from "../features/quiz";
     import { QUESTION_TYPES } from "../quiz/types/registry";
     import {
@@ -11,17 +11,12 @@
     import { fly } from "svelte/transition";
     import { backOut, cubicOut } from "svelte/easing";
     import StreakIndicator from "./StreakIndicator.svelte";
+    import { useQuizSession } from "../quiz/session/context";
 
-    interface Props {
-        questions: Question[];
-        state: RuntimeState;
-        currentQuestionId: string | null;
-    }
-
-    let { questions, state, currentQuestionId }: Props = $props();
+    const session = useQuizSession();
 
     const questionMap = $derived(
-        new Map(questions.map((q) => [q.id, q])),
+        new Map(session.questions.map((q) => [q.id, q])),
     );
 
     type PoolEntry = {
@@ -33,8 +28,9 @@
     };
 
     let entries = $derived.by<PoolEntry[]>(() => {
-        const visible = state.activePool.filter(
-            (item) => item.id !== currentQuestionId,
+        const currentId = session.currentQuestion?.id ?? null;
+        const visible = session.appState.activePool.filter(
+            (item) => item.id !== currentId,
         );
         // 最近被选过的（lastSelectedRound 最大）在最上面
         const sorted = visible.slice().sort(
@@ -48,7 +44,7 @@
             result.push({
                 item,
                 question: q,
-                requiredStreak: getRequiredStreak(item, state),
+                requiredStreak: getRequiredStreak(item, session.appState),
                 isLatest: i === 0,
                 answerText: QUESTION_TYPES[q.type].formatAnswerText(q),
             });

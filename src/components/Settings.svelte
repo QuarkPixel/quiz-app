@@ -1,6 +1,4 @@
 <script lang="ts">
-    import type { QuestionType, RuntimeState } from "../types";
-    import type { FilterOption } from "../features/quiz/filters";
     import { SHORTCUTS } from "../config";
     import { modKeyLabel } from "$lib/platform";
     import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
@@ -19,34 +17,16 @@
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
+    import { useQuizSession } from "../quiz/session/context";
 
     interface Props {
         open?: boolean;
-        appState: RuntimeState;
-        filterOptions: FilterOption[];
-        exportStatus: "idle" | "copied" | "error";
-        onFilterChange: (type: QuestionType | "all") => void;
-        onReset: () => void;
-        onAlgorithmChange: () => void;
-        onPreferenceChange: () => void;
-        onExport: () => void;
-        onImport: () => void;
     }
 
-    let {
-        open = $bindable(false),
-        appState = $bindable(),
-        filterOptions,
-        exportStatus,
-        onFilterChange,
-        onReset,
-        onAlgorithmChange,
-        onPreferenceChange,
-        onExport,
-        onImport,
-    }: Props = $props();
+    let { open = $bindable(false) }: Props = $props();
 
-    const resetAction = createConfirmAction(() => onReset());
+    const session = useQuizSession();
+    const resetAction = createConfirmAction(() => session.reset());
 
     $effect(() => {
         if (!open && resetAction.confirming) {
@@ -73,9 +53,9 @@
                     题型筛选
                 </h3>
                 <QuestionFilters
-                    options={filterOptions}
-                    activeType={appState.filterType}
-                    onSelect={onFilterChange}
+                    options={session.filterOptions}
+                    activeType={session.appState.filterType}
+                    onSelect={(t) => session.setFilter(t)}
                 />
             </section>
 
@@ -89,11 +69,11 @@
                 </h3>
                 <ToggleGroup.Root
                     type="single"
-                    value={appState.settings.selectionMode}
+                    value={session.appState.settings.selectionMode}
                     onValueChange={(v) => {
                         if (v === "random" || v === "sequential") {
-                            appState.settings.selectionMode = v;
-                            onAlgorithmChange();
+                            session.appState.settings.selectionMode = v;
+                            session.handleAlgorithmChange();
                         }
                     }}
                     variant="outline"
@@ -140,8 +120,8 @@
                     </Label>
                     <Switch
                         id="auto-next"
-                        bind:checked={appState.settings.autoNextOnCorrect}
-                        onCheckedChange={onPreferenceChange}
+                        bind:checked={session.appState.settings.autoNextOnCorrect}
+                        onCheckedChange={() => session.handlePreferenceChange()}
                         size="sm"
                     />
                 </div>
@@ -169,8 +149,8 @@
                         type="number"
                         min={5}
                         max={100}
-                        bind:value={appState.settings.activePoolSize}
-                        onchange={onAlgorithmChange}
+                        bind:value={session.appState.settings.activePoolSize}
+                        onchange={() => session.handleAlgorithmChange()}
                         class="h-7 w-20 text-center"
                     />
                 </div>
@@ -184,8 +164,8 @@
                         type="number"
                         min={1}
                         max={10}
-                        bind:value={appState.settings.correctStreakToMaster}
-                        onchange={onAlgorithmChange}
+                        bind:value={session.appState.settings.correctStreakToMaster}
+                        onchange={() => session.handleAlgorithmChange()}
                         class="h-7 w-20 text-center"
                     />
                 </div>
@@ -200,8 +180,8 @@
                         type="number"
                         min={1}
                         max={20}
-                        bind:value={appState.settings.correctStreakAfterMistake}
-                        onchange={onAlgorithmChange}
+                        bind:value={session.appState.settings.correctStreakAfterMistake}
+                        onchange={() => session.handleAlgorithmChange()}
                         class="h-7 w-20 text-center"
                     />
                 </div>
@@ -217,20 +197,20 @@
                 </h3>
                 <div class="flex gap-2">
                     <Button
-                        variant={exportStatus === "copied"
+                        variant={session.exportStatus === "copied"
                             ? "default"
-                            : exportStatus === "error"
+                            : session.exportStatus === "error"
                               ? "destructive"
                               : "outline"}
                         size="sm"
                         class="flex-1 justify-between gap-2"
-                        onclick={onExport}
-                        disabled={exportStatus !== "idle"}
+                        onclick={() => session.exportProgress()}
+                        disabled={session.exportStatus !== "idle"}
                     >
                         <span class="flex items-center gap-1.5">
                             <IconCopy size={14} stroke={1.75} />
-                            {#if exportStatus === "copied"}已复制
-                            {:else if exportStatus === "error"}导出失败
+                            {#if session.exportStatus === "copied"}已复制
+                            {:else if session.exportStatus === "error"}导出失败
                             {:else}导出{/if}
                         </span>
                         <KbdGroup class="text-[10px]">
@@ -242,7 +222,7 @@
                         variant="outline"
                         size="sm"
                         class="flex-1 justify-between gap-2"
-                        onclick={onImport}
+                        onclick={() => session.startImport()}
                     >
                         <span class="flex items-center gap-1.5">
                             <IconClipboard size={14} stroke={1.75} />

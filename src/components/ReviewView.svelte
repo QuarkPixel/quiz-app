@@ -7,40 +7,42 @@
         QUESTION_TYPES,
         QUESTION_TYPE_ORDER,
     } from "../quiz/types/registry";
+    import { useQuizSession } from "../quiz/session/context";
 
     interface Props {
-        questions: Question[];
-        filterType: QuestionType | "all";
-        masteredIds: string[];
         open: boolean;
         onOpenChange: (open: boolean) => void;
     }
 
-    let { questions, filterType, masteredIds, open, onOpenChange }: Props =
-        $props();
+    let { open, onOpenChange }: Props = $props();
+
+    const session = useQuizSession();
 
     let showUnmasteredOnly = $state(false);
 
-    const masteredSet = $derived(new Set(masteredIds));
+    const masteredSet = $derived(new Set(session.appState.masteredIds));
 
     let filteredQuestions = $derived.by(() => {
+        const filterType = session.appState.filterType;
         const byType =
             filterType === "all"
-                ? questions
-                : questions.filter((q) => q.type === filterType);
+                ? session.questions
+                : session.questions.filter((q) => q.type === filterType);
         return showUnmasteredOnly
             ? byType.filter((q) => !masteredSet.has(q.id))
             : byType;
     });
 
-    let grouped = $derived(
-        filterType !== "all"
-            ? [{ type: filterType as QuestionType, items: filteredQuestions }]
-            : QUESTION_TYPE_ORDER.map((type) => ({
-                  type,
-                  items: filteredQuestions.filter((q) => q.type === type),
-              })).filter((g) => g.items.length > 0),
-    );
+    let grouped = $derived.by(() => {
+        const filterType = session.appState.filterType;
+        if (filterType !== "all") {
+            return [{ type: filterType as QuestionType, items: filteredQuestions }];
+        }
+        return QUESTION_TYPE_ORDER.map((type) => ({
+            type,
+            items: filteredQuestions.filter((q: Question) => q.type === type),
+        })).filter((g) => g.items.length > 0);
+    });
 </script>
 
 <Dialog.Root bind:open {onOpenChange}>
