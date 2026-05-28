@@ -27,7 +27,7 @@
         getStats,
         isEditingTarget,
         loadRuntimeState,
-        processAnswer,
+        applyAnswer,
         reconcileAfterSettingsChange,
         rebuildRuntimeState,
         saveState,
@@ -58,7 +58,14 @@
     import IconStack2 from "@tabler/icons-svelte/icons/stack-2";
     import IconSettings from "@tabler/icons-svelte/icons/settings";
 
-    import { PROGRESS_SIDE_CAP_PERCENT, SHORTCUTS } from "../config";
+    import {
+        PROGRESS_SIDE_CAP_PERCENT,
+        SHORTCUTS,
+        CONFIRM_TIMEOUT_MS,
+        MASTERED_CELEBRATE_DURATION_MS,
+        EXPORT_STATUS_SUCCESS_RESET_MS,
+        EXPORT_STATUS_ERROR_RESET_MS,
+    } from "../config";
     import type { Bank } from "../source/types";
 
     let { bank }: { bank: Bank } = $props();
@@ -110,7 +117,7 @@
         masteredTimer = setTimeout(() => {
             masteredConfirming = false;
             masteredTimer = null;
-        }, 3000);
+        }, CONFIRM_TIMEOUT_MS);
     }
 
     function toggleProgressFocus(): void {
@@ -209,8 +216,7 @@
 
         flashContainer.flash(isCorrect);
 
-        appState = processAnswer(appState, currentQuestion.id, isCorrect);
-        appState = fillActivePool(appState);
+        appState = applyAnswer(appState, currentQuestion.id, isCorrect);
 
         saveState(hash, appState);
 
@@ -245,11 +251,11 @@
         const result = await copyProgressToClipboard(appState, hash);
         if (result.ok) {
             exportStatus = "copied";
-            setTimeout(() => (exportStatus = "idle"), 2000);
+            setTimeout(() => (exportStatus = "idle"), EXPORT_STATUS_SUCCESS_RESET_MS);
             toast?.show("进度已复制到剪贴板", "粘贴到任意位置即可备份。", "success");
         } else {
             exportStatus = "error";
-            setTimeout(() => (exportStatus = "idle"), 3000);
+            setTimeout(() => (exportStatus = "idle"), EXPORT_STATUS_ERROR_RESET_MS);
             toast?.show("导出失败", result.error, "destructive");
         }
     }
@@ -496,7 +502,7 @@
             celebrateTimer = setTimeout(() => {
                 masteredCelebrating = false;
                 celebrateTimer = null;
-            }, 700);
+            }, MASTERED_CELEBRATE_DURATION_MS);
         }
         prevMastered = m;
     });

@@ -5,6 +5,7 @@
 <script lang="ts">
     import * as AlertUI from "$lib/components/ui/alert";
     import { cn } from "$lib/utils";
+    import { TOAST_DURATION_MS, TOAST_FADE_MS } from "../config";
     import IconCheck from "@tabler/icons-svelte/icons/check";
     import IconAlertTriangle from "@tabler/icons-svelte/icons/alert-triangle";
     import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
@@ -36,9 +37,9 @@
             clearTimer = setTimeout(() => {
                 current = null;
                 clearTimer = null;
-            }, 250);
+            }, TOAST_FADE_MS);
             showTimer = null;
-        }, 2200);
+        }, TOAST_DURATION_MS);
     }
 </script>
 

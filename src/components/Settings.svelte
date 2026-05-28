@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { QuestionType, RuntimeState } from "../types";
     import type { FilterOption } from "../features/quiz/filters";
-    import { SHORTCUTS } from "../config";
+    import { SHORTCUTS, CONFIRM_TIMEOUT_MS } from "../config";
     import { modKeyLabel } from "$lib/platform";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Button } from "$lib/components/ui/button";
@@ -61,7 +61,7 @@
         resetTimer = setTimeout(() => {
             resetConfirming = false;
             resetTimer = null;
-        }, 3000);
+        }, CONFIRM_TIMEOUT_MS);
     }
 
     $effect(() => {

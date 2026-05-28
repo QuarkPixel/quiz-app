@@ -1,9 +1,9 @@
 import {
+  applyAnswer,
   computeLearningSegments,
   fillActivePool,
   getRequiredStreak,
   getStats,
-  processAnswer,
   selectNextFromPool,
   shuffle,
 } from "../../algorithm";
@@ -19,12 +19,12 @@ import { normalizeFilterType } from "./filters";
 import { sanitizeUserSettings } from "./settings";
 
 export {
+  applyAnswer,
   computeLearningSegments,
   fillActivePool,
   getActivePoolItem,
   getRequiredStreak,
   getStats,
-  processAnswer,
   saveState,
   selectNextFromPool,
   shuffle,

@@ -4,6 +4,7 @@ import {
   fillActivePool,
   selectNextFromPool,
   processAnswer,
+  applyAnswer,
   getRequiredStreak,
   computeLearningSegments,
 } from "../src/algorithm";
@@ -86,7 +87,9 @@ describe("getStats", () => {
     });
   });
 
-  it("筛选指定题型时排除不匹配的 mastered / activePool", () => {
+  it("筛选指定题型时排除不匹配的 mastered；activePool 假定已被 buildRuntimeState 清洗", () => {
+    // getStats 不再防御性 filter activePool —— 假定调用方传入的 state 是
+    // buildRuntimeState 的产物，pool 已按 filterType 清洗过。
     const questions = [
       makeQuestion("a", "judgment", true),
       makeQuestion("b", "single", [0]),
@@ -94,8 +97,8 @@ describe("getStats", () => {
     ];
     const state = makeState({
       filterType: "single",
-      masteredIds: ["a", "b"], // a 是判断题，不应计入
-      activePool: [poolItem("c"), poolItem("a")], // a 不应计入 learning
+      masteredIds: ["a", "b"], // a 是判断题，mastered 仍按 filterType 过滤
+      activePool: [poolItem("c")], // 假设已被 buildRuntimeState 清洗
       pendingIds: [],
     });
 
@@ -385,6 +388,62 @@ describe("processAnswer", () => {
     });
     const next = processAnswer(state, "a", true);
     expect(next.pendingIds).toEqual(["b", "c"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyAnswer（processAnswer + fillActivePool 的原子化封装）
+// ---------------------------------------------------------------------------
+
+describe("applyAnswer", () => {
+  it("答对未达 streak：和 processAnswer 行为一致（pool 不变化）", () => {
+    const state = makeState({
+      activePool: [poolItem("a"), poolItem("b")],
+      pendingIds: ["c", "d"],
+      settings: makeSettings({
+        activePoolSize: 5,
+        correctStreakToMaster: 3,
+        selectionMode: "sequential",
+      }),
+    });
+    const next = applyAnswer(state, "a", true);
+    expect(next.activePool.map((i) => i.id)).toEqual(["a", "b", "c", "d"]); // a 留 + pendingIds 补
+    expect(next.pendingIds).toEqual([]);
+    const a = next.activePool.find((i) => i.id === "a")!;
+    expect(a.consecutiveCorrect).toBe(1);
+    expect(next.currentRound).toBe(state.currentRound + 1);
+  });
+
+  it("答对达到 streak：题进 mastered，pool 立即补一个 pending", () => {
+    const state = makeState({
+      activePool: [
+        poolItem("a", { consecutiveCorrect: 2 }),
+        poolItem("b"),
+      ],
+      pendingIds: ["c"],
+      settings: makeSettings({
+        activePoolSize: 2,
+        correctStreakToMaster: 3,
+        selectionMode: "sequential",
+      }),
+    });
+    const next = applyAnswer(state, "a", true);
+    expect(next.masteredIds).toContain("a");
+    expect(next.activePool.map((i) => i.id)).toEqual(["b", "c"]); // a 移除，c 补入
+    expect(next.pendingIds).toEqual([]);
+  });
+
+  it("答错：consecutiveCorrect 清零，hasEverMistaken 置 true，pool 长度不变", () => {
+    const state = makeState({
+      activePool: [poolItem("a", { consecutiveCorrect: 2 })],
+      pendingIds: ["b"],
+      settings: makeSettings({ activePoolSize: 1 }), // 池已满，fillActivePool 不补
+    });
+    const next = applyAnswer(state, "a", false);
+    expect(next.activePool).toHaveLength(1);
+    const a = next.activePool[0];
+    expect(a.consecutiveCorrect).toBe(0);
+    expect(a.hasEverMistaken).toBe(true);
   });
 });
 

@@ -7,6 +7,7 @@ export { buildFilterOptions, getTypeName, normalizeFilterType } from "./filters"
 export { isEditingTarget } from "./keyboard";
 export { reconcileAfterSettingsChange, sanitizeUserSettings } from "./settings";
 export {
+  applyAnswer,
   computeLearningSegments,
   createResetRuntimeState,
   fillActivePool,
@@ -14,7 +15,6 @@ export {
   getRequiredStreak,
   getStats,
   loadRuntimeState,
-  processAnswer,
   rebuildRuntimeState,
   saveState,
   selectNextFromPool,

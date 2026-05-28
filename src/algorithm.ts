@@ -7,6 +7,14 @@ import { createActivePoolItem, filterQuestions } from "./store";
 import { LEARNING_COLOR_HIGH, LEARNING_COLOR_LOW } from "./config";
 
 /**
+ * 平滑斜坡：x=0 时返回 0，x>>targetX 时趋近 1。
+ * 用于把「距离上次选中的轮次」映射到权重。
+ */
+function smoothRamp(x: number, targetX: number): number {
+  return 1 - Math.exp((-x * 4) / targetX);
+}
+
+/**
  * 获取统计信息
  */
 export function getStats(questions: Question[], state: RuntimeState): Stats {
@@ -15,9 +23,8 @@ export function getStats(questions: Question[], state: RuntimeState): Stats {
 
   // 只统计当前筛选范围内的
   const mastered = state.masteredIds.filter((id) => filteredIds.has(id)).length;
-  const learning = state.activePool.filter((item) =>
-    filteredIds.has(item.id),
-  ).length;
+  // activePool 在 buildRuntimeState 时已经按 filterType 清洗过，这里直接取长度
+  const learning = state.activePool.length;
   const pending = state.pendingIds.length;
   const total = filtered.length;
 
@@ -63,6 +70,8 @@ export function selectNextFromPool(
 
   if (length === 0) return null;
 
+  const questionsById = new Map(questions.map((q) => [q.id, q]));
+
   if (state.settings.selectionMode === "sequential") {
     const questionIndex = new Map(questions.map((q, i) => [q.id, i]));
     const sorted = [...state.activePool].sort(
@@ -72,16 +81,13 @@ export function selectNextFromPool(
     );
     const next =
       sorted.find((item) => item.id !== currentQuestionId) ?? sorted[0];
-    return questions.find((q) => q.id === next.id) ?? null;
+    return questionsById.get(next.id) ?? null;
   }
 
   const weights: { id: string; weight: number }[] = [];
 
   for (const item of state.activePool) {
     if (item.id === currentQuestionId) continue;
-
-    const smoothRamp = (x: number, targetX: number) =>
-      1 - Math.exp((-x * 4) / targetX);
 
     const roundsSinceSelected = Math.min(
       state.currentRound - item.lastSelectedRound,
@@ -96,7 +102,7 @@ export function selectNextFromPool(
 
   if (weights.length === 0) {
     const onlyId = state.activePool[0].id;
-    return questions.find((q) => q.id === onlyId) || null;
+    return questionsById.get(onlyId) ?? null;
   }
 
   const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
@@ -105,16 +111,23 @@ export function selectNextFromPool(
   for (const w of weights) {
     random -= w.weight;
     if (random <= 0) {
-      return questions.find((q) => q.id === w.id) || null;
+      return questionsById.get(w.id) ?? null;
     }
   }
 
   const lastId = weights[weights.length - 1].id;
-  return questions.find((q) => q.id === lastId) || null;
+  return questionsById.get(lastId) ?? null;
 }
 
 /**
- * 处理答题结果
+ * 处理答题结果（不补池）
+ *
+ * 注意：这是内部步骤。绝大多数调用方应该用 `applyAnswer`，它把
+ * processAnswer + fillActivePool 合并成原子的状态变迁，避免「调完
+ * processAnswer 忘了调 fillActivePool 导致池少题」的隐性 bug。
+ *
+ * 仍然 export 是因为单元测试需要单独验证答题逻辑，以及非答题场景下
+ * 复用「只更新轮次/streak」的语义（目前没有调用方需要这么做）。
  */
 export function processAnswer(
   state: RuntimeState,
@@ -159,6 +172,20 @@ export function processAnswer(
   }
 
   return newState;
+}
+
+/**
+ * 答题状态变迁的原子化入口：处理答题结果并补足活动池。
+ *
+ * 调用方应统一用此函数而非 processAnswer + fillActivePool 两步调用，
+ * 后者容易遗漏第二步导致池里少题。
+ */
+export function applyAnswer(
+  state: RuntimeState,
+  questionId: string,
+  isCorrect: boolean,
+): RuntimeState {
+  return fillActivePool(processAnswer(state, questionId, isCorrect));
 }
 
 /**

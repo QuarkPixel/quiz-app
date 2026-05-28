@@ -1,6 +1,10 @@
 <script lang="ts">
     import type { Question, RuntimeState, ActivePoolItem } from "../types";
     import { getRequiredStreak } from "../features/quiz";
+    import {
+        POOL_ITEM_FLIP_DURATION_MS,
+        POOL_ITEM_OUT_DURATION_MS,
+    } from "../config";
     import { cn } from "$lib/utils";
     import { flip } from "svelte/animate";
     import { fly } from "svelte/transition";
@@ -87,16 +91,16 @@
         <ul class="flex flex-col gap-4 py-5 px-1">
             {#each entries as entry (entry.item.id)}
                 <li
-                    animate:flip={{ duration: 420 }}
+                    animate:flip={{ duration: POOL_ITEM_FLIP_DURATION_MS }}
                     in:fly={{
                         y: -14,
-                        duration: 420,
+                        duration: POOL_ITEM_FLIP_DURATION_MS,
                         easing: backOut,
                         opacity: 0,
                     }}
                     out:fly={{
                         x: -12,
-                        duration: 260,
+                        duration: POOL_ITEM_OUT_DURATION_MS,
                         easing: cubicOut,
                         opacity: 0,
                     }}
