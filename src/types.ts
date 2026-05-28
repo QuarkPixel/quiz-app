@@ -48,6 +48,8 @@ export interface UserSettings {
 export interface UiPreferences {
   /** 进度条是否聚焦学习中部分 */
   progressFocused: boolean;
+  /** 活动池面板是否展开 */
+  showPool: boolean;
 }
 
 /** 持久化存储的状态 */

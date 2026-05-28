@@ -55,7 +55,7 @@
             "transition-[min-width,background-color] duration-200",
             size === "default" ? "p-1" : "p-[3px]",
             !masterAction.confirming &&
-                "bg-foreground/10 hover:bg-foreground/15 cursor-pointer",
+                "bg-foreground/10 hover:bg-foreground/15",
             masterAction.confirming && "bg-success",
             singleDot &&
                 !masterAction.confirming &&

@@ -97,6 +97,36 @@ describe("loadStoredState", () => {
     expect(state.currentRound).toBe(0);
     expect(state.filterType).toBe("all");
     expect(state.settings).toEqual(createDefaultSettings());
+    expect(state.ui).toEqual({ progressFocused: false, showPool: false });
+  });
+
+  it("ui 段缺失字段 → 用默认值补齐", () => {
+    const partial = {
+      masteredIds: [],
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: createDefaultSettings(),
+      ui: { progressFocused: true }, // 缺 showPool（模拟老存储）
+    };
+    localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(partial));
+    const loaded = loadStoredState(HASH);
+    expect(loaded.ui.progressFocused).toBe(true);
+    expect(loaded.ui.showPool).toBe(false);
+  });
+
+  it("ui 段完整 round-trip", () => {
+    const stored: StoredState = {
+      masteredIds: [],
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: createDefaultSettings(),
+      ui: { progressFocused: true, showPool: true },
+    };
+    localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(stored));
+    const loaded = loadStoredState(HASH);
+    expect(loaded.ui).toEqual({ progressFocused: true, showPool: true });
   });
 
   it("有完整数据 → 解析正确", () => {
@@ -145,7 +175,7 @@ describe("loadStoredState", () => {
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
-      ui: { progressFocused: false },
+      ui: { progressFocused: false, showPool: false },
     });
   });
 

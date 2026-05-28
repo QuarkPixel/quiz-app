@@ -84,7 +84,6 @@
 
     let showReview = $state(false);
     let showSettings = $state(false);
-    let showPool = $state(false);
 
     let exportStatus = $state<"idle" | "copied" | "error">("idle");
     let importConfirmText = $state<string | null>(null);
@@ -191,7 +190,8 @@
     }
 
     function togglePool(): void {
-        showPool = !showPool;
+        appState.ui.showPool = !appState.ui.showPool;
+        saveState(hash, appState);
     }
     function toggleReview(): void {
         showReview = !showReview;
@@ -449,8 +449,8 @@
         class={cn(
             "grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
             "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
-            showPool && "max-lg:grid-rows-[auto_min(45vh,300px)] max-lg:gap-y-6",
-            showPool && "lg:grid-cols-[minmax(0,42rem)_280px]",
+            appState.ui.showPool && "max-lg:grid-rows-[auto_min(45vh,300px)] max-lg:gap-y-6",
+            appState.ui.showPool && "lg:grid-cols-[minmax(0,42rem)_280px]",
         )}
     >
         <div class="flex w-full min-w-0 flex-col gap-5">
@@ -615,7 +615,7 @@
                 "row-start-2 col-start-1",
                 "lg:row-start-1 lg:col-start-2 lg:flex lg:justify-end",
             )}
-            aria-hidden={!showPool}
+            aria-hidden={!appState.ui.showPool}
         >
             <div
                 class={cn(
@@ -669,9 +669,9 @@
                         type="button"
                         class={cn(
                             "text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:-rotate-[8deg]",
-                            showPool && "text-foreground bg-foreground/8",
+                            appState.ui.showPool && "text-foreground bg-foreground/8",
                         )}
-                        aria-pressed={showPool}
+                        aria-pressed={appState.ui.showPool}
                         aria-label="查看活动池"
                         onclick={togglePool}
                     >
@@ -680,7 +680,7 @@
                 {/snippet}
             </Tooltip.Trigger>
             <Tooltip.Content side="top">
-                <span>{showPool ? "收起" : "展开"}活动池</span>
+                <span>{appState.ui.showPool ? "收起" : "展开"}活动池</span>
                 <KbdGroup>
                     <Kbd>{modKeyLabel}</Kbd>
                     <Kbd>{SHORTCUTS.togglePool.toUpperCase()}</Kbd>

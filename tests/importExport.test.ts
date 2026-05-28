@@ -33,6 +33,7 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
     },
     ui: {
       progressFocused: false,
+      showPool: false,
     },
     ...overrides,
   };
@@ -99,7 +100,7 @@ describe("exportProgress / importProgress round-trip", () => {
         correctStreakAfterMistake: 4,
         selectionMode: "random",
       },
-      ui: { progressFocused: false },
+      ui: { progressFocused: false, showPool: false },
     };
     const encoded = await exportProgress(state, HASH);
     const restored = await importProgress(encoded, HASH);
@@ -345,23 +346,41 @@ describe("importProgress 错误处理", () => {
 // 向后兼容：v1 格式（无 ui 段，compact.length === 5）
 // ---------------------------------------------------------------------------
 
-describe("向后兼容：v1 没有 ui 段", () => {
-  it("v1 格式可被导入，ui 字段为默认值", async () => {
-    // v1 compact 只有 5 段，没有第 6 段 ui
+describe("向后兼容：v1 没有 ui 段 / v2 ui 段长度演化", () => {
+  it("v1 格式（compact 长度 5）→ ui 字段全为默认值", async () => {
     const v1Encoded = await encodeCompact(
       [[], [], 0, 0, [0, 25, 3, 4, "random"]],
       HASH,
     );
     const restored = await importProgress(v1Encoded, HASH);
-    expect(restored.ui).toEqual({ progressFocused: false });
+    expect(restored.ui).toEqual({ progressFocused: false, showPool: false });
   });
 
-  it("v2 格式 ui.progressFocused=true round-trip", async () => {
-    const v2Encoded = await encodeCompact(
+  it("v2 早期格式（ui 段仅 progressFocused）→ showPool 默认 false", async () => {
+    // 老 v2 段只有 [progressFocused]，没有 showPool
+    const earlyV2Encoded = await encodeCompact(
       [[], [], 0, 0, [0, 25, 3, 4, "random"], [1]],
       HASH,
     );
+    const restored = await importProgress(earlyV2Encoded, HASH);
+    expect(restored.ui).toEqual({ progressFocused: true, showPool: false });
+  });
+
+  it("v2 完整 ui 段 round-trip：progressFocused=true, showPool=true", async () => {
+    const v2Encoded = await encodeCompact(
+      [[], [], 0, 0, [0, 25, 3, 4, "random"], [1, 1]],
+      HASH,
+    );
     const restored = await importProgress(v2Encoded, HASH);
-    expect(restored.ui.progressFocused).toBe(true);
+    expect(restored.ui).toEqual({ progressFocused: true, showPool: true });
+  });
+
+  it("exportProgress 输出包含完整 ui 段（progressFocused + showPool）", async () => {
+    const state = makeState({
+      ui: { progressFocused: true, showPool: true },
+    });
+    const encoded = await exportProgress(state, HASH);
+    const restored = await importProgress(encoded, HASH);
+    expect(restored.ui).toEqual({ progressFocused: true, showPool: true });
   });
 });

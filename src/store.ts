@@ -38,6 +38,7 @@ export function createDefaultSettings(): UserSettings {
 export function createDefaultUiPreferences(): UiPreferences {
   return {
     progressFocused: false,
+    showPool: false,
   };
 }
 

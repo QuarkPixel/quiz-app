@@ -192,7 +192,10 @@ export async function exportProgress(state: StoredState, hash: string): Promise<
       state.settings.selectionMode,
     ],
     // 第 6 段（v2 新增）：UI 偏好。老版本导入时缺省段，按默认值处理。
-    [state.ui.progressFocused ? 1 : 0],
+    [
+      state.ui.progressFocused ? 1 : 0,
+      state.ui.showPool ? 1 : 0,
+    ],
   ];
 
   const json = JSON.stringify(compact);
@@ -295,6 +298,7 @@ export async function importProgress(encoded: string, hash: string): Promise<Sto
   // v2 新增的 ui 段；老版本（compact.length < 6）走默认值
   const ui: UiPreferences = {
     progressFocused: Array.isArray(uiRaw) ? uiRaw[0] === 1 : false,
+    showPool: Array.isArray(uiRaw) ? uiRaw[1] === 1 : false,
   };
 
   return {
