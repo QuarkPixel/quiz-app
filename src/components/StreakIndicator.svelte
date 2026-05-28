@@ -24,55 +24,66 @@
         onMaster,
     }: Props = $props();
 
-    // 仅在 interactive 模式下创建 confirm action。注意 hook 不可条件化调用，
-    // 所以总是创建，但只在 onMaster 存在时使用。
+    // hook 不可条件化调用，总是创建，仅 onMaster 存在时使用。
     const masterAction = createConfirmAction(() => onMaster?.());
     const interactive = $derived(onMaster !== undefined);
-
-    function handleClick(): void {
-        if (!interactive) return;
-        masterAction.trigger();
-    }
+    // 仅当 requiredStreak === 1 时点很窄，需要 min-width 撑开。
+    const singleDot = $derived(requiredStreak === 1);
 </script>
+
+{#snippet dots()}
+    {#each Array(requiredStreak) as _, i}
+        <span
+            class={cn(
+                "block rounded-full transition-colors",
+                size === "default" ? "size-1.5" : "size-1",
+                i < item.consecutiveCorrect
+                    ? item.hasEverMistaken
+                        ? "bg-warning"
+                        : "bg-success"
+                    : "bg-background",
+            )}
+        ></span>
+    {/each}
+{/snippet}
 
 {#if interactive}
     <button
         type="button"
         class={cn(
-            // 基础容器：圆角 pill，min-w 防止 1-dot 时挤成方块
-            "inline-flex items-center justify-center gap-1.5 rounded-full transition-colors",
-            size === "default"
-                ? "min-w-8 p-1 bg-foreground/10"
-                : "min-w-6 p-[3px] bg-foreground/8 gap-1",
-            // confirming：变绿带 ✓
-            masterAction.confirming &&
-                "bg-success ring-success/40 ring-2 ring-offset-1 ring-offset-background",
-            !masterAction.confirming && "hover:bg-foreground/15 cursor-pointer",
+            "relative inline-flex items-center justify-center rounded-full",
+            "transition-[min-width,background-color] duration-200",
+            size === "default" ? "p-1" : "p-[3px]",
+            !masterAction.confirming &&
+                "bg-foreground/10 hover:bg-foreground/15 cursor-pointer",
+            masterAction.confirming && "bg-success",
+            singleDot &&
+                !masterAction.confirming &&
+                (size === "default" ? "min-w-6" : "min-w-5"),
+            singleDot &&
+                masterAction.confirming &&
+                (size === "default" ? "min-w-10" : "min-w-8"),
         )}
         aria-label={masterAction.confirming ? "再次点击确认掌握" : "标记为已掌握"}
         title={masterAction.confirming ? "再次点击确认掌握" : "标记为已掌握"}
-        onclick={handleClick}
+        onclick={() => masterAction.trigger()}
     >
+        <!-- dots 始终作为「占位」存在，confirming 时 invisible 保留尺寸 -->
+        <span
+            class={cn(
+                "flex items-center",
+                size === "default" ? "gap-1.5" : "gap-1",
+                masterAction.confirming && "invisible",
+            )}
+        >
+            {@render dots()}
+        </span>
         {#if masterAction.confirming}
             <IconCheck
                 size={size === "default" ? 14 : 10}
                 stroke={2.5}
-                class="text-success-foreground"
+                class="absolute inset-0 m-auto text-success-foreground"
             />
-        {:else}
-            {#each Array(requiredStreak) as _, i}
-                <span
-                    class={cn(
-                        "block rounded-full transition-colors",
-                        size === "default" ? "size-1.5" : "size-1",
-                        i < item.consecutiveCorrect
-                            ? item.hasEverMistaken
-                                ? "bg-warning"
-                                : "bg-success"
-                            : "bg-background",
-                    )}
-                ></span>
-            {/each}
         {/if}
     </button>
 {:else}
@@ -80,22 +91,11 @@
         class={cn(
             "flex items-center rounded-full",
             size === "default"
-                ? "min-w-8 p-1 bg-foreground/10 gap-1.5"
-                : "min-w-6 p-[3px] bg-foreground/8 gap-1",
+                ? "p-1 gap-1.5 bg-foreground/10"
+                : "p-[3px] gap-1 bg-foreground/8",
+            singleDot && (size === "default" ? "min-w-6" : "min-w-5"),
         )}
     >
-        {#each Array(requiredStreak) as _, i}
-            <span
-                class={cn(
-                    "block rounded-full",
-                    size === "default" ? "size-1.5" : "size-1",
-                    i < item.consecutiveCorrect
-                        ? item.hasEverMistaken
-                            ? "bg-warning"
-                            : "bg-success"
-                        : "bg-background",
-                )}
-            ></span>
-        {/each}
+        {@render dots()}
     </div>
 {/if}
