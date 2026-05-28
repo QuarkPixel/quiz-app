@@ -41,17 +41,14 @@
     } from "../features/quiz/progressActions";
 
     import { Button } from "$lib/components/ui/button";
-    import { Input } from "$lib/components/ui/input";
     import * as Dialog from "$lib/components/ui/dialog";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { cn } from "$lib/utils";
     import { modKeyLabel } from "$lib/platform";
     import { QUESTION_TYPES } from "../quiz/types/registry";
-    import IconBook2 from "@tabler/icons-svelte/icons/book-2";
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
-    import IconCheck from "@tabler/icons-svelte/icons/check";
-    import IconX from "@tabler/icons-svelte/icons/x";
+    import IconBook2 from "@tabler/icons-svelte/icons/book-2";
     import IconStack2 from "@tabler/icons-svelte/icons/stack-2";
     import IconSettings from "@tabler/icons-svelte/icons/settings";
 
@@ -168,26 +165,6 @@
         isCorrect = false;
         resetMasteredConfirm();
         focusBlankInputIfNeeded();
-    }
-
-    function toggleAnswer(originalIndex: number): void {
-        if (showResult) return;
-
-        if (
-            currentQuestion?.type === "single" ||
-            currentQuestion?.type === "judgment"
-        ) {
-            selectedAnswers = [originalIndex];
-            submitAnswer();
-        } else {
-            if (selectedAnswers.includes(originalIndex)) {
-                selectedAnswers = selectedAnswers.filter(
-                    (i) => i !== originalIndex,
-                );
-            } else {
-                selectedAnswers = [...selectedAnswers, originalIndex];
-            }
-        }
     }
 
     function submitAnswer(): void {
@@ -431,6 +408,9 @@
     initialize();
 
     let stats = $derived(getStats(questions, appState));
+    let currentTypeDef = $derived(
+        currentQuestion ? QUESTION_TYPES[currentQuestion.type] : null,
+    );
     let currentPoolItem = $derived<ActivePoolItem | undefined>(
         currentQuestion
             ? getActivePoolItem(appState, currentQuestion.id)
@@ -548,119 +528,16 @@
                 </p>
 
                 <div class="flex flex-col gap-2.5">
-                    {#if currentQuestion.type === "judgment"}
-                        {#each [{ idx: 0, label: "正确", value: true, icon: IconCheck }, { idx: 1, label: "错误", value: false, icon: IconX }] as opt}
-                            {@const isSelected = selectedAnswers.includes(
-                                opt.idx,
-                            )}
-                            {@const isOptionCorrect =
-                                showResult &&
-                                currentQuestion.answer === opt.value}
-                            {@const isWrong =
-                                showResult &&
-                                isSelected &&
-                                currentQuestion.answer !== opt.value}
-                            {@const OptIcon = opt.icon}
-                            <button
-                                type="button"
-                                class={cn(
-                                    "border-border bg-background hover:bg-muted flex items-center gap-3 rounded-lg border px-4 py-3.5 text-left text-base transition-colors disabled:cursor-default",
-                                    isSelected &&
-                                        !showResult &&
-                                        "border-foreground bg-muted",
-                                    isOptionCorrect &&
-                                        "border-success bg-success/8 text-success",
-                                    isWrong &&
-                                        "border-destructive bg-destructive/8 text-destructive",
-                                )}
-                                onclick={() => toggleAnswer(opt.idx)}
-                                disabled={showResult}
-                            >
-                                <OptIcon size={18} stroke={2} />
-                                {opt.label}
-                            </button>
-                        {/each}
-                    {:else if currentQuestion.type === "blank"}
-                        <div class="flex flex-col gap-2.5">
-                            {#each Array.isArray(currentQuestion.answer) ? currentQuestion.answer : [currentQuestion.answer] as _ans, i}
-                                <Input
-                                    data-slot="input"
-                                    class="blank-input h-12 px-4 text-base"
-                                    value={blankAnswerInputs[i] ?? ""}
-                                    oninput={(e) => {
-                                        blankAnswerInputs[i] = (
-                                            e.target as HTMLInputElement
-                                        ).value;
-                                    }}
-                                    placeholder={Array.isArray(
-                                        currentQuestion.answer,
-                                    )
-                                        ? `第 ${i + 1} 空`
-                                        : "根据提示默写答案"}
-                                    autocomplete="off"
-                                    autocapitalize="off"
-                                    spellcheck="false"
-                                    disabled={showResult}
-                                />
-                            {/each}
-                        </div>
-                    {:else}
-                        {#each shuffledOptions as opt, idx}
-                            {@const correctAnswers =
-                                currentQuestion.answer as number[]}
-                            {@const isSelected = selectedAnswers.includes(
-                                opt.originalIndex,
-                            )}
-                            {@const isOptionCorrect =
-                                showResult &&
-                                correctAnswers.includes(opt.originalIndex)}
-                            {@const isWrong =
-                                showResult &&
-                                isSelected &&
-                                !correctAnswers.includes(opt.originalIndex)}
-                            {@const displayLetter = String.fromCharCode(
-                                65 + idx,
-                            )}
-                            <button
-                                type="button"
-                                class={cn(
-                                    "border-border bg-background hover:bg-muted flex items-start gap-3 rounded-lg border px-4 py-3.5 text-left text-base transition-colors disabled:cursor-default",
-                                    isSelected &&
-                                        !showResult &&
-                                        "border-foreground bg-muted",
-                                    isOptionCorrect &&
-                                        "border-success bg-success/8",
-                                    isWrong &&
-                                        "border-destructive bg-destructive/8",
-                                )}
-                                onclick={() => toggleAnswer(opt.originalIndex)}
-                                disabled={showResult}
-                            >
-                                <span
-                                    class={cn(
-                                        "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
-                                        isOptionCorrect
-                                            ? "bg-success text-success-foreground"
-                                            : isWrong
-                                              ? "bg-destructive text-destructive-foreground"
-                                              : isSelected && !showResult
-                                                ? "bg-foreground text-background"
-                                                : "bg-foreground/10 text-muted-foreground",
-                                    )}
-                                >
-                                    {displayLetter}
-                                </span>
-                                <span
-                                    class={cn(
-                                        "flex-1 leading-relaxed",
-                                        isOptionCorrect && "text-success",
-                                        isWrong && "text-destructive",
-                                    )}
-                                >
-                                    {opt.text}
-                                </span>
-                            </button>
-                        {/each}
+                    {#if currentTypeDef}
+                        <currentTypeDef.Input
+                            question={currentQuestion}
+                            {showResult}
+                            {isCorrect}
+                            {shuffledOptions}
+                            bind:selectedAnswers
+                            bind:blankAnswerInputs
+                            onAutoSubmit={submitAnswer}
+                        />
                     {/if}
                 </div>
 

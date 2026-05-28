@@ -3,12 +3,10 @@
     import * as Dialog from "$lib/components/ui/dialog";
     import { Switch } from "$lib/components/ui/switch";
     import { Label } from "$lib/components/ui/label";
-    import { cn } from "$lib/utils";
     import {
         QUESTION_TYPES,
         QUESTION_TYPE_ORDER,
     } from "../quiz/types/registry";
-    import IconCheck from "@tabler/icons-svelte/icons/check";
 
     interface Props {
         questions: Question[];
@@ -100,6 +98,8 @@
                     </div>
 
                     {#each group.items as question}
+                        {@const ReviewComponent =
+                            QUESTION_TYPES[question.type].Review}
                         <div
                             class="border-border/60 bg-muted/40 flex flex-col gap-2 rounded-lg border px-4 py-3"
                         >
@@ -116,76 +116,7 @@
                                 </span>
                             </div>
 
-                            {#if question.type === "judgment"}
-                                <div class="flex items-center gap-1.5">
-                                    <span class="text-muted-foreground text-xs">
-                                        答案
-                                    </span>
-                                    <span
-                                        class="text-success text-sm font-semibold"
-                                    >
-                                        {question.answer ? "正确" : "错误"}
-                                    </span>
-                                </div>
-                            {:else if question.type === "blank"}
-                                <div class="flex items-center gap-1.5">
-                                    <span class="text-muted-foreground text-xs">
-                                        答案
-                                    </span>
-                                    <span
-                                        class="text-success text-sm font-semibold"
-                                    >
-                                        {Array.isArray(question.answer)
-                                            ? (
-                                                  question.answer as string[]
-                                              ).join(" | ")
-                                            : (question.answer as string)}
-                                    </span>
-                                </div>
-                            {:else if question.options}
-                                {@const correctIndices =
-                                    question.answer as number[]}
-                                <div class="flex flex-col gap-1">
-                                    {#each question.options as opt, i}
-                                        {@const isCorrect =
-                                            correctIndices.includes(i)}
-                                        <div
-                                            class={cn(
-                                                "flex items-start gap-2 rounded px-1.5 py-1",
-                                                isCorrect && "bg-success/8",
-                                            )}
-                                        >
-                                            <span
-                                                class={cn(
-                                                    "mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
-                                                    isCorrect
-                                                        ? "bg-success text-success-foreground"
-                                                        : "bg-muted text-muted-foreground",
-                                                )}
-                                            >
-                                                {String.fromCharCode(65 + i)}
-                                            </span>
-                                            <span
-                                                class={cn(
-                                                    "flex-1 text-sm leading-snug",
-                                                    isCorrect
-                                                        ? "text-success font-semibold"
-                                                        : "text-muted-foreground",
-                                                )}
-                                            >
-                                                {opt.text}
-                                            </span>
-                                            {#if isCorrect}
-                                                <IconCheck
-                                                    size={14}
-                                                    stroke={2.25}
-                                                    class="text-success mt-0.5 shrink-0"
-                                                />
-                                            {/if}
-                                        </div>
-                                    {/each}
-                                </div>
-                            {/if}
+                            <ReviewComponent {question} />
                         </div>
                     {/each}
                 </div>

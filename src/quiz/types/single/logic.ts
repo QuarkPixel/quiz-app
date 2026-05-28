@@ -1,11 +1,11 @@
 import type { Question } from "../../../types";
-import type { QuestionTypeDef } from "../types";
+import type { QuestionTypeLogic } from "../types";
 import { choiceLetters, formatChoiceAnswerText, validateChoiceQuestion } from "../_choice";
 
 /**
- * 单选题的纯逻辑（不含 icon）。详见 judgment/logic.ts 头注释。
+ * 单选题的纯逻辑（不含 icon / svelte 组件）。详见 judgment/logic.ts 头注释。
  */
-export const singleLogic: Omit<QuestionTypeDef, "icon"> = {
+export const singleLogic: QuestionTypeLogic = {
   id: "single",
   name: "单选题",
   exportPrefix: "s",

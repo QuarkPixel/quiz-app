@@ -1,5 +1,5 @@
 import type { QuestionType } from "../../types";
-import type { QuestionTypeDef } from "./types";
+import type { QuestionTypeLogic } from "./types";
 import { judgmentLogic } from "./judgment/logic";
 import { singleLogic } from "./single/logic";
 import { multipleLogic } from "./multiple/logic";
@@ -9,14 +9,14 @@ import { blankLogic } from "./blank/logic";
  * 题型「逻辑层」注册表。
  *
  * 与 `registry.ts` 的差异：
- *   - 不含 `icon` 字段
+ *   - 不含 `icon` / `Input` / `Review`（这些都是 svelte / browser-only 字段）
  *   - 不会触发 @tabler/icons-svelte 的子路径 import（该包 exports 没有 Node
  *     condition，外层 vite.config.ts 在 bundle 自己时会因此失败）
  *
- * 适用场景：所有「不需要 icon」的纯逻辑路径，特别是被 vite.config.ts 间接
+ * 适用场景：所有「不需要 UI 组件」的纯逻辑路径，特别是被 vite.config.ts 间接
  * 引入的 `validateQuestions`。Svelte 组件请走 `./registry.ts`。
  */
-export type QuestionTypeLogic = Omit<QuestionTypeDef, "icon">;
+export type { QuestionTypeLogic };
 
 export const QUESTION_TYPES_LOGIC: Record<QuestionType, QuestionTypeLogic> = {
   judgment: judgmentLogic,

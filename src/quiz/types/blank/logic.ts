@@ -1,11 +1,11 @@
 import type { Question } from "../../../types";
 import { matchAnswer } from "../../../features/quiz/answerMatcher";
-import type { QuestionTypeDef } from "../types";
+import type { QuestionTypeLogic } from "../types";
 
 /**
- * 填空题的纯逻辑（不含 icon）。详见 judgment/logic.ts 头注释。
+ * 填空题的纯逻辑（不含 icon / svelte 组件）。详见 judgment/logic.ts 头注释。
  */
-export const blankLogic: Omit<QuestionTypeDef, "icon"> = {
+export const blankLogic: QuestionTypeLogic = {
   id: "blank",
   name: "填空题",
   exportPrefix: "b",

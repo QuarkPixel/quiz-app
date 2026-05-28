@@ -1,3 +1,4 @@
+import type { Component } from "svelte";
 import type { Question, QuestionType, Option } from "../../types";
 
 /** shuffled 后保留原索引的选项，用于 single/multiple 的字母反馈 */
@@ -15,25 +16,64 @@ export interface ShuffledOption extends Option {
 export type IconComponent = any;
 
 /**
+ * 答题输入组件的 props。每个题型的 Input.svelte 都接收这套统一 props，
+ * 自己挑用得上的字段（如 judgment 不用 shuffledOptions，blank 不用
+ * selectedAnswers）。
+ *
+ * QuizView 持有 selectedAnswers / blankAnswerInputs 两个 $state，
+ * 通过 bind: 双向绑定给 Input。这是过渡设计——Phase 4 不一定改造，
+ * 因为现状已经足够干净（QuizView 只持有原始 state，由题型 Input
+ * 决定怎么用）。
+ */
+export interface QuestionInputProps {
+  question: Question;
+  showResult: boolean;
+  isCorrect: boolean;
+  shuffledOptions: ShuffledOption[];
+  selectedAnswers: number[];
+  blankAnswerInputs: string[];
+  /** 单选 / 判断题点击后自动触发提交。多选 / 填空不调用。 */
+  onAutoSubmit?: () => void;
+}
+
+/** 只读预览组件的 props（用于 ReviewView 答案列表）。 */
+export interface QuestionReviewProps {
+  question: Question;
+}
+
+/**
  * 一个题型的「能力声明」。每个题型在 `src/quiz/types/<type>/` 下实现一份，
  * 注册到 `registry.ts`。所有跨题型的 `switch (type)` 都应该改成 dispatch 到这里。
  *
- * 见 `src/quiz/types/types.ts` 注释，新增题型只需：
- *   1. 新建文件夹 + index.ts 实现该接口
- *   2. 在 registry.ts 注册
- *   3. importExport.ts 不用改（自动用 exportPrefix）
- *   4. validateQuestions.ts 不用改（自动 dispatch）
- *   5. Phase 3 后还需要 Input.svelte 和 Review.svelte
+ * 新增题型的步骤：
+ *   1. src/quiz/types/<name>/logic.ts 写纯逻辑（含 QuestionTypeLogic 字段）
+ *   2. src/quiz/types/<name>/Input.svelte 答题 UI
+ *   3. src/quiz/types/<name>/Review.svelte 只读预览
+ *   4. src/quiz/types/<name>/index.ts 合并 logic + icon + Input + Review
+ *   5. 在 registry-logic.ts 注册 logic；在 registry.ts import index.ts
+ *   6. 在 src/types.ts 的 QuestionType union 添加该 id
  */
-export interface QuestionTypeDef {
+export interface QuestionTypeDef extends QuestionTypeLogic {
+  /** Tabler icon 组件 */
+  icon: IconComponent;
+
+  /** 答题输入组件（Phase 3 起 QuizView 用这个渲染）。 */
+  Input: Component<QuestionInputProps>;
+
+  /** 只读预览组件（Phase 3 起 ReviewView 用这个渲染）。 */
+  Review: Component<QuestionReviewProps>;
+}
+
+/**
+ * 题型的纯逻辑部分（不含 icon / Svelte 组件）。Node 侧（vite.config）和
+ * 浏览器纯逻辑路径都可以加载，避免触发 Tabler icon 子路径解析。
+ */
+export interface QuestionTypeLogic {
   /** 类型 id，同 Question.type */
   id: QuestionType;
 
   /** 中文显示名 */
   name: string;
-
-  /** Tabler icon 组件 */
-  icon: IconComponent;
 
   /** 用于进度 import/export 的紧凑前缀，单字母（s/m/j/b）。
    *  改动该值会破坏现有进度字符串的向后兼容，谨慎对待。 */
@@ -49,9 +89,8 @@ export interface QuestionTypeDef {
   validate(item: Record<string, unknown>, ctx: string): string[];
 
   /**
-   * 判分。
-   * 当前签名沿用 QuizView 的两套用户输入（选择类用 selectedAnswers，填空类用
-   * blankAnswerInputs）。Phase 3 会改造为统一的 UserAnswer 判别联合。
+   * 判分。沿用 QuizView 的两套用户输入：选择类用 selectedAnswers，
+   * 填空类用 blankAnswerInputs。同题型只会取自己关心的那一项。
    */
   evaluateAnswer(
     question: Question,
