@@ -3,6 +3,7 @@
 
 # Claude Code instructions
 CLAUDE.md
+.claude
 
 # Quiz data (replace with your own)
 assets/questions.json
