@@ -24,8 +24,8 @@
     //   compact:  p-[3px]   / size-1   (4px) / gap-1   (4px) / target 32px
     // 把 width 算成纯像素，避免 `auto ↔ length` 不可动画 + min-width 卡顿问题。
     const GEOMETRY = {
-        default: { dot: 6, gap: 6, pad: 4, target: 40 },
-        compact: { dot: 4, gap: 4, pad: 3, target: 32 },
+        default: { dot: 6, gap: 6, pad: 4, target: 30 },
+        compact: { dot: 4, gap: 4, pad: 3, target: 24 },
     } as const;
 
     const geom = $derived(GEOMETRY[size]);
