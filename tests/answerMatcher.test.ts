@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { matchAnswer } from "../src/features/quiz/answerMatcher";
+import {
+  matchAnswer,
+  isPlainAnswer,
+  extractLetters,
+} from "../src/features/quiz/answerMatcher";
 
 describe("括号可选 (xxx)", () => {
   it("括号内容存在时匹配", () => {
@@ -163,5 +167,53 @@ describe("边界情况", () => {
     expect(matchAnswer("make (both) ends meet", "make both ends meet")).toBe(
       true,
     );
+  });
+});
+
+describe("isPlainAnswer", () => {
+  it("普通单词 / 短语 → true", () => {
+    expect(isPlainAnswer("hello")).toBe(true);
+    expect(isPlainAnswer("make progress")).toBe(true);
+    expect(isPlainAnswer("北京")).toBe(true);
+  });
+  it("apostrophe 不算特殊（归一后无语法符号）", () => {
+    expect(isPlainAnswer("can't")).toBe(true);
+  });
+  it("含括号 → false（含全角）", () => {
+    expect(isPlainAnswer("on (an) average")).toBe(false);
+    expect(isPlainAnswer("on （an） average")).toBe(false);
+  });
+  it("含斜杠 → false（含全角）", () => {
+    expect(isPlainAnswer("fall ill/sick")).toBe(false);
+    expect(isPlainAnswer("fall ill／sick")).toBe(false);
+  });
+  it("含占位词 sb/sth → false", () => {
+    expect(isPlainAnswer("remind sb of sth")).toBe(false);
+  });
+  it("含 one's（归一为 ones 占位词）→ false", () => {
+    expect(isPlainAnswer("do one's homework")).toBe(false);
+  });
+});
+
+describe("extractLetters", () => {
+  it("保留原串下标，跳过空格/标点", () => {
+    expect(extractLetters("a b")).toEqual([
+      { norm: "a", index: 0 },
+      { norm: "b", index: 2 },
+    ]);
+  });
+  it("小写化字母、保留中文", () => {
+    expect(extractLetters("中A")).toEqual([
+      { norm: "中", index: 0 },
+      { norm: "a", index: 1 },
+    ]);
+  });
+  it("apostrophe 跳过（one's → ones，下标仍指原串）", () => {
+    expect(extractLetters("one's")).toEqual([
+      { norm: "o", index: 0 },
+      { norm: "n", index: 1 },
+      { norm: "e", index: 2 },
+      { norm: "s", index: 4 },
+    ]);
   });
 });

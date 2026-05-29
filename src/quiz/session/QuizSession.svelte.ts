@@ -112,7 +112,10 @@ export class QuizSession {
     return this.questions.every((q) => masteredSet.has(q.id));
   });
 
-  constructor(bank: Bank, private readonly deps: QuizSessionDeps) {
+  constructor(
+    bank: Bank,
+    private readonly deps: QuizSessionDeps,
+  ) {
     this.bank = bank;
     this.questions = bank.questions;
     this.hash = bank.hash;
@@ -140,9 +143,10 @@ export class QuizSession {
     );
 
     if (this.currentQuestion?.options) {
-      const optionsWithIndex = this.currentQuestion.options.map(
-        (opt, idx) => ({ ...opt, originalIndex: idx }),
-      );
+      const optionsWithIndex = this.currentQuestion.options.map((opt, idx) => ({
+        ...opt,
+        originalIndex: idx,
+      }));
       this.shuffledOptions = shuffle(optionsWithIndex);
     } else {
       this.shuffledOptions = [];
