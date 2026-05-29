@@ -13,6 +13,16 @@
 
     let { options, activeType, onSelect }: Props = $props();
 
+    // 单选筛选必须恒有一个选中项。bits-ui 单选模式允许点击已选项取消选择
+    // （onValueChange 收到空串）；取消后因外部 activeType 未变不会回灌，视觉上会
+    // 变成「全部未选中」。故用本地受控值，收到空串时强制回到 activeType 拒绝取消。
+    // 初值仅作种子，后续由下面的 $effect 跟随 activeType 同步。
+    // svelte-ignore state_referenced_locally
+    let selected = $state<QuestionType | "all">(activeType);
+    $effect(() => {
+        selected = activeType;
+    });
+
     function iconFor(key: QuestionType | "all") {
         return key === "all" ? IconAsterisk : QUESTION_TYPES[key].icon;
     }
@@ -21,8 +31,10 @@
     let typeOptions = $derived(options.filter((o) => o.key !== "all"));
 
     function handleChange(v: string) {
-        // 不允许取消选择：v 为空说明用户点了已选项，保持原值
-        if (!v) return;
+        if (!v) {
+            selected = activeType; // 拒绝取消选择
+            return;
+        }
         onSelect(v as QuestionType | "all");
     }
 </script>
@@ -31,7 +43,7 @@
     {#if allOption}
         <ToggleGroup.Root
             type="single"
-            value={activeType}
+            bind:value={selected}
             onValueChange={handleChange}
             variant="outline"
             size="sm"
@@ -52,7 +64,7 @@
     {#if typeOptions.length > 0}
         <ToggleGroup.Root
             type="single"
-            value={activeType}
+            bind:value={selected}
             onValueChange={handleChange}
             variant="outline"
             size="sm"
