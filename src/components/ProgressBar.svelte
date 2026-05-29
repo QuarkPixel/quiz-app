@@ -6,6 +6,7 @@
         MASTERED_CELEBRATE_DURATION_MS,
     } from "../config";
     import { cn } from "$lib/utils";
+    import NumberFlow, { continuous } from "@number-flow/svelte";
 
     interface Props {
         stats: Stats;
@@ -75,10 +76,11 @@
     <div
         class="text-muted-foreground mb-1.5 flex justify-between text-xs tabular-nums"
     >
-        <span>{stats.mastered}</span>
-        <span>
-            {focused ? stats.pending : stats.learning + stats.pending}
-        </span>
+        <NumberFlow plugins={[continuous]} value={stats.mastered} />
+        <NumberFlow
+            plugins={[continuous]}
+            value={focused ? stats.pending : stats.learning + stats.pending}
+        />
     </div>
     <div
         class={cn(
@@ -106,10 +108,7 @@
             {/each}
         </div>
         <div
-            class={cn(
-                "bg-foreground/15 rounded-sm",
-                focused && "opacity-55",
-            )}
+            class={cn("bg-foreground/15 rounded-sm", focused && "opacity-55")}
             style="width: {pendingDisplayWidth}%"
         ></div>
     </div>

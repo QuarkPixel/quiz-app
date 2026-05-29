@@ -25,6 +25,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
+    "@number-flow/svelte": "^0.4.0",
     "@tabler/icons-svelte": "^3.44.0",
     "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",
