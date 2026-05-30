@@ -10,6 +10,9 @@ export interface Option {
 /** 题目类型 */
 export type QuestionType = "judgment" | "single" | "multiple" | "blank";
 
+/** 题目顺序 */
+export type QuestionOrder = "random" | "sequential";
+
 /** 题目 */
 export interface Question {
   id: string;
@@ -41,7 +44,7 @@ export interface UserSettings {
   /** 答错后掌握所需连续正确次数 */
   correctStreakAfterMistake: number;
   /** 题目选择模式：random=随机加权，sequential=按题库顺序 */
-  selectionMode: "random" | "sequential";
+  selectionMode: QuestionOrder;
 }
 
 /** UI 偏好（按 bank 持久化，但和「学习算法」分开） */

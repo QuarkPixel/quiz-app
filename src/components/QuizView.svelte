@@ -67,7 +67,8 @@
             // 不够再退化让 main 滚动。content 够装时 grid 仍是内容高度，被 items-center 垂直居中
             session.appState.ui.showPool &&
                 "max-lg:max-h-full max-lg:grid-rows-[auto_minmax(180px,min(45vh,300px))] max-lg:gap-y-6",
-            session.appState.ui.showPool && "lg:grid-cols-[minmax(0,42rem)_280px]",
+            session.appState.ui.showPool &&
+                "lg:grid-cols-[minmax(0,42rem)_280px]",
         )}
     >
         <div class="flex w-full min-w-0 flex-col gap-5">
@@ -101,9 +102,7 @@
     </div>
 </main>
 
-<footer
-    class="flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5"
->
+<footer class="flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
     <Tooltip.Root>
         <Tooltip.Trigger>
             {#snippet child({ props })}
@@ -137,7 +136,8 @@
                         type="button"
                         class={cn(
                             "text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:-rotate-[8deg]",
-                            session.appState.ui.showPool && "text-foreground bg-foreground/8",
+                            session.appState.ui.showPool &&
+                                "text-foreground bg-foreground/8",
                         )}
                         aria-pressed={session.appState.ui.showPool}
                         aria-label="查看活动池"
@@ -148,7 +148,11 @@
                 {/snippet}
             </Tooltip.Trigger>
             <Tooltip.Content side="top">
-                <span>{session.appState.ui.showPool ? "收起" : "展开"}活动池</span>
+                <span
+                    >{session.appState.ui.showPool
+                        ? "收起"
+                        : "展开"}活动池</span
+                >
                 <KbdGroup>
                     <Kbd>{modKeyLabel}</Kbd>
                     <Kbd>{SHORTCUTS.togglePool.toUpperCase()}</Kbd>
@@ -183,10 +187,7 @@
 
 <Settings bind:open={showSettings} />
 
-<ReviewView
-    open={showReview}
-    onOpenChange={(o) => (showReview = o)}
-/>
+<ReviewView open={showReview} onOpenChange={(o) => (showReview = o)} />
 
 <!-- 导入确认 dialog -->
 <Dialog.Root
@@ -203,10 +204,7 @@
             </Dialog.Description>
         </Dialog.Header>
         <Dialog.Footer>
-            <Button
-                variant="outline"
-                onclick={() => session.cancelImport()}
-            >
+            <Button variant="outline" onclick={() => session.cancelImport()}>
                 取消
             </Button>
             <Button onclick={() => session.commitImport()}>导入</Button>

@@ -8,16 +8,14 @@
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Separator } from "$lib/components/ui/separator";
-    import * as ToggleGroup from "$lib/components/ui/toggle-group";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { cn } from "$lib/utils";
     import QuestionFilters from "./QuestionFilters.svelte";
-    import IconShuffle from "@tabler/icons-svelte/icons/arrows-shuffle";
-    import IconArrowsRight from "@tabler/icons-svelte/icons/arrow-narrow-right";
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
     import { useQuizSession } from "../quiz/session/context";
+    import QuestionOrder from "./QuestionOrder.svelte";
 
     interface Props {
         open?: boolean;
@@ -67,36 +65,14 @@
                 >
                     刷题方式
                 </h3>
-                <ToggleGroup.Root
-                    type="single"
-                    value={session.appState.settings.selectionMode}
-                    onValueChange={(v) => {
-                        if (v === "random" || v === "sequential") {
-                            session.appState.settings.selectionMode = v;
-                            session.handleAlgorithmChange();
-                        }
+                <QuestionOrder
+                    activeOrder={session.appState.settings.selectionMode}
+                    onSelect={(v) => {
+                        console.log(v);
+                        session.appState.settings.selectionMode = v;
+                        session.handleAlgorithmChange();
                     }}
-                    variant="outline"
-                    size="sm"
-                    class="w-full gap-1.5"
-                >
-                    <ToggleGroup.Item
-                        value="random"
-                        aria-label="随机刷题"
-                        class="flex-1 gap-1.5"
-                    >
-                        <IconShuffle size={14} stroke={1.75} />
-                        <span class="text-xs">随机</span>
-                    </ToggleGroup.Item>
-                    <ToggleGroup.Item
-                        value="sequential"
-                        aria-label="顺序刷题"
-                        class="flex-1 gap-1.5"
-                    >
-                        <IconArrowsRight size={14} stroke={1.75} />
-                        <span class="text-xs">顺序</span>
-                    </ToggleGroup.Item>
-                </ToggleGroup.Root>
+                />
             </section>
 
             <Separator />
