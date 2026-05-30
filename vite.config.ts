@@ -81,6 +81,18 @@ const bundledBankAlias =
     ? bundledPath
     : resolve(__dirname, "src/source/empty-bank.json");
 
+const appRootAlias = resolve(
+  __dirname,
+  mode === "bundled" ? "src/App.bundled.svelte" : "src/App.library.svelte",
+);
+
+const quizSourceAlias = resolve(
+  __dirname,
+  mode === "bundled"
+    ? "src/source/mode-bundled.ts"
+    : "src/source/mode-library.ts",
+);
+
 export default defineConfig({
   plugins: [
     tailwindcss(),
@@ -91,7 +103,9 @@ export default defineConfig({
   resolve: {
     alias: {
       $lib: resolve(__dirname, "src/lib"),
+      "$app-root": appRootAlias,
       "$bundled-bank": bundledBankAlias,
+      "$quiz-source": quizSourceAlias,
     },
   },
   define: {
