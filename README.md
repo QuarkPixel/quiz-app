@@ -4,7 +4,7 @@
 
 提供两种构建模式：
 
-- **Library 模式**（默认）：浏览器内导入和管理多份题库，像一款独立软件。
+- **Library 模式**（默认）：浏览器内导入和管理多份题库，常规多文件构建。
 - **Bundled 模式**：把题库在构建时打包进 HTML，一份题库一个单文件，便于分发和离线分享。
 
 ## 特性
@@ -12,6 +12,7 @@
 - **间隔重复算法**：根据答题情况智能安排复习，答错的题目需要更多次正确才能掌握
 - **四种题型**：支持判断题、单选题、多选题、填空题
 - **双模式**：Library 模式管理多份题库；Bundled 模式打包成单文件分发
+- **音效反馈**：Library 模式可开启答题与操作成功音效
 - **答案预览**：一键浏览全部题目与正确答案，按题型分组展示，方便快速过一遍
 - **进度持久化**：学习进度保存在浏览器 localStorage 中，每个题库独立
 - **可调参数**：活动池大小、掌握所需正确次数等均可在设置中调整
@@ -31,14 +32,14 @@ npm run dev -- --bundled
 # Bundled 模式开发，自定义题库路径
 npm run dev -- --bundled banks/questions.json
 
-# 构建：Library 模式 → dist/quiz-app.html
+# 构建：Library 模式 → dist/index.html + assets
 npm run build
 
 # 构建：Bundled 模式 → dist/bundled-<hash>.html
 npm run build -- --bundled
 npm run build -- --bundled path/to/questions.json
 
-# 预览最近一次构建（自动打开产物 HTML）
+# 预览最近一次构建
 npm run preview
 ```
 

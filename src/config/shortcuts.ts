@@ -16,6 +16,8 @@ export const SHORTCUTS = {
   toggleSettings: "i",
   /** 切换"答对自动下一题" */
   toggleAutoNext: "n",
+  /** 切换音效 */
+  toggleSound: "s",
   /** 从剪贴板导入进度 */
   importProgress: "w",
   /** 导出进度到剪贴板 */

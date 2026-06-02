@@ -16,7 +16,7 @@
  *   - '^' 是保留字符，题目 id 不可以以 '^' 开头
  *   - activePool 每项：[encodedId, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound]
  *   - filterTypeCode：all=0, single=1, multiple=2, judgment=3, blank=4
- *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake]
+ *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode]
  */
 
 import type { StoredState, ActivePoolItem, QuestionType, UserSettings, UiPreferences } from "../types";

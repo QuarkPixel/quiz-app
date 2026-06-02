@@ -45,6 +45,13 @@ import {
   EXPORT_STATUS_SUCCESS_RESET_MS,
 } from "../../config";
 import { QUESTION_TYPES } from "../types/registry";
+import {
+  initializeSoundPreference,
+  maybePlayAnswerSound,
+  maybePlaySuccessSound,
+  setSoundEnabledPreference,
+} from "$sound";
+import type { SoundPlayer } from "../../sound/types";
 
 export type ExportStatus = "idle" | "copied" | "error";
 
@@ -55,6 +62,8 @@ export interface QuizSessionDeps {
   flash(isCorrect: boolean): void;
   /** 显示 toast 提示 */
   toast(title: string, description?: string, variant?: ToastVariant): void;
+  /** 播放音效。bundled 模式下是空实现。 */
+  sound: SoundPlayer;
 }
 
 export type ShuffledOption = Option & { originalIndex: number };
@@ -121,6 +130,7 @@ export class QuizSession {
     this.hash = bank.hash;
     this.filterOptions = buildFilterOptions(this.questions);
     this.appState = loadRuntimeState(this.questions, this.hash);
+    initializeSoundPreference(this.appState);
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -187,6 +197,7 @@ export class QuizSession {
     this.showResult = true;
     this.isCorrect = nextIsCorrect;
     this.deps.flash(nextIsCorrect);
+    maybePlayAnswerSound(this.appState, this.deps.sound, nextIsCorrect);
     this.appState = applyAnswer(
       this.appState,
       this.currentQuestion.id,
@@ -215,6 +226,7 @@ export class QuizSession {
     this.save();
     this.isCorrect = true;
     this.deps.flash(true);
+    maybePlayAnswerSound(this.appState, this.deps.sound, true);
   }
 
   /**
@@ -271,6 +283,20 @@ export class QuizSession {
       next
         ? "答对后会立即进入下一题，无需手动点击。"
         : "答对后停留在结果页，按空格 / 回车继续。",
+    );
+  }
+
+  toggleSound(): void {
+    this.setSoundEnabled(!this.appState.settings.soundEnabled);
+  }
+
+  setSoundEnabled(next: boolean): void {
+    setSoundEnabledPreference(
+      this.appState,
+      next,
+      () => this.save(),
+      this.deps.toast,
+      this.deps.sound,
     );
   }
 
@@ -332,6 +358,7 @@ export class QuizSession {
         "粘贴到任意位置即可备份。",
         "success",
       );
+      maybePlaySuccessSound(this.appState, this.deps.sound);
     } else {
       this.exportStatus = "error";
       setTimeout(
@@ -366,6 +393,7 @@ export class QuizSession {
     }
     this.applyImportedState(parsed.state);
     this.deps.toast("进度已导入", "已覆盖当前进度。", "success");
+    maybePlaySuccessSound(this.appState, this.deps.sound);
   }
 
   // ────────────────────────────────────────────────────────────────

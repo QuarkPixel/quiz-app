@@ -45,6 +45,8 @@ export interface UserSettings {
   correctStreakAfterMistake: number;
   /** 题目选择模式：random=随机加权，sequential=按题库顺序 */
   selectionMode: QuestionOrder;
+  /** 是否启用音效（仅 library 模式使用） */
+  soundEnabled?: boolean;
 }
 
 /** UI 偏好（按 bank 持久化，但和「学习算法」分开） */

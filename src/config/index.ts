@@ -8,3 +8,4 @@ export * from "./ui";
 export * from "./progress-bar";
 export * from "./matcher";
 export * from "./shortcuts";
+export * from "./sound";

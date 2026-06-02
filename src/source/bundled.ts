@@ -7,14 +7,14 @@ import questionsData from "$bundled-bank";
 import type { Bank, QuizSource } from "./types";
 import type { Question } from "../types";
 
-// 由 vite.config.ts 在编译期注入
-declare const __QUESTIONS_HASH__: string;
-
 export class BundledSource implements QuizSource {
   readonly mode = "bundled" as const;
   private readonly bank: Bank;
 
   constructor() {
+    if (!__QUESTIONS_HASH__) {
+      throw new Error("[quiz-app] bundled mode requires a questions hash");
+    }
     this.bank = {
       hash: __QUESTIONS_HASH__,
       name: "题库",

@@ -46,6 +46,11 @@ export function createKeyboardHandler(
         session.toggleAutoNext();
         return;
       }
+      if (__QUIZ_MODE__ === "library" && key === SHORTCUTS.toggleSound) {
+        event.preventDefault();
+        session.toggleSound();
+        return;
+      }
       if (key === SHORTCUTS.importProgress) {
         event.preventDefault();
         void session.startImport();

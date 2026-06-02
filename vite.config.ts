@@ -50,12 +50,11 @@ if (mode === "bundled" && !isTest) {
   bundledHash = computeHash(JSON.stringify(parsed));
 }
 
-const outputName =
-  mode === "bundled" ? `bundled-${bundledHash}.html` : "quiz-app.html";
+const bundledOutputName = `bundled-${bundledHash}.html`;
 
 // ─── 构建产物重命名 ──────────────────────────────────────────────────────────
 /**
- * 把 dist/index.html 重命名为 bundled-<hash>.html / quiz-app.html。
+ * bundled 模式把 dist/index.html 重命名为 bundled-<hash>.html。
  * preview 通过 preview.open 自动打开此文件。
  */
 function renameOutput(): Plugin {
@@ -64,7 +63,7 @@ function renameOutput(): Plugin {
     apply: "build",
     closeBundle() {
       const src = resolve(__dirname, "dist/index.html");
-      const dst = resolve(__dirname, "dist", outputName);
+      const dst = resolve(__dirname, "dist", bundledOutputName);
       renameSync(src, dst);
     },
   };
@@ -93,12 +92,25 @@ const quizSourceAlias = resolve(
     : "src/source/mode-library.ts",
 );
 
+const soundAlias = resolve(
+  __dirname,
+  mode === "bundled" ? "src/sound/noop.ts" : "src/sound/library.ts",
+);
+
+const soundSettingsAlias = resolve(
+  __dirname,
+  mode === "bundled"
+    ? "src/components/sound/SoundSettings.bundled.svelte"
+    : "src/components/sound/SoundSettings.library.svelte",
+);
+
 export default defineConfig({
   plugins: [
     tailwindcss(),
     svelte(),
-    viteSingleFile({ useRecommendedBuildConfig: false }),
-    renameOutput(),
+    ...(mode === "bundled"
+      ? [viteSingleFile({ useRecommendedBuildConfig: false }), renameOutput()]
+      : []),
   ],
   resolve: {
     alias: {
@@ -106,6 +118,8 @@ export default defineConfig({
       "$app-root": appRootAlias,
       "$bundled-bank": bundledBankAlias,
       "$quiz-source": quizSourceAlias,
+      $sound: soundAlias,
+      "$sound-settings": soundSettingsAlias,
     },
   },
   define: {
@@ -113,7 +127,7 @@ export default defineConfig({
     __QUESTIONS_HASH__: JSON.stringify(mode === "bundled" ? bundledHash : null),
   },
   preview: {
-    open: `/${outputName}`,
+    open: mode === "bundled" ? `/${bundledOutputName}` : "/",
   },
   optimizeDeps: {
     // vite v8 / rolldown 与 vite-plugin-svelte 的 optimize-svelte 子插件不兼容：
@@ -129,10 +143,10 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
-    cssCodeSplit: false,
-    assetsInlineLimit: 100000000,
-    // codeSplitting is not yet in vite's type definitions but exists at runtime in v8+
+    cssCodeSplit: mode === "bundled" ? false : true,
+    assetsInlineLimit: mode === "bundled" ? 100000000 : 0,
+    // codeSplitting is not yet in vite's type definitions but exists at runtime in v8+.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    codeSplitting: false,
+    codeSplitting: mode === "bundled" ? false : true,
   } as any,
 });

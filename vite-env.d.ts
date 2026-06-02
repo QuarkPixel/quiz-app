@@ -5,7 +5,31 @@ declare module "*?raw" {
 
 declare module "*.css";
 
+declare module "*.webm" {
+  const src: string;
+  export default src;
+}
+
+declare const __QUIZ_MODE__: "bundled" | "library";
+declare const __QUESTIONS_HASH__: string | null;
+
 declare module "$bundled-bank" {
   const questions: import("./src/types").Question[];
   export default questions;
+}
+
+declare module "$sound" {
+  export { createSoundPlayer } from "./src/sound/library";
+  export {
+    initializeSoundPreference,
+    maybePlayAnswerSound,
+    maybePlaySuccessSound,
+    setSoundEnabledPreference,
+  } from "./src/sound/library";
+}
+
+declare module "$sound-settings" {
+  import type { Component } from "svelte";
+  const component: Component;
+  export default component;
 }

@@ -16,6 +16,7 @@
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
     import { useQuizSession } from "../quiz/session/context";
     import QuestionOrder from "./QuestionOrder.svelte";
+    import SoundSettings from "$sound-settings";
 
     interface Props {
         open?: boolean;
@@ -103,6 +104,7 @@
                         size="sm"
                     />
                 </div>
+                <SoundSettings />
             </section>
 
             <Separator />

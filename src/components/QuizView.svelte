@@ -22,11 +22,13 @@
     import { QuizSession } from "../quiz/session/QuizSession.svelte";
     import { provideQuizSession } from "../quiz/session/context";
     import { createKeyboardHandler } from "../quiz/session/keyboardHandler";
+    import { createSoundPlayer } from "$sound";
 
     let { bank }: { bank: Bank } = $props();
 
     let flashContainer: FlashContainer;
     let toast: AlertToast;
+    const soundPlayer = createSoundPlayer();
 
     // session 在挂载前构造 —— 此时 flash/toast 还未 bind，回调里走 ?. 兜底。
     // bank 在外层用 {#key bank.hash} 控制重建，所以这里把 bank 当作不变量处理。
@@ -35,6 +37,7 @@
         flash: (correct) => flashContainer?.flash(correct),
         toast: (title, description, variant) =>
             toast?.show(title, description, variant),
+        sound: soundPlayer,
     });
     provideQuizSession(session);
 
