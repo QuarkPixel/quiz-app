@@ -4,8 +4,9 @@
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
     import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
-    import IconUpload from "@tabler/icons-svelte/icons/upload";
-    import IconDownload from "@tabler/icons-svelte/icons/download";
+    import IconExport from "@tabler/icons-svelte/icons/upload";
+    import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
+    import IconAddSquare from "@tabler/icons-svelte/icons/square-rounded-plus";
     import IconDots from "@tabler/icons-svelte/icons/dots";
     import IconEdit from "@tabler/icons-svelte/icons/edit";
     import IconTrash from "@tabler/icons-svelte/icons/trash";
@@ -74,9 +75,7 @@
                 break;
             case "duplicate":
                 if (result.stateStr !== undefined) {
-                    const existing = banks.find(
-                        (b) => b.hash === result.hash,
-                    );
+                    const existing = banks.find((b) => b.hash === result.hash);
                     overwriteTarget = {
                         hash: result.hash,
                         stateStr: result.stateStr,
@@ -108,7 +107,9 @@
         if (!res.ok) {
             importMessage = {
                 title: "进度替换失败",
-                text: "文件中的进度备份无法应用到现有题库。\n\n原因：" + res.error,
+                text:
+                    "文件中的进度备份无法应用到现有题库。\n\n原因：" +
+                    res.error,
             };
         }
     }
@@ -199,7 +200,7 @@
             <Sidebar.GroupLabel>题库</Sidebar.GroupLabel>
             {#if banks.length != 0}
                 <Sidebar.GroupAction title="导入题库" onclick={openImport}>
-                    <IconDownload size={16} stroke={1.75} />
+                    <IconAddSquare size={16} stroke={1.75} />
                     <span class="sr-only">导入题库</span>
                 </Sidebar.GroupAction>
             {/if}
@@ -257,7 +258,7 @@
                                     <DropdownMenu.Item
                                         onSelect={() => handleExport(bank.hash)}
                                     >
-                                        <IconUpload size={14} stroke={1.75} />
+                                        <IconExport size={14} stroke={1.75} />
                                         <span>导出</span>
                                     </DropdownMenu.Item>
                                     <DropdownMenu.Separator />
@@ -285,7 +286,7 @@
                                 tooltipContent="导入题库"
                                 class="text-sidebar-foreground/70 justify-center"
                             >
-                                <IconDownload size={16} stroke={1.75} />
+                                <IconAdd size={16} stroke={1.75} />
                             </Sidebar.MenuButton>
                         </Sidebar.MenuItem>
                     {/each}
