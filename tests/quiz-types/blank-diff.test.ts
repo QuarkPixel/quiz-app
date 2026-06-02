@@ -54,6 +54,16 @@ describe("computeBlankDiff —— diff 片段", () => {
     expect(segs!.some((s) => s.type === "extra")).toBe(true);
     expect(visibleUserText(segs!)).toBe("helllo");
   });
+
+  it("多余字符贴近词边界时不重复补答案侧空格", () => {
+    expect(computeBlankDiff("make x progress", "make progress")).toEqual<
+      BlankDiffSegment[]
+    >([
+      { type: "equal", text: "make " },
+      { type: "extra", text: "x" },
+      { type: "equal", text: " progress" },
+    ]);
+  });
 });
 
 describe("computeBlankDiff —— 保留用户原始输入样貌", () => {
@@ -82,6 +92,22 @@ describe("computeBlankDiff —— 保留用户原始输入样貌", () => {
     expect(segs).not.toBeNull();
     expect(visibleUserText(segs!)).toBe("Make Progres");
     expect(segs!.some((s) => s.type === "missing" && s.text === "s")).toBe(true);
+  });
+
+  it("缺失内容跨词时用自然分隔展示，不把单词粘在一起", () => {
+    expect(
+      computeBlankDiff(
+        "answer of the question",
+        "the answer to the question",
+      ),
+    ).toEqual<BlankDiffSegment[]>([
+      { type: "missing", text: "the" },
+      { type: "equal", text: " answer " },
+      { type: "missing", text: "t" },
+      { type: "equal", text: "o" },
+      { type: "extra", text: "f" },
+      { type: "equal", text: " the question" },
+    ]);
   });
 
   it("缺失字符取答案原文大小写", () => {

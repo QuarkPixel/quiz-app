@@ -6,9 +6,10 @@
  * 看出是哪个字符打错/漏掉。
  *
  * 比较口径与判分一致：都按 extractLetters 归一化（忽略大小写、空格、标点）。
- * 但**渲染时还原用户的原始输入**——通过 extractLetters 保留的原串下标，把
- * 归一化比较的结果映射回原文，保留大小写/空格/标点；缺失字符插到自然位置。
- * 所以这些被忽略的差异不会被标成错误，用户看到的仍是自己输入的样貌。
+ * 但**渲染时还原原始文本样貌**——通过 extractLetters 保留的原串下标，把
+ * 归一化比较的结果映射回原文，保留大小写/空格/标点。用户已经输入的分隔符
+ * 优先保留；缺失内容跨词时，再用答案侧分隔符补出自然阅读位置。
+ * 所以这些被忽略的差异不会被标成错误。
  */
 
 import { extractLetters, isPlainAnswer } from "../../../features/quiz/answerMatcher";
@@ -57,19 +58,44 @@ export function computeBlankDiff(
   let ui = 0; // userLetters 游标
   let ai = 0; // answerLetters 游标
   let cursor = 0; // userInput 中下一个待输出的原始下标（用于补齐被跳过的空格/标点）
+  let answerCursor = 0; // answer 中下一个待考虑的原始下标（用于补齐答案侧分隔符）
 
-  // 输出原文里 [cursor, index) 这段被忽略的字符（空格/标点），原样、归为 equal。
-  const flushIgnoredBefore = (index: number): void => {
-    if (index > cursor) push("equal", userInput.slice(cursor, index));
+  // 输出用户原文里 [cursor, index) 这段被忽略的字符，原样、归为 equal。
+  const flushUserIgnoredBefore = (index: number): string => {
+    const text = index > cursor ? userInput.slice(cursor, index) : "";
+    push("equal", text);
     cursor = index;
+    return text;
+  };
+
+  // 若用户侧没有可用分隔符，使用答案侧分隔符避免缺失内容和相邻词粘连。
+  const flushAnswerIgnoredBefore = (index: number): string => {
+    const text =
+      index > answerCursor ? answer.slice(answerCursor, index) : "";
+    push("equal", text);
+    answerCursor = index;
+    return text;
   };
 
   for (const op of diffChars(userNorm, answerNorm)) {
     if (op.type === "insert") {
       // 用户漏掉的字符：取答案原文，插在当前位置（紧跟前一个已输入字符）。
+      const nextUserIndex =
+        ui < userLetters.length ? userLetters[ui].index : userInput.length;
+      const userGap = flushUserIgnoredBefore(nextUserIndex);
+
+      const firstAnswerIndex = answerLetters[ai].index;
+      if (userGap.length === 0) {
+        flushAnswerIgnoredBefore(firstAnswerIndex);
+      } else {
+        answerCursor = firstAnswerIndex;
+      }
+
       let text = "";
       for (let k = 0; k < op.text.length; k++) {
-        text += answer[answerLetters[ai].index];
+        const answerIndex = answerLetters[ai].index;
+        text += answer[answerIndex];
+        answerCursor = answerIndex + 1;
         ai++;
       }
       push("missing", text);
@@ -78,16 +104,29 @@ export function computeBlankDiff(
       const type: BlankDiffSegmentType = op.type === "delete" ? "extra" : "equal";
       for (let k = 0; k < op.text.length; k++) {
         const { index } = userLetters[ui];
-        flushIgnoredBefore(index);
+        const userGap = flushUserIgnoredBefore(index);
+        if (op.type === "equal") {
+          const answerIndex = answerLetters[ai].index;
+          if (userGap.length === 0) {
+            flushAnswerIgnoredBefore(answerIndex);
+          } else {
+            answerCursor = answerIndex;
+          }
+        } else if (userGap.length > 0 && ai < answerLetters.length) {
+          answerCursor = answerLetters[ai].index;
+        }
         push(type, userInput[index]);
         cursor = index + 1;
         ui++;
-        if (op.type === "equal") ai++;
+        if (op.type === "equal") {
+          answerCursor = answerLetters[ai].index + 1;
+          ai++;
+        }
       }
     }
   }
   // 末尾被忽略的字符（如句尾标点/空格）。
-  flushIgnoredBefore(userInput.length);
+  flushUserIgnoredBefore(userInput.length);
 
   return segments;
 }
