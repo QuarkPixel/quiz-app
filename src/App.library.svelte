@@ -11,11 +11,10 @@
     import type { Bank } from "./source/types";
 
     // @ts-ignore
-    import faviconRaw from "../icons/icon.svg?raw";
+    import favicon from "../assets/icons/icon.svg";
     // @ts-ignore
-    import logoRaw from "../icons/logo.svg?raw";
+    import logoRaw from "../assets/icons/logo.svg?raw";
 
-    const faviconUrl = `data:image/svg+xml,${encodeURIComponent(faviconRaw)}`;
     const source = createSource();
 
     let activeBank = $state<Bank | null>(source.getActiveBank());
@@ -28,7 +27,7 @@
 </script>
 
 <svelte:head>
-    <link rel="icon" type="image/svg+xml" href={faviconUrl} />
+    <link rel="icon" type="image/svg+xml" href={favicon} />
 </svelte:head>
 
 {#snippet contentBody()}
@@ -52,7 +51,8 @@
             <div class="flex max-w-md flex-col items-center gap-4 text-center">
                 <p class="text-foreground text-lg font-medium">还没有题库</p>
                 <p class="text-muted-foreground text-sm leading-relaxed">
-                    点击左侧栏「题库」分组右上角的导入按钮，从一个 JSON 文件开始。
+                    点击左侧栏「题库」分组右上角的导入按钮，从一个 JSON
+                    文件开始。
                 </p>
             </div>
         </main>

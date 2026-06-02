@@ -7,9 +7,9 @@
     import { createSource } from "./source";
 
     // @ts-ignore
-    import faviconRaw from "../icons/icon.svg?raw";
+    import faviconRaw from "../assets/icons/icon.svg?raw";
     // @ts-ignore
-    import logoRaw from "../icons/logo.svg?raw";
+    import logoRaw from "../assets/icons/logo.svg?raw";
 
     const faviconUrl = `data:image/svg+xml,${encodeURIComponent(faviconRaw)}`;
     const bank = createSource().getActiveBank();
