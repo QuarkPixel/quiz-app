@@ -25,11 +25,11 @@ npm install
 # Library 模式（默认）开发服务器：空壳应用，在浏览器里导入题库
 npm run dev
 
-# Bundled 模式开发：默认使用 assets/questions.example.json
+# Bundled 模式开发：默认使用 banks/questions.example.json
 npm run dev -- --bundled
 
 # Bundled 模式开发，自定义题库路径
-npm run dev -- --bundled assets/questions.json
+npm run dev -- --bundled banks/questions.json
 
 # 构建：Library 模式 → dist/quiz-app.html
 npm run build
@@ -61,7 +61,7 @@ npm run preview
 
 ### Bundled 模式
 
-替换 `assets/questions.json`（或用 `--bundled path/to/your.json` 指定别的路径），然后 `npm run build -- --bundled`。
+替换 `banks/questions.json`（或用 `--bundled path/to/your.json` 指定别的路径），然后 `npm run build -- --bundled`。
 
 ### JSON 格式说明
 
@@ -161,7 +161,7 @@ npm run preview
 常见占位词（用户可不输入）：`sb`、`sth`、`sb's`、`one's`、`oneself`、`doing`、`to do`。
 ### 完整示例
 
-完整示例见 [`assets/questions.example.json`](assets/questions.example.json)，内容如下：
+完整示例见 [`banks/questions.example.json`](banks/questions.example.json)，内容如下：
 
 ```json
 [

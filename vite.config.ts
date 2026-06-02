@@ -17,7 +17,7 @@ const isTest = process.env.NODE_ENV === "test";
 const mode: Mode = process.env.QUIZ_MODE === "bundled" ? "bundled" : "library";
 
 function resolveBundledPath(): string {
-  const raw = process.env.QUIZ_BUNDLED_PATH ?? "assets/questions.json";
+  const raw = process.env.QUIZ_BUNDLED_PATH ?? "banks/questions.json";
   return isAbsolute(raw) ? raw : resolve(__dirname, raw);
 }
 

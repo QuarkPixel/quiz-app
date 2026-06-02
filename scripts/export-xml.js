@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // scripts/export-xml.js
-// 将 assets/questions.json 导出为 XML 格式
+// 将 banks/questions.json 导出为 XML 格式
 // 用法: npm run export-xml [output.xml]
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -11,12 +11,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
 const questions = JSON.parse(
-  readFileSync(resolve(root, 'assets/questions.json'), 'utf-8')
+  readFileSync(resolve(root, 'banks/questions.json'), 'utf-8')
 );
 
 const outputPath = process.argv[2]
   ? resolve(process.cwd(), process.argv[2])
-  : resolve(root, 'assets/questions.xml');
+  : resolve(root, 'banks/questions.xml');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

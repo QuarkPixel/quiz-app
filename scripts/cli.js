@@ -4,10 +4,10 @@
  *
  * 用法：
  *   node scripts/cli.js dev                       → Library 模式
- *   node scripts/cli.js dev -- --bundled          → Bundled，默认 assets/questions.example.json
+ *   node scripts/cli.js dev -- --bundled          → Bundled，默认 banks/questions.example.json
  *   node scripts/cli.js dev -- --bundled path.json
  *   node scripts/cli.js build                     → Library 模式
- *   node scripts/cli.js build -- --bundled        → Bundled，默认 assets/questions.json
+ *   node scripts/cli.js build -- --bundled        → Bundled，默认 banks/questions.json
  *   node scripts/cli.js build -- --bundled path.json
  *   node scripts/cli.js preview                   → Library 模式
  *
@@ -43,8 +43,8 @@ if (isBundled) {
   } else {
     bundledPath =
       subcommand === "dev"
-        ? "assets/questions.example.json"
-        : "assets/questions.json";
+        ? "banks/questions.example.json"
+        : "banks/questions.json";
   }
   const absPath = isAbsolute(bundledPath)
     ? bundledPath
