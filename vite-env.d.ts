@@ -24,6 +24,7 @@ declare module "$sound" {
     initializeSoundPreference,
     maybePlayAnswerSound,
     maybePlaySuccessSound,
+    sanitizeSoundSettings,
     setSoundEnabledPreference,
   } from "./src/sound/library";
 }

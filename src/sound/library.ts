@@ -1,7 +1,7 @@
 import answerCorrectUrl from "../../assets/sounds/answer-correct.webm";
 import answerWrongUrl from "../../assets/sounds/answer-wrong.webm";
 import successUrl from "../../assets/sounds/success.webm";
-import type { RuntimeState } from "../types";
+import type { RuntimeState, UserSettings } from "../types";
 import type { SoundPlayer } from "./types";
 import { SOUND_ENABLED_BY_DEFAULT } from "../config";
 
@@ -71,6 +71,17 @@ export function maybePlaySuccessSound(
 
 export function initializeSoundPreference(state: RuntimeState): void {
   state.settings.soundEnabled ??= SOUND_ENABLED_BY_DEFAULT;
+}
+
+export function sanitizeSoundSettings(
+  settings: UserSettings,
+): Pick<UserSettings, "soundEnabled"> {
+  return {
+    soundEnabled:
+      typeof settings.soundEnabled === "boolean"
+        ? settings.soundEnabled
+        : SOUND_ENABLED_BY_DEFAULT,
+  };
 }
 
 export function setSoundEnabledPreference(

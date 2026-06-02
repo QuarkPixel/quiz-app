@@ -56,7 +56,10 @@ describe("loadRuntimeState", () => {
     expect(state.activePool).toEqual([]);
     expect(state.currentRound).toBe(0);
     expect(state.filterType).toBe("all");
-    expect(state.settings).toEqual(createDefaultSettings());
+    expect(state.settings).toEqual({
+      ...createDefaultSettings(),
+      soundEnabled: false,
+    });
     expect(state.pendingIds).toEqual(["a", "b"]);
   });
 

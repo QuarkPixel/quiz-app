@@ -191,6 +191,18 @@ describe("sanitizeUserSettings / selectionMode", () => {
   });
 });
 
+describe("sanitizeUserSettings / soundEnabled", () => {
+  it("保留已持久化的 true", () => {
+    const result = sanitizeUserSettings(makeSettings({ soundEnabled: true }));
+    expect(result.soundEnabled).toBe(true);
+  });
+
+  it("缺省时按 library 默认值补为 false", () => {
+    const result = sanitizeUserSettings(makeSettings());
+    expect(result.soundEnabled).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // reconcileAfterSettingsChange
 // ---------------------------------------------------------------------------
@@ -411,5 +423,19 @@ describe("reconcileAfterSettingsChange / 返回结构", () => {
     const result = reconcileAfterSettingsChange(questions, state);
     expect(result.state.settings.activePoolSize).toBe(100);
     expect(result.state.settings.selectionMode).toBe("random");
+  });
+
+  it("保留 library-only soundEnabled 偏好", () => {
+    const questions = [makeQuestion("a")];
+    const state = makeState({
+      activePool: [poolItem("a")],
+      settings: makeSettings({
+        activePoolSize: 5,
+        selectionMode: "sequential",
+        soundEnabled: true,
+      }),
+    });
+    const result = reconcileAfterSettingsChange(questions, state);
+    expect(result.state.settings.soundEnabled).toBe(true);
   });
 });

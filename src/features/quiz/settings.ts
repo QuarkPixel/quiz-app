@@ -12,6 +12,7 @@ import {
   CORRECT_STREAK_AFTER_MISTAKE,
   CORRECT_STREAK_TO_MASTER,
 } from "../../config";
+import { sanitizeSoundSettings } from "$sound";
 
 const SETTINGS_BOUNDS = {
   activePoolSize: { min: 5, max: 100 },
@@ -120,6 +121,7 @@ export function sanitizeUserSettings(settings: UserSettings): UserSettings {
     ),
     selectionMode:
       settings.selectionMode === "sequential" ? "sequential" : "random",
+    ...sanitizeSoundSettings(settings),
   };
 }
 

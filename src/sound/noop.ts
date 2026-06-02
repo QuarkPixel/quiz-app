@@ -14,6 +14,10 @@ export function maybePlaySuccessSound(): void {}
 
 export function initializeSoundPreference(): void {}
 
+export function sanitizeSoundSettings(): object {
+  return {};
+}
+
 export function setSoundEnabledPreference(
   state: RuntimeState,
   next: boolean,
