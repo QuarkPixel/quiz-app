@@ -51,8 +51,7 @@
             <div class="flex max-w-md flex-col items-center gap-4 text-center">
                 <p class="text-foreground text-lg font-medium">还没有题库</p>
                 <p class="text-muted-foreground text-sm leading-relaxed">
-                    点击左侧栏「题库」分组右上角的导入按钮，从一个 JSON
-                    文件开始。
+                    点击左侧栏「题库」分组右上角的导入按钮，从 JSON 文件开始。
                 </p>
             </div>
         </main>

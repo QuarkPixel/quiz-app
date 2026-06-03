@@ -11,12 +11,19 @@
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
     import IconAddSquare from "@tabler/icons-svelte/icons/code-variable-plus";
-    import IconMessagePlus from "@tabler/icons-svelte/icons/message-plus";
+    import IconPromptCopy from "@tabler/icons-svelte/icons/message-circle-share";
     import IconCopyCheck from "@tabler/icons-svelte/icons/copy-check";
     import IconDots from "@tabler/icons-svelte/icons/dots";
     import IconEdit from "@tabler/icons-svelte/icons/edit";
     import IconTrash from "@tabler/icons-svelte/icons/trash";
     import IconBooks from "@tabler/icons-svelte/icons/books";
+    import {
+        exportLibraryBank,
+        LibraryImportSession,
+        type LibraryFileMessage,
+        type LibraryImportPrompt,
+        type OverwriteImportRequest,
+    } from "../features/libraryFiles";
     import type { QuizSource } from "../source/types";
 
     let { source }: { source: QuizSource } = $props();
@@ -36,16 +43,14 @@
     });
 
     let fileInput: HTMLInputElement | null = $state(null);
-    let importMessage = $state<{ title: string; text: string } | null>(null);
+    let isImporting = $state(false);
+    let importSession = $state<LibraryImportSession | null>(null);
+    let importMessage = $state<LibraryFileMessage | null>(null);
+    let overwriteRequest = $state<OverwriteImportRequest | null>(null);
 
     let renameTarget = $state<{ hash: string; name: string } | null>(null);
     let renameInput = $state("");
     let deleteTarget = $state<{ hash: string; name: string } | null>(null);
-    let overwriteTarget = $state<{
-        hash: string;
-        stateStr: string;
-        name: string;
-    } | null>(null);
     let promptCopyStatus = $state<"idle" | "copied" | "error">("idle");
     let promptCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -78,80 +83,47 @@
         }, 1800);
     }
 
+    function showImportPrompt(prompt: LibraryImportPrompt): void {
+        if (prompt.kind === "overwrite") {
+            overwriteRequest = prompt.request;
+            importMessage = null;
+            return;
+        }
+
+        overwriteRequest = null;
+        importSession = null;
+        importMessage = prompt.message;
+    }
+
     async function onFileChosen(e: Event): Promise<void> {
         const input = e.currentTarget as HTMLInputElement;
-        const file = input.files?.[0];
+        const files = Array.from(input.files ?? []);
         input.value = "";
-        if (!file || !source.importBank) return;
+        if (files.length === 0 || isImporting || importSession !== null) return;
 
-        const text = await file.text();
-        const baseName = file.name.replace(/\.json$/i, "");
-        const result = await source.importBank(baseName, text);
-
-        switch (result.kind) {
-            case "ok":
-                if (result.stateError !== undefined) {
-                    importMessage = {
-                        title: "题目已导入，进度备份还原失败",
-                        text:
-                            "题库本身已经入库，但文件附带的进度备份无法解析，" +
-                            "该题库将以空进度开始。\n\n原因：" +
-                            result.stateError,
-                    };
-                }
-                break;
-            case "invalid":
-                importMessage = {
-                    title: "题库校验失败",
-                    text:
-                        result.errors.slice(0, 5).join("\n") +
-                        (result.errors.length > 5
-                            ? `\n…还有 ${result.errors.length - 5} 条问题`
-                            : ""),
-                };
-                break;
-            case "duplicate":
-                if (result.stateStr !== undefined) {
-                    const existing = banks.find((b) => b.hash === result.hash);
-                    overwriteTarget = {
-                        hash: result.hash,
-                        stateStr: result.stateStr,
-                        name: existing?.name ?? "该题库",
-                    };
-                } else {
-                    importMessage = {
-                        title: "题库已存在",
-                        text: "这份题库已经在列表里了。",
-                    };
-                }
-                break;
-            case "quota":
-                importMessage = {
-                    title: "存储空间不足",
-                    text:
-                        "浏览器存储空间不足，无法导入。\n" +
-                        "如果只需要这一份题库，建议改用 Bundled 模式打包成单文件分发。",
-                };
-                break;
+        isImporting = true;
+        try {
+            const session = await LibraryImportSession.create(source, files);
+            importSession = session;
+            showImportPrompt(session.currentPrompt());
+        } finally {
+            isImporting = false;
         }
     }
 
-    async function commitOverwrite(): Promise<void> {
-        if (!overwriteTarget || !source.applyStateToBank) return;
-        const target = overwriteTarget;
-        overwriteTarget = null;
-        const res = await source.applyStateToBank(target.hash, target.stateStr);
-        if (!res.ok) {
-            importMessage = {
-                title: "进度替换失败",
-                text:
-                    "文件中的进度备份无法应用到现有题库。\n\n原因：" +
-                    res.error,
-            };
+    async function answerOverwrite(overwrite: boolean): Promise<void> {
+        if (!importSession || !overwriteRequest || isImporting) return;
+
+        isImporting = true;
+        try {
+            showImportPrompt(await importSession.resolveOverwrite(overwrite));
+        } finally {
+            isImporting = false;
         }
     }
 
     function openImport(): void {
+        if (isImporting || importSession !== null) return;
         fileInput?.click();
     }
 
@@ -184,19 +156,8 @@
     }
 
     async function handleExport(hash: string): Promise<void> {
-        if (!source.exportBank) return;
-        const result = await source.exportBank(hash);
-        if (!result) return;
-
-        const blob = new Blob([result.content], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = result.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const result = await exportLibraryBank(source, hash);
+        if (!result.ok) importMessage = result.message;
     }
 </script>
 
@@ -242,7 +203,7 @@
                                             {#if promptCopyStatus === "copied"}
                                                 <IconCopyCheck />
                                             {:else}
-                                                <IconMessagePlus />
+                                                <IconPromptCopy />
                                             {/if}
                                         </Button>
                                     {/snippet}
@@ -365,6 +326,7 @@
     bind:this={fileInput}
     type="file"
     accept="application/json,.json"
+    multiple
     class="hidden"
     onchange={onFileChosen}
 />
@@ -440,23 +402,23 @@
 </Dialog.Root>
 
 <Dialog.Root
-    open={overwriteTarget !== null}
+    open={overwriteRequest !== null}
     onOpenChange={(open) => {
-        if (!open) overwriteTarget = null;
+        if (!open) void answerOverwrite(false);
     }}
 >
     <Dialog.Content class="max-w-sm">
         <Dialog.Header>
             <Dialog.Title>题库已存在</Dialog.Title>
             <Dialog.Description>
-                「{overwriteTarget?.name}」已经在列表里，导入文件附带了进度备份。是否用文件中的进度替换当前进度？替换后无法撤销。
+                「{overwriteRequest?.bankName}」已经在列表里，导入文件「{overwriteRequest?.fileName}」附带了进度备份。是否用文件中的进度替换当前进度？替换后无法撤销。
             </Dialog.Description>
         </Dialog.Header>
         <Dialog.Footer>
-            <Button variant="outline" onclick={() => (overwriteTarget = null)}
+            <Button variant="outline" onclick={() => answerOverwrite(false)}
                 >保留当前进度</Button
             >
-            <Button variant="destructive" onclick={commitOverwrite}
+            <Button variant="destructive" onclick={() => answerOverwrite(true)}
                 >替换进度</Button
             >
         </Dialog.Footer>
