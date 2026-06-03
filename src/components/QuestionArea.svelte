@@ -16,13 +16,15 @@
 </script>
 
 {#if session.currentQuestion && (session.currentPoolItem || session.showResult)}
-    {@const TypeIcon = QUESTION_TYPES[session.currentQuestion.type].icon}
     <div class="flex items-center gap-3">
-        <TypeIcon
-            size={16}
-            stroke={1.75}
-            class="text-muted-foreground"
-        />
+        {#key session.currentQuestion.type}
+            {@const TypeIcon = QUESTION_TYPES[session.currentQuestion.type].icon}
+            <TypeIcon
+                size={16}
+                stroke={1.75}
+                class="text-muted-foreground"
+            />
+        {/key}
         <span class="text-muted-foreground text-xs font-mono">
             {session.currentQuestion.id}
         </span>
