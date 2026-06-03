@@ -60,7 +60,7 @@
         {:else}
             <Input
                 data-slot="input"
-                class="blank-input h-12 px-4 text-base"
+                class="blank-input h-12 px-4 text-lg md:text-lg"
                 value={blankAnswerInputs[i] ?? ""}
                 oninput={(e) => setAt(i, (e.target as HTMLInputElement).value)}
                 placeholder={Array.isArray(question.answer)
