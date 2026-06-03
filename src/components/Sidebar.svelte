@@ -1,12 +1,18 @@
 <script lang="ts">
+    import { onDestroy } from "svelte";
     import * as Sidebar from "$lib/components/ui/sidebar";
     import * as Dialog from "$lib/components/ui/dialog";
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
+    import * as Tooltip from "$lib/components/ui/tooltip";
     import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
+    import { cn } from "$lib/utils";
+    import Prompt from "../../assets/prompt.md?raw";
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
-    import IconAddSquare from "@tabler/icons-svelte/icons/square-rounded-plus";
+    import IconAddSquare from "@tabler/icons-svelte/icons/code-variable-plus";
+    import IconMessagePlus from "@tabler/icons-svelte/icons/message-plus";
+    import IconCopyCheck from "@tabler/icons-svelte/icons/copy-check";
     import IconDots from "@tabler/icons-svelte/icons/dots";
     import IconEdit from "@tabler/icons-svelte/icons/edit";
     import IconTrash from "@tabler/icons-svelte/icons/trash";
@@ -40,6 +46,37 @@
         stateStr: string;
         name: string;
     } | null>(null);
+    let promptCopyStatus = $state<"idle" | "copied" | "error">("idle");
+    let promptCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const promptCopyLabel = "给 LLM 的生成题库 Prompt";
+
+    onDestroy(() => {
+        if (promptCopyResetTimer) clearTimeout(promptCopyResetTimer);
+    });
+
+    async function copyPrompt(event: MouseEvent): Promise<void> {
+        event.stopPropagation();
+        if (promptCopyResetTimer) {
+            clearTimeout(promptCopyResetTimer);
+            promptCopyResetTimer = null;
+        }
+
+        try {
+            if (!navigator.clipboard?.writeText) {
+                throw new Error("Clipboard API is unavailable.");
+            }
+            await navigator.clipboard.writeText(Prompt);
+            promptCopyStatus = "copied";
+        } catch {
+            promptCopyStatus = "error";
+        }
+
+        promptCopyResetTimer = setTimeout(() => {
+            promptCopyStatus = "idle";
+            promptCopyResetTimer = null;
+        }, 1800);
+    }
 
     async function onFileChosen(e: Event): Promise<void> {
         const input = e.currentTarget as HTMLInputElement;
@@ -188,6 +225,32 @@
                                     >题库</span
                                 >
                             </div>
+                            <Tooltip.Root delayDuration={0}>
+                                <Tooltip.Trigger>
+                                    {#snippet child({ props })}
+                                        <Button
+                                            {...props}
+                                            variant="ghost"
+                                            size="icon-sm"
+                                            class={cn(
+                                                promptCopyStatus === "copied" &&
+                                                    "text-success hover:text-success",
+                                            )}
+                                            aria-label={promptCopyLabel}
+                                            onclick={copyPrompt}
+                                        >
+                                            {#if promptCopyStatus === "copied"}
+                                                <IconCopyCheck />
+                                            {:else}
+                                                <IconMessagePlus />
+                                            {/if}
+                                        </Button>
+                                    {/snippet}
+                                </Tooltip.Trigger>
+                                <Tooltip.Content side="bottom" align="end">
+                                    <span>{promptCopyLabel}</span>
+                                </Tooltip.Content>
+                            </Tooltip.Root>
                         </div>
                     {/snippet}
                 </Sidebar.MenuButton>
