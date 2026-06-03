@@ -7,17 +7,10 @@
     import { createSource } from "./source";
 
     // @ts-ignore
-    import faviconRaw from "../assets/icons/icon.svg?raw";
-    // @ts-ignore
     import logoRaw from "../assets/icons/logo.svg?raw";
 
-    const faviconUrl = `data:image/svg+xml,${encodeURIComponent(faviconRaw)}`;
     const bank = createSource().getActiveBank();
 </script>
-
-<svelte:head>
-    <link rel="icon" type="image/svg+xml" href={faviconUrl} />
-</svelte:head>
 
 <Tooltip.Provider delayDuration={0}>
     <div class="flex h-full flex-col">

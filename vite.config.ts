@@ -51,6 +51,61 @@ if (mode === "bundled" && !isTest) {
 }
 
 const bundledOutputName = `bundled-${bundledHash}.html`;
+const faviconPath = resolve(__dirname, "assets/icons/icon.svg");
+
+// ─── HTML 常量注入 ───────────────────────────────────────────────────────────
+function faviconDataUrl(): string {
+  const svg = readFileSync(faviconPath, "utf-8");
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function injectIntoHead(html: string, href: string): string {
+  const tag = `<link rel="icon" type="image/svg+xml" href="${href}" />`;
+  return html.replace("</head>", `        ${tag}\n    </head>`);
+}
+
+function injectFavicon(): Plugin {
+  let command: "build" | "serve" = "build";
+  let base = "/";
+  let libraryFaviconRef: string | null = null;
+
+  function outputHref(fileName: string): string {
+    if (base === "" || base === "./") return fileName;
+    return `${base}${fileName}`;
+  }
+
+  return {
+    name: "inject-favicon",
+    configResolved(config) {
+      command = config.command;
+      base = config.base;
+    },
+    buildStart() {
+      if (mode !== "library" || command !== "build") return;
+      libraryFaviconRef = this.emitFile({
+        type: "asset",
+        name: "icon.svg",
+        source: readFileSync(faviconPath),
+      });
+    },
+    transformIndexHtml(html) {
+      if (mode === "bundled") return injectIntoHead(html, faviconDataUrl());
+      if (command === "serve") return injectIntoHead(html, "/assets/icons/icon.svg");
+      return html;
+    },
+    generateBundle(_, bundle) {
+      if (mode !== "library" || !libraryFaviconRef) return;
+
+      const href = outputHref(this.getFileName(libraryFaviconRef));
+      for (const item of Object.values(bundle)) {
+        if (item.type !== "asset" || !item.fileName.endsWith(".html")) continue;
+        if (typeof item.source !== "string") continue;
+
+        item.source = injectIntoHead(item.source, href);
+      }
+    },
+  };
+}
 
 // ─── 构建产物重命名 ──────────────────────────────────────────────────────────
 /**
@@ -109,6 +164,7 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     svelte(),
+    injectFavicon(),
     ...(mode === "bundled"
       ? [viteSingleFile({ useRecommendedBuildConfig: false }), renameOutput()]
       : []),

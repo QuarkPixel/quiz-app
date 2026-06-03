@@ -11,8 +11,6 @@
     import type { Bank } from "./source/types";
 
     // @ts-ignore
-    import favicon from "../assets/icons/icon.svg";
-    // @ts-ignore
     import logoRaw from "../assets/icons/logo.svg?raw";
 
     const source = createSource();
@@ -25,10 +23,6 @@
         }),
     );
 </script>
-
-<svelte:head>
-    <link rel="icon" type="image/svg+xml" href={favicon} />
-</svelte:head>
 
 {#snippet contentBody()}
     <header class="flex items-center gap-3 px-5 py-5 sm:px-8 sm:py-6">
