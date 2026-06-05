@@ -105,4 +105,61 @@ describe("library file import session", () => {
       text: "已导入「single.json」。",
     });
   });
+
+  it("imports clipboard text with a stable fallback bank name", async () => {
+    const rawJson = '[{"id":"q1"}]';
+    const source = createSource([{ kind: "ok", hash: "ok" }]);
+    const readText = vi.fn(async () => rawJson);
+
+    const session = await LibraryImportSession.createFromClipboard(
+      source,
+      readText,
+    );
+    const prompt = session.currentPrompt();
+
+    expect(readText).toHaveBeenCalledOnce();
+    expect(source.importBank).toHaveBeenCalledWith("剪贴板题库", rawJson);
+    expect(prompt.kind).toBe("summary");
+    if (prompt.kind !== "summary") throw new Error("expected summary");
+    expect(prompt.message).toEqual({
+      title: "导入成功",
+      text: "已导入「剪贴板内容」。",
+    });
+  });
+
+  it("reports an empty clipboard without calling importBank", async () => {
+    const source = createSource([]);
+    const readText = vi.fn(async () => " \n ");
+
+    const session = await LibraryImportSession.createFromClipboard(
+      source,
+      readText,
+    );
+    const prompt = session.currentPrompt();
+
+    expect(source.importBank).not.toHaveBeenCalled();
+    expect(prompt.kind).toBe("summary");
+    if (prompt.kind !== "summary") throw new Error("expected summary");
+    expect(prompt.message.title).toBe("导入失败");
+    expect(prompt.message.text).toContain("剪贴板为空，请先复制题库 JSON。");
+  });
+
+  it("reports clipboard read failures without calling importBank", async () => {
+    const source = createSource([]);
+    const readText = vi.fn(async () => {
+      throw new Error("permission denied");
+    });
+
+    const session = await LibraryImportSession.createFromClipboard(
+      source,
+      readText,
+    );
+    const prompt = session.currentPrompt();
+
+    expect(source.importBank).not.toHaveBeenCalled();
+    expect(prompt.kind).toBe("summary");
+    if (prompt.kind !== "summary") throw new Error("expected summary");
+    expect(prompt.message.title).toBe("导入失败");
+    expect(prompt.message.text).toContain("读取剪贴板失败：permission denied");
+  });
 });

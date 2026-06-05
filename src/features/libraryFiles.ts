@@ -1,5 +1,8 @@
 import type { ImportBankResult, QuizSource } from "../source/types";
 
+const CLIPBOARD_DISPLAY_NAME = "剪贴板内容";
+const CLIPBOARD_BANK_NAME = "剪贴板题库";
+
 export interface LibraryFileMessage {
   title: string;
   text: string;
@@ -23,6 +26,19 @@ class UnsupportedImportFailure extends BaseImportFailure {
 }
 
 class UnexpectedImportFailure extends BaseImportFailure {
+  constructor(
+    fileName: string,
+    private readonly detail: string,
+  ) {
+    super(fileName);
+  }
+
+  getReason(): string {
+    return this.detail;
+  }
+}
+
+class ClipboardImportFailure extends BaseImportFailure {
   constructor(
     fileName: string,
     private readonly detail: string,
@@ -133,6 +149,13 @@ function getBankName(source: QuizSource, hash: string): string {
   return source.listBanks?.().find((b) => b.hash === hash)?.name ?? "该题库";
 }
 
+function getClipboardReader(): (() => Promise<string>) | null {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+    return null;
+  }
+  return () => navigator.clipboard.readText();
+}
+
 function mapImportResult(
   source: QuizSource,
   fileName: string,
@@ -175,6 +198,23 @@ function mapImportResult(
   }
 }
 
+async function importLibraryText(
+  source: QuizSource,
+  fileName: string,
+  bankName: string,
+  rawJson: string,
+): Promise<FileImportStep> {
+  if (!source.importBank) {
+    return {
+      kind: "done",
+      outcome: failure(new UnsupportedImportFailure(fileName)),
+    };
+  }
+
+  const result = await source.importBank(bankName, rawJson);
+  return mapImportResult(source, fileName, result);
+}
+
 async function importLibraryFile(
   source: QuizSource,
   file: File,
@@ -189,13 +229,83 @@ async function importLibraryFile(
   try {
     const text = await file.text();
     const baseName = file.name.replace(/\.json$/i, "");
-    const result = await source.importBank(baseName, text);
-    return mapImportResult(source, file.name, result);
+    return await importLibraryText(source, file.name, baseName, text);
   } catch (e) {
     return {
       kind: "done",
       outcome: failure(
         new UnexpectedImportFailure(file.name, `读取或导入失败：${formatUnknownError(e)}`),
+      ),
+    };
+  }
+}
+
+async function importLibraryClipboard(
+  source: QuizSource,
+  readText?: () => Promise<string>,
+): Promise<FileImportStep> {
+  if (!source.importBank) {
+    return {
+      kind: "done",
+      outcome: failure(new UnsupportedImportFailure(CLIPBOARD_DISPLAY_NAME)),
+    };
+  }
+
+  const reader = readText ?? getClipboardReader();
+  if (reader === null) {
+    return {
+      kind: "done",
+      outcome: failure(
+        new ClipboardImportFailure(
+          CLIPBOARD_DISPLAY_NAME,
+          "无法访问剪贴板，请检查浏览器权限。",
+        ),
+      ),
+    };
+  }
+
+  let text: string;
+  try {
+    text = await reader();
+  } catch (e) {
+    return {
+      kind: "done",
+      outcome: failure(
+        new ClipboardImportFailure(
+          CLIPBOARD_DISPLAY_NAME,
+          `读取剪贴板失败：${formatUnknownError(e)}`,
+        ),
+      ),
+    };
+  }
+
+  if (text.trim() === "") {
+    return {
+      kind: "done",
+      outcome: failure(
+        new ClipboardImportFailure(
+          CLIPBOARD_DISPLAY_NAME,
+          "剪贴板为空，请先复制题库 JSON。",
+        ),
+      ),
+    };
+  }
+
+  try {
+    return await importLibraryText(
+      source,
+      CLIPBOARD_DISPLAY_NAME,
+      CLIPBOARD_BANK_NAME,
+      text,
+    );
+  } catch (e) {
+    return {
+      kind: "done",
+      outcome: failure(
+        new UnexpectedImportFailure(
+          CLIPBOARD_DISPLAY_NAME,
+          `导入失败：${formatUnknownError(e)}`,
+        ),
       ),
     };
   }
@@ -285,6 +395,14 @@ export class LibraryImportSession {
     private readonly total: number,
   ) {}
 
+  private collectStep(step: FileImportStep): void {
+    if (step.kind === "done") {
+      this.outcomes.push(step.outcome);
+    } else {
+      this.overwriteRequests.push(step.request);
+    }
+  }
+
   static async create(
     source: QuizSource,
     files: File[],
@@ -292,14 +410,18 @@ export class LibraryImportSession {
     const session = new LibraryImportSession(source, files.length);
 
     for (const file of files) {
-      const step = await importLibraryFile(source, file);
-      if (step.kind === "done") {
-        session.outcomes.push(step.outcome);
-      } else {
-        session.overwriteRequests.push(step.request);
-      }
+      session.collectStep(await importLibraryFile(source, file));
     }
 
+    return session;
+  }
+
+  static async createFromClipboard(
+    source: QuizSource,
+    readText?: () => Promise<string>,
+  ): Promise<LibraryImportSession> {
+    const session = new LibraryImportSession(source, 1);
+    session.collectStep(await importLibraryClipboard(source, readText));
     return session;
   }
 

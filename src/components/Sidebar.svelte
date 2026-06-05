@@ -11,6 +11,8 @@
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
     import IconAddSquare from "@tabler/icons-svelte/icons/code-variable-plus";
+    import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
+    import IconFileImport from "@tabler/icons-svelte/icons/file-import";
     import IconPromptCopy from "@tabler/icons-svelte/icons/message-circle-share";
     import IconCopyCheck from "@tabler/icons-svelte/icons/copy-check";
     import IconDots from "@tabler/icons-svelte/icons/dots";
@@ -122,9 +124,24 @@
         }
     }
 
-    function openImport(): void {
+    function openFileImport(): void {
         if (isImporting || importSession !== null) return;
         fileInput?.click();
+    }
+
+    async function importFromClipboard(): Promise<void> {
+        if (isImporting || importSession !== null) return;
+
+        isImporting = true;
+        try {
+            const session = await LibraryImportSession.createFromClipboard(
+                source,
+            );
+            importSession = session;
+            showImportPrompt(session.currentPrompt());
+        } finally {
+            isImporting = false;
+        }
     }
 
     function startRename(hash: string, name: string): void {
@@ -160,6 +177,25 @@
         if (!result.ok) importMessage = result.message;
     }
 </script>
+
+{#snippet importMenuContent()}
+    <DropdownMenu.Content side="right" align="start" class="w-44">
+        <DropdownMenu.Item
+            disabled={isImporting || importSession !== null}
+            onSelect={() => openFileImport()}
+        >
+            <IconFileImport size={14} stroke={1.75} />
+            <span>从文件导入</span>
+        </DropdownMenu.Item>
+        <DropdownMenu.Item
+            disabled={isImporting || importSession !== null}
+            onSelect={() => void importFromClipboard()}
+        >
+            <IconClipboard size={14} stroke={1.75} />
+            <span>从剪贴板导入</span>
+        </DropdownMenu.Item>
+    </DropdownMenu.Content>
+{/snippet}
 
 <Sidebar.Root collapsible="icon">
     <Sidebar.Header>
@@ -223,10 +259,19 @@
         <Sidebar.Group>
             <Sidebar.GroupLabel>题库</Sidebar.GroupLabel>
             {#if banks.length != 0}
-                <Sidebar.GroupAction title="导入题库" onclick={openImport}>
-                    <IconAddSquare size={16} stroke={1.75} />
-                    <span class="sr-only">导入题库</span>
-                </Sidebar.GroupAction>
+                <DropdownMenu.Root>
+                    <DropdownMenu.Trigger
+                        disabled={isImporting || importSession !== null}
+                    >
+                        {#snippet child({ props })}
+                            <Sidebar.GroupAction {...props} title="导入题库">
+                                <IconAddSquare size={16} stroke={1.75} />
+                                <span class="sr-only">导入题库</span>
+                            </Sidebar.GroupAction>
+                        {/snippet}
+                    </DropdownMenu.Trigger>
+                    {@render importMenuContent()}
+                </DropdownMenu.Root>
             {/if}
             <Sidebar.GroupContent>
                 <Sidebar.Menu class="gap-1">
@@ -305,13 +350,27 @@
                         </Sidebar.MenuItem>
                     {:else}
                         <Sidebar.MenuItem>
-                            <Sidebar.MenuButton
-                                onclick={openImport}
-                                tooltipContent="导入题库"
-                                class="text-sidebar-foreground/70 justify-center"
-                            >
-                                <IconAdd size={16} stroke={1.75} />
-                            </Sidebar.MenuButton>
+                            <DropdownMenu.Root>
+                                <DropdownMenu.Trigger
+                                    disabled={isImporting || importSession !== null}
+                                >
+                                    {#snippet child({ props })}
+                                        <Sidebar.MenuButton
+                                            {...props}
+                                            class="text-sidebar-foreground/70 justify-center"
+                                        >
+                                            <IconAdd
+                                                size={16}
+                                                stroke={1.75}
+                                            />
+                                            <span class="sr-only"
+                                                >导入题库</span
+                                            >
+                                        </Sidebar.MenuButton>
+                                    {/snippet}
+                                </DropdownMenu.Trigger>
+                                {@render importMenuContent()}
+                            </DropdownMenu.Root>
                         </Sidebar.MenuItem>
                     {/each}
                 </Sidebar.Menu>
