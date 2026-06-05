@@ -29,6 +29,7 @@
     --ring: oklch(0.708 0 0);
     --radius: 0.625rem;
     --sidebar: oklch(0.985 0 0);
+    --sidebar-desktop: oklch(0 0 0 / 1.5%);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
     --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -64,6 +65,7 @@
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
     --sidebar: oklch(0.205 0 0);
+    --sidebar-desktop: oklch(1 0 0 / 14.5%);
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.922 0 0);
     --sidebar-primary-foreground: oklch(0.205 0 0);
@@ -100,6 +102,7 @@
         --input: oklch(1 0 0 / 15%);
         --ring: oklch(0.556 0 0);
         --sidebar: oklch(0.205 0 0);
+        --sidebar-desktop: oklch(1 0 0 / 14.5%);
         --sidebar-foreground: oklch(0.985 0 0);
         --sidebar-primary: oklch(0.922 0 0);
         --sidebar-primary-foreground: oklch(0.205 0 0);
@@ -135,6 +138,7 @@
     --color-input: var(--input);
     --color-ring: var(--ring);
     --color-sidebar: var(--sidebar);
+    --color-sidebar-desktop: var(--sidebar-desktop);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar-primary: var(--sidebar-primary);
     --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
