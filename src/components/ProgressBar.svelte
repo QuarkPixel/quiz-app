@@ -17,6 +17,9 @@
 
     let { stats, learningSegments, focused, onToggleFocus }: Props = $props();
 
+    // 修复：进度条在 focused 时，全部题目答完时显示异常
+    let calcFocused = $derived(focused && stats.mastered != stats.total);
+
     let masteredWidth = $derived(
         stats.total > 0 ? (stats.mastered / stats.total) * 100 : 0,
     );
@@ -28,22 +31,22 @@
     );
 
     let masteredDisplayWidth = $derived(
-        focused
+      calcFocused
             ? Math.min(masteredWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
             : masteredWidth,
     );
     let pendingDisplayWidth = $derived(
-        focused
+      calcFocused
             ? Math.min(pendingWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
             : pendingWidth,
     );
     let learningDisplayWidth = $derived(
-        focused
+      calcFocused
             ? Math.max(0, 100 - masteredDisplayWidth - pendingDisplayWidth)
             : learningWidth,
     );
 
-    // 已掌握数增加时短暂高亮 + 微微伸长（focused 状态下才伸长）
+    // 已掌握数增加时短暂高亮 + 微微伸长（calcFocused 状态下才伸长）
     // svelte-ignore state_referenced_locally
     let prevMastered = stats.mastered;
     let celebrating = $state(false);
@@ -67,7 +70,7 @@
     type="button"
     class={cn(
         "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
-        focused && "focused",
+        calcFocused && "focused",
     )}
     onclick={onToggleFocus}
     disabled={stats.learning === 0}
@@ -86,16 +89,16 @@
         class={cn(
             "progress-bar flex h-[3px] gap-1 transition-all duration-300",
             "[&_*]:transition-all [&_*]:duration-500 [&_*]:ease-spring",
-            focused && "h-[7px]",
+            calcFocused && "h-[7px]",
         )}
     >
         <div
             class={cn(
                 "mastered-segment bg-success rounded-sm",
-                focused && "opacity-55",
+                calcFocused && "opacity-55",
                 celebrating && "celebrate",
             )}
-            style="--w: {masteredDisplayWidth}%; --focused: {focused ? 1 : 0}"
+            style="--w: {masteredDisplayWidth}%; --focused: {calcFocused ? 1 : 0}"
         ></div>
         <div
             class="flex overflow-hidden rounded-sm"
@@ -108,7 +111,7 @@
             {/each}
         </div>
         <div
-            class={cn("bg-foreground/15 rounded-sm", focused && "opacity-55")}
+            class={cn("bg-foreground/15 rounded-sm", calcFocused && "opacity-55")}
             style="width: {pendingDisplayWidth}%"
         ></div>
     </div>
