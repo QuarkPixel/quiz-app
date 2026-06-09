@@ -13,7 +13,11 @@ import {
   installDebugConsoleCommands,
   setDebugModeEnabled,
 } from "../src/debug";
-import { createActivePoolItem, createDefaultSettings } from "../src/store";
+import {
+  createActivePoolItem,
+  createDefaultSettings,
+  createDefaultUiPreferences,
+} from "../src/store";
 import type {
   Question,
   RuntimeState,
@@ -44,14 +48,21 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
 }
 
 function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
-  return {
+  const defaultState: RuntimeState = {
     masteredIds: [],
     activePool: [],
     pendingIds: [],
     currentRound: 0,
     filterType: "all",
     settings: makeSettings(),
+    ui: createDefaultUiPreferences(),
+  };
+
+  return {
+    ...defaultState,
     ...overrides,
+    settings: overrides.settings ?? defaultState.settings,
+    ui: overrides.ui ?? defaultState.ui,
   };
 }
 
@@ -215,11 +226,13 @@ describe("debug console command", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     setDebugModeEnabled(false);
-    delete window.debug;
 
     installDebugConsoleCommands();
 
-    expect(window.quizDebug).toBe(debug);
+    const quizDebug = window.quizDebug;
+    if (!quizDebug) throw new Error("quizDebug was not installed");
+
+    expect(quizDebug).toBe(debug);
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("OFF"),
       expect.any(String),
@@ -227,10 +240,10 @@ describe("debug console command", () => {
       expect.any(String),
     );
 
-    expect(window.quizDebug?.()).toBe(false);
-    expect(window.quizDebug?.(true)).toBe(true);
-    expect(window.quizDebug?.()).toBe(true);
-    expect(window.quizDebug?.(false)).toBe(false);
+    expect(quizDebug()).toBe(false);
+    expect(quizDebug(true)).toBe(true);
+    expect(quizDebug()).toBe(true);
+    expect(quizDebug(false)).toBe(false);
   });
 });
 
