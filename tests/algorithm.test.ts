@@ -8,6 +8,11 @@ import {
   getRequiredStreak,
   computeLearningSegments,
 } from "../src/algorithm";
+import {
+  debug,
+  installDebugConsoleCommands,
+  setDebugModeEnabled,
+} from "../src/debug";
 import { createActivePoolItem, createDefaultSettings } from "../src/store";
 import type {
   Question,
@@ -59,6 +64,7 @@ function poolItem(
 }
 
 afterEach(() => {
+  setDebugModeEnabled(false);
   vi.restoreAllMocks();
 });
 
@@ -201,6 +207,30 @@ describe("fillActivePool", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 全局调试命令
+// ---------------------------------------------------------------------------
+
+describe("debug console command", () => {
+  it("安装浏览器控制台命令并提示开启方式", () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    delete window.debug;
+
+    installDebugConsoleCommands();
+
+    expect(window.debug).toBe(debug);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("debug(true)"));
+
+    expect(window.debug?.()).toBe(false);
+    expect(window.debug?.(true)).toBe(true);
+    expect(window.debug?.()).toBe(true);
+    expect(window.debug?.(false)).toBe(false);
+    expect(info).toHaveBeenCalledWith("全局调试模式已开启。");
+    expect(info).toHaveBeenCalledWith("全局调试模式已关闭。");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // selectNextFromPool
 // ---------------------------------------------------------------------------
 
@@ -317,6 +347,68 @@ describe("selectNextFromPool", () => {
     });
     const next = selectNextFromPool(questions, state);
     expect(next?.id).toBe("c");
+  });
+
+  it("random 模式默认不输出权重分布日志", () => {
+    const group = vi
+      .spyOn(console, "groupCollapsed")
+      .mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const groupEnd = vi
+      .spyOn(console, "groupEnd")
+      .mockImplementation(() => undefined);
+
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
+    const state = makeState({
+      currentRound: 100,
+      activePool: [
+        poolItem("a", { lastSelectedRound: -10 }),
+        poolItem("b", { lastSelectedRound: -10 }),
+        poolItem("c", { lastSelectedRound: -10 }),
+      ],
+      settings: makeSettings({ selectionMode: "random" }),
+    });
+
+    selectNextFromPool(questions, state);
+
+    expect(group).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    expect(groupEnd).not.toHaveBeenCalled();
+  });
+
+  it("random 模式开启后输出权重分布日志", () => {
+    const group = vi
+      .spyOn(console, "groupCollapsed")
+      .mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const groupEnd = vi
+      .spyOn(console, "groupEnd")
+      .mockImplementation(() => undefined);
+
+    setDebugModeEnabled(true);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
+    const state = makeState({
+      currentRound: 100,
+      activePool: [
+        poolItem("a", { lastSelectedRound: -10 }),
+        poolItem("b", { lastSelectedRound: -10 }),
+        poolItem("c", { lastSelectedRound: -10 }),
+      ],
+      settings: makeSettings({ selectionMode: "random" }),
+    });
+
+    selectNextFromPool(questions, state);
+
+    expect(group).toHaveBeenCalledWith(
+      "%cWeight Distribution %c(Round: %s)",
+      "font-weight: bold;",
+      "font-weight: normal; color: gray;",
+      100,
+    );
+    expect(log).toHaveBeenCalled();
+    expect(groupEnd).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -5,6 +5,7 @@
 import type { Question, RuntimeState, ActivePoolItem, Stats } from "./types";
 import { createActivePoolItem, filterQuestions } from "./store";
 import { LEARNING_COLOR_HIGH, LEARNING_COLOR_LOW } from "./config";
+import { isDebugModeEnabled } from "./debug";
 
 function selectionWeight(
   roundsSinceSelected: number,
@@ -102,16 +103,17 @@ export function selectNextFromPool(
     weights.push({ id: item.id, weight });
   }
 
-  console.groupCollapsed(
-    "%cWeight Distribution %c(Round: %s)",
-    "font-weight: bold;",
-    "font-weight: normal; color: gray;",
-    state.currentRound,
-  );
+  weights.sort((a, b) => a.weight - b.weight);
 
-  weights
-    .sort((a, b) => a.weight - b.weight)
-    .forEach((q) => {
+  if (isDebugModeEnabled()) {
+    console.groupCollapsed(
+      "%cWeight Distribution %c(Round: %s)",
+      "font-weight: bold;",
+      "font-weight: normal; color: gray;",
+      state.currentRound,
+    );
+
+    weights.forEach((q) => {
       const val = q.weight;
       const LENGTH = 20;
       const solidCount = Math.round(LENGTH * val);
@@ -131,7 +133,8 @@ export function selectNextFromPool(
       );
     });
 
-  console.groupEnd();
+    console.groupEnd();
+  }
 
   if (weights.length === 0) {
     const onlyId = state.activePool[0].id;
