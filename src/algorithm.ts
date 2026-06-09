@@ -48,7 +48,9 @@ export function fillActivePool(state: RuntimeState): RuntimeState {
     const selectedId = newPendingIds[pickIndex];
 
     newPendingIds.splice(pickIndex, 1);
-    newActivePool.push(createActivePoolItem(selectedId, targetSize));
+    newActivePool.push(
+      createActivePoolItem(selectedId, targetSize, state.currentRound),
+    );
   }
 
   return {

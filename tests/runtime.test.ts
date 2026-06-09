@@ -234,7 +234,7 @@ describe("rebuildRuntimeState", () => {
       makeQuestion("b", "single"),
       makeQuestion("c", "judgment"),
     ];
-    // 全部都是 lastSelectedRound = -50（初始值），还没展示过
+    // 全部都是 currentRound - activePoolSize * 2（初始值），还没答过
     const state = baseRuntime({
       activePool: [
         createActivePoolItem("a", 25),
@@ -248,15 +248,15 @@ describe("rebuildRuntimeState", () => {
     expect(rebuilt.activePool).toEqual([]);
   });
 
-  it("'已展示过' 的题（lastSelectedRound !== initial）留下", () => {
+  it("'已答过' 的题留下", () => {
     const questions = [
       makeQuestion("a", "single"),
       makeQuestion("b", "single"),
     ];
-    const initialRound = -25 * 2;
     const shownItem = {
       ...createActivePoolItem("a", 25),
-      lastSelectedRound: 3, // 不等于 initial，表示已展示
+      consecutiveCorrect: 1,
+      lastSelectedRound: 3,
     };
     const notShown = createActivePoolItem("b", 25); // lastSelectedRound = -50
     const state = baseRuntime({
@@ -266,7 +266,7 @@ describe("rebuildRuntimeState", () => {
     const rebuilt = rebuildRuntimeState(questions, state, "single");
     expect(rebuilt.activePool.map((i) => i.id)).toEqual(["a"]);
     // 没展示的 b 不会留下
-    expect(rebuilt.activePool[0].lastSelectedRound).not.toBe(initialRound);
+    expect(rebuilt.activePool[0].consecutiveCorrect).toBe(1);
   });
 
   it("切换后的 pendingIds 反映新 filter", () => {
@@ -291,6 +291,7 @@ describe("rebuildRuntimeState", () => {
     ];
     const shownJudgment = {
       ...createActivePoolItem("a", 25),
+      consecutiveCorrect: 1,
       lastSelectedRound: 3, // 已展示
     };
     const state = baseRuntime({
@@ -331,10 +332,11 @@ describe("rebuildRuntimeState", () => {
       ...createDefaultSettings(),
       activePoolSize: customPoolSize,
     };
-    // 用 customPoolSize 的 initialRound 创建未展示的项
+    // 用 customPoolSize 的 offset 创建未展示的项
     const notShown = createActivePoolItem("a", customPoolSize); // lastSelectedRound = -20
     const shownItem = {
       ...createActivePoolItem("b", customPoolSize),
+      consecutiveCorrect: 1,
       lastSelectedRound: 5,
     };
     const state = baseRuntime({
@@ -345,6 +347,33 @@ describe("rebuildRuntimeState", () => {
     const rebuilt = rebuildRuntimeState(questions, state, "single");
     // notShown (a) 应被清掉，shownItem (b) 保留
     expect(rebuilt.activePool.map((i) => i.id)).toEqual(["b"]);
+  });
+
+  it("当前轮次很高时，未答过的新入池题也按相对 offset 清掉", () => {
+    const questions = [
+      makeQuestion("a", "single"),
+      makeQuestion("b", "single"),
+    ];
+    const settings = {
+      ...createDefaultSettings(),
+      activePoolSize: 20,
+    };
+    const state = baseRuntime({
+      currentRound: 3241,
+      activePool: [
+        createActivePoolItem("a", settings.activePoolSize, 3241),
+        {
+          ...createActivePoolItem("b", settings.activePoolSize, 3241),
+          consecutiveCorrect: 1,
+        },
+      ],
+      settings,
+      filterType: "all",
+    });
+
+    const rebuilt = rebuildRuntimeState(questions, state, "single");
+    expect(rebuilt.activePool.map((i) => i.id)).toEqual(["b"]);
+    expect(rebuilt.activePool[0].lastSelectedRound).toBe(3201);
   });
 });
 

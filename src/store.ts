@@ -46,13 +46,23 @@ export function createDefaultUiPreferences(): UiPreferences {
 export function createActivePoolItem(
   id: string,
   activePoolSize: number,
+  currentRound = 0,
 ): ActivePoolItem {
   return {
     id,
     consecutiveCorrect: 0,
     hasEverMistaken: false,
-    lastSelectedRound: -activePoolSize * 2, // 确保所有题都是许久未选过
+    lastSelectedRound: currentRound - activePoolSize * 2,
   };
+}
+
+export function isUnansweredNewActivePoolItem(
+  item: ActivePoolItem,
+  currentRound: number,
+  activePoolSize: number,
+): boolean {
+  if (item.consecutiveCorrect !== 0 || item.hasEverMistaken) return false;
+  return currentRound - item.lastSelectedRound >= activePoolSize * 2;
 }
 
 /** 创建默认的存储状态 */

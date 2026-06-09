@@ -83,6 +83,11 @@ describe("createActivePoolItem", () => {
     expect(createActivePoolItem("q1", 5).lastSelectedRound).toBe(-10);
     expect(createActivePoolItem("q1", 100).lastSelectedRound).toBe(-200);
   });
+
+  it("lastSelectedRound 以当前轮次为基准应用 offset", () => {
+    expect(createActivePoolItem("q1", 5, 42).lastSelectedRound).toBe(32);
+    expect(createActivePoolItem("q1", 20, 3241).lastSelectedRound).toBe(3201);
+  });
 });
 
 // ---------------------------------------------------------------------------

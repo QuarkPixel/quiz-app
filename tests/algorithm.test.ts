@@ -187,6 +187,7 @@ describe("fillActivePool", () => {
     const state = makeState({
       pendingIds: ["a"],
       activePool: [],
+      currentRound: 42,
       settings: makeSettings({ activePoolSize: 5, selectionMode: "sequential" }),
     });
     const result = fillActivePool(state);
@@ -194,7 +195,7 @@ describe("fillActivePool", () => {
       id: "a",
       consecutiveCorrect: 0,
       hasEverMistaken: false,
-      lastSelectedRound: -10, // -activePoolSize * 2
+      lastSelectedRound: 32,
     });
   });
 });
