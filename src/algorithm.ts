@@ -6,7 +6,10 @@ import type { Question, RuntimeState, ActivePoolItem, Stats } from "./types";
 import { createActivePoolItem, filterQuestions } from "./store";
 import { LEARNING_COLOR_HIGH, LEARNING_COLOR_LOW } from "./config";
 
-function selectionWeight(roundsSinceSelected: number, poolSize: number): number {
+function selectionWeight(
+  roundsSinceSelected: number,
+  poolSize: number,
+): number {
   const cooldownRounds = poolSize / 3;
   const cappedRounds = Math.min(roundsSinceSelected, poolSize);
   const t = Math.max(
@@ -98,6 +101,18 @@ export function selectNextFromPool(
 
     weights.push({ id: item.id, weight });
   }
+
+  console.log(
+    "%cWeights %c%s",
+    "font-size: larger; font-weight: bold; line-height: 1.8;", // Weights 的样式（加大、加粗、加行高防止重叠）
+    "font-size: normal; font-weight: normal;", // 内容的样式（恢复正常大小）
+    `round: ${state.currentRound}`,
+  );
+  console.log(
+    weights
+      .sort((a, b) => a.weight - b.weight)
+      .map((q) => ({ weight: q.weight.toFixed(2), id: q.id })),
+  );
 
   if (weights.length === 0) {
     const onlyId = state.activePool[0].id;
