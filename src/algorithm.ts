@@ -102,17 +102,36 @@ export function selectNextFromPool(
     weights.push({ id: item.id, weight });
   }
 
-  console.log(
-    "%cWeights %c%s",
-    "font-size: larger; font-weight: bold; line-height: 1.8;", // Weights 的样式（加大、加粗、加行高防止重叠）
-    "font-size: normal; font-weight: normal;", // 内容的样式（恢复正常大小）
-    `round: ${state.currentRound}`,
+  console.groupCollapsed(
+    "%cWeight Distribution %c(Round: %s)",
+    "font-weight: bold;",
+    "font-weight: normal; color: gray;",
+    state.currentRound,
   );
-  console.log(
-    weights
-      .sort((a, b) => a.weight - b.weight)
-      .map((q) => ({ weight: q.weight.toFixed(2), id: q.id })),
-  );
+
+  weights
+    .sort((a, b) => a.weight - b.weight)
+    .forEach((q) => {
+      const val = q.weight;
+      const LENGTH = 20;
+      const solidCount = Math.round(LENGTH * val);
+
+      // 使用 %c 对每一行进行样式注入
+      console.log(
+        "%c%s %c%s%c%s %c| %c%s",
+        "font-family: monospace; font-weight: bold; color: gray;", // 数字部分的样式
+        val.toFixed(3),
+        "font-family: monospace; font-weight: bold;",
+        "=".repeat(solidCount),
+        "font-family: monospace; color: gray;",
+        "·".repeat(LENGTH - solidCount),
+        "font-family: monospace; color: gray;", // 分隔符样式
+        "font-family: monospace;", // ID 的样式
+        q.id, // ID 的样式
+      );
+    });
+
+  console.groupEnd();
 
   if (weights.length === 0) {
     const onlyId = state.activePool[0].id;
