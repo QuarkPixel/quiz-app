@@ -21,29 +21,32 @@
 
 ```bash
 # 安装依赖
-npm install
+pnpm install
 
 # Library 模式（默认）开发服务器：空壳应用，在浏览器里导入题库
-npm run dev
+pnpm dev
 
 # Bundled 模式开发：默认使用 banks/questions.example.json
-npm run dev -- --bundled
+pnpm dev -- --bundled
 
 # Bundled 模式开发，自定义题库路径
-npm run dev -- --bundled banks/questions.json
+pnpm dev -- --bundled banks/questions.json
 
 # 构建：Library 模式 → dist/index.html + assets
-npm run build
+pnpm build
 
 # 构建：Bundled 模式 → dist/bundled-<hash>.html
-npm run build -- --bundled
-npm run build -- --bundled path/to/questions.json
+pnpm build -- --bundled
+pnpm build -- --bundled path/to/questions.json
 
 # 预览最近一次构建
-npm run preview
+pnpm preview
+
+# 类型检查（Svelte-aware）
+pnpm check
 ```
 
-> `--bundled` 是 cli wrapper 的 flag，所以走 `npm run` 时要前置 `--` 给 npm 转发：`npm run dev -- --bundled`。
+> `--bundled` 是 cli wrapper 的 flag，所以走 `pnpm` 脚本时仍建议前置 `--` 转发：`pnpm dev -- --bundled`。
 
 ### 两种模式怎么选
 
@@ -62,7 +65,7 @@ npm run preview
 
 ### Bundled 模式
 
-替换 `banks/questions.json`（或用 `--bundled path/to/your.json` 指定别的路径），然后 `npm run build -- --bundled`。
+替换 `banks/questions.json`（或用 `--bundled path/to/your.json` 指定别的路径），然后 `pnpm build -- --bundled`。
 
 ### JSON 格式说明
 
@@ -211,7 +214,7 @@ npm run preview
 2. **索引从 0 开始**：`answer` 中的索引对应 `options` 数组的位置，第一个选项是 0
 3. **JSON 格式要求**：确保 JSON 格式正确，可以使用在线 JSON 校验工具检查
 4. **换行使用 `\n`**：题目内容中如需换行，使用 `\n` 转义字符
-5. **Library 模式**导入后即时生效；**Bundled 模式**需要重新 `npm run build -- --bundled`
+5. **Library 模式**导入后即时生效；**Bundled 模式**需要重新 `pnpm build -- --bundled`
 
 ### 进度重置
 

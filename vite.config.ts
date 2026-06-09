@@ -1,7 +1,6 @@
 import { defineConfig, type Plugin } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { viteSingleFile } from "vite-plugin-singlefile";
-import tailwindcss from "@tailwindcss/vite";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { resolve, isAbsolute } from "node:path";
@@ -13,6 +12,7 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 // ─── 模式判定（由 scripts/cli.js 注入的环境变量决定） ──────────────────────────
 type Mode = "bundled" | "library";
 const isTest = process.env.NODE_ENV === "test";
+const isCheck = process.env.npm_lifecycle_event === "check";
 
 const mode: Mode = process.env.QUIZ_MODE === "bundled" ? "bundled" : "library";
 
@@ -125,6 +125,13 @@ function renameOutput(): Plugin {
   };
 }
 
+async function loadTailwindPlugins(): Promise<Plugin[]> {
+  if (isTest || isCheck) return [];
+
+  const { default: tailwindcss } = await import("@tailwindcss/vite");
+  return tailwindcss();
+}
+
 // ─── alias ───────────────────────────────────────────────────────────────────
 /**
  * `$bundled-bank` 别名：
@@ -160,9 +167,9 @@ const soundSettingsAlias = resolve(
     : "src/components/sound/SoundSettings.library.svelte",
 );
 
-export default defineConfig({
+export default defineConfig(async () => ({
   plugins: [
-    tailwindcss(),
+    ...(await loadTailwindPlugins()),
     svelte(),
     injectFavicon(),
     ...(mode === "bundled"
@@ -206,4 +213,4 @@ export default defineConfig({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     codeSplitting: mode === "bundled" ? false : true,
   } as any,
-});
+}));

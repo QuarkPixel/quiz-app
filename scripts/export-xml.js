@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // scripts/export-xml.js
 // 将 banks/questions.json 导出为 XML 格式
-// 用法: npm run export-xml [output.xml]
+// 用法: pnpm export-xml [output.xml]
 
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';

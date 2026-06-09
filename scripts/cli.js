@@ -21,15 +21,27 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 
+function appendNodeOption(env, option) {
+  if (!process.allowedNodeEnvironmentFlags.has(option)) return;
+
+  const current = env.NODE_OPTIONS?.trim();
+  if (!current) {
+    env.NODE_OPTIONS = option;
+    return;
+  }
+  if (current.split(/\s+/).includes(option)) return;
+  env.NODE_OPTIONS = `${current} ${option}`;
+}
+
 const [, , subcommand, ...rest] = process.argv;
 if (!subcommand || !["dev", "build", "preview"].includes(subcommand)) {
   console.error(`用法: node scripts/cli.js <dev|build|preview> [-- --bundled [path]]`);
   process.exit(1);
 }
 
-// `npm run dev -- --bundled` 会把 `--bundled` 当 npm 的 flag，所以用户实际敲的是
-// `npm run dev -- --bundled`，npm 转发后我们收到 ['--bundled', ...]。如果用户
-// 出于谨慎用了 `npm run dev -- -- --bundled`，第一个 '--' 是 sep，去掉就行。
+// `--bundled` 是这个 wrapper 的 flag；走包管理器脚本时建议用 `--` 显式转发：
+// `pnpm dev -- --bundled`。如果用户
+// 出于谨慎用了 `pnpm dev -- -- --bundled`，第一个 '--' 是 sep，去掉就行。
 const args = rest[0] === "--" ? rest.slice(1) : rest;
 
 const bundledIdx = args.indexOf("--bundled");
@@ -64,6 +76,9 @@ if (isBundled) {
   env.QUIZ_MODE = "library";
   delete env.QUIZ_BUNDLED_PATH;
 }
+// Tailwind 4.3 uses module.register internally. Node 26 warns on that API while
+// Tailwind has not moved to registerHooks yet; suppress only this warning code.
+appendNodeOption(env, "--disable-warning=DEP0205");
 
 const viteArgs = subcommand === "dev" ? [] : [subcommand];
 const viteBin = resolve(projectRoot, "node_modules/.bin/vite");
