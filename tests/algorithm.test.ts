@@ -251,8 +251,8 @@ describe("selectNextFromPool", () => {
   });
 
   it("random 模式：刚选过的题权重接近 0（与上一轮 lastSelectedRound 同步时跳过）", () => {
-    // currentRound=10, length=2, item a lastSelectedRound=10 → x = max(0 - 2/3, 0) = 0 → weight 0
-    // item b lastSelectedRound=-10 → roundsSince = min(20, 4) = 4, x = 4 - 2/3 ≈ 3.33, weight 大
+    // currentRound=10, length=2, item a lastSelectedRound=10 → cooldown 内，weight 0
+    // item b lastSelectedRound=-10 → roundsSince 超过 length，weight 封顶为 1
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const questions = [makeQuestion("a"), makeQuestion("b")];
     const state = makeState({
@@ -266,6 +266,26 @@ describe("selectNextFromPool", () => {
     // 只有 b 有非零权重，无论 random 值多少都选 b
     const next = selectNextFromPool(questions, state);
     expect(next?.id).toBe("b");
+  });
+
+  it("random 模式：权重在 x=m 时封顶，并使用二次曲线压低中段题", () => {
+    // length=3：cooldown=m/3=1，cap=m=3。
+    // b 的 t=(2-1)/(3-1)=0.5，weight=0.25；c 的 weight=1。
+    // b 的累计概率为 0.25/(0.25+1)=0.2，所以 random=0.21 应越过 b 选 c。
+    vi.spyOn(Math, "random").mockReturnValue(0.21);
+    const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
+    const state = makeState({
+      currentRound: 10,
+      activePool: [
+        poolItem("a", { lastSelectedRound: 9 }),
+        poolItem("b", { lastSelectedRound: 8 }),
+        poolItem("c", { lastSelectedRound: 7 }),
+      ],
+      settings: makeSettings({ selectionMode: "random" }),
+    });
+
+    const next = selectNextFromPool(questions, state);
+    expect(next?.id).toBe("c");
   });
 
   it("random 模式跳过 currentQuestionId", () => {

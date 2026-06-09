@@ -6,12 +6,14 @@ import type { Question, RuntimeState, ActivePoolItem, Stats } from "./types";
 import { createActivePoolItem, filterQuestions } from "./store";
 import { LEARNING_COLOR_HIGH, LEARNING_COLOR_LOW } from "./config";
 
-/**
- * 平滑斜坡：x=0 时返回 0，x>>targetX 时趋近 1。
- * 用于把「距离上次选中的轮次」映射到权重。
- */
-function smoothRamp(x: number, targetX: number): number {
-  return 1 - Math.exp((-x * 4) / targetX);
+function selectionWeight(roundsSinceSelected: number, poolSize: number): number {
+  const cooldownRounds = poolSize / 3;
+  const cappedRounds = Math.min(roundsSinceSelected, poolSize);
+  const t = Math.max(
+    0,
+    Math.min(1, (cappedRounds - cooldownRounds) / (poolSize - cooldownRounds)),
+  );
+  return t * t;
 }
 
 /**
@@ -91,13 +93,8 @@ export function selectNextFromPool(
   for (const item of state.activePool) {
     if (item.id === currentQuestionId) continue;
 
-    const roundsSinceSelected = Math.min(
-      state.currentRound - item.lastSelectedRound,
-      length * 2,
-    );
-
-    const x = Math.max(roundsSinceSelected - length / 3, 0);
-    const weight = smoothRamp(x, length / 2);
+    const roundsSinceSelected = state.currentRound - item.lastSelectedRound;
+    const weight = selectionWeight(roundsSinceSelected, length);
 
     weights.push({ id: item.id, weight });
   }
