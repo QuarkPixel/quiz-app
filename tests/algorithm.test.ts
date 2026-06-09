@@ -212,21 +212,25 @@ describe("fillActivePool", () => {
 
 describe("debug console command", () => {
   it("安装浏览器控制台命令并提示开启方式", () => {
-    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
+    setDebugModeEnabled(false);
     delete window.debug;
 
     installDebugConsoleCommands();
 
-    expect(window.debug).toBe(debug);
-    expect(info).toHaveBeenCalledWith(expect.stringContaining("debug(true)"));
+    expect(window.quizDebug).toBe(debug);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("OFF"),
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+    );
 
-    expect(window.debug?.()).toBe(false);
-    expect(window.debug?.(true)).toBe(true);
-    expect(window.debug?.()).toBe(true);
-    expect(window.debug?.(false)).toBe(false);
-    expect(info).toHaveBeenCalledWith("全局调试模式已开启。");
-    expect(info).toHaveBeenCalledWith("全局调试模式已关闭。");
+    expect(window.quizDebug?.()).toBe(false);
+    expect(window.quizDebug?.(true)).toBe(true);
+    expect(window.quizDebug?.()).toBe(true);
+    expect(window.quizDebug?.(false)).toBe(false);
   });
 });
 
@@ -349,7 +353,7 @@ describe("selectNextFromPool", () => {
     expect(next?.id).toBe("c");
   });
 
-  it("random 模式默认不输出权重分布日志", () => {
+  it("random 模式在全局调试关闭时不输出权重分布日志", () => {
     const group = vi
       .spyOn(console, "groupCollapsed")
       .mockImplementation(() => undefined);
@@ -358,6 +362,7 @@ describe("selectNextFromPool", () => {
       .spyOn(console, "groupEnd")
       .mockImplementation(() => undefined);
 
+    setDebugModeEnabled(false);
     vi.spyOn(Math, "random").mockReturnValue(0);
     const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const state = makeState({
