@@ -11,7 +11,6 @@ import type { QuestionTypeLogic } from "../types";
 export const judgmentLogic: QuestionTypeLogic = {
   id: "judgment",
   name: "判断题",
-  exportPrefix: "j",
 
   validate(item, ctx) {
     if (typeof item.answer !== "boolean") {

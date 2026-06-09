@@ -346,7 +346,11 @@ export class QuizSession {
 
   async exportProgress(): Promise<void> {
     if (this.exportStatus !== "idle") return;
-    const result = await copyProgressToClipboard(this.appState, this.hash);
+    const result = await copyProgressToClipboard(
+      this.appState,
+      this.hash,
+      this.questions,
+    );
     if (result.ok) {
       this.exportStatus = "copied";
       setTimeout(
@@ -386,7 +390,7 @@ export class QuizSession {
     if (!this.importConfirmText) return;
     const text = this.importConfirmText;
     this.importConfirmText = null;
-    const parsed = await parseImportedProgress(text, this.hash);
+    const parsed = await parseImportedProgress(text, this.hash, this.questions);
     if (!parsed.ok) {
       this.deps.toast("导入失败", parsed.error, "destructive");
       return;

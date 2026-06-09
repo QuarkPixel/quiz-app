@@ -1,8 +1,47 @@
 import { describe, it, expect } from "vitest";
 import { exportProgress, importProgress } from "../src/features/importExport";
-import type { RuntimeState, StoredState } from "../src/types";
+import type { Question, QuestionType, RuntimeState, StoredState } from "../src/types";
 
 const HASH = "abcdef0123456789";
+
+function makeQuestion(id: string, type: QuestionType = "judgment"): Question {
+  if (type === "single") {
+    return {
+      id,
+      type,
+      question: "?",
+      options: [{ text: "A" }, { text: "B" }],
+      answer: [0],
+    };
+  }
+  if (type === "multiple") {
+    return {
+      id,
+      type,
+      question: "?",
+      options: [{ text: "A" }, { text: "B" }],
+      answer: [0, 1],
+    };
+  }
+  if (type === "blank") {
+    return { id, type, question: "?", answer: "ans" };
+  }
+  return { id, type, question: "?", answer: true };
+}
+
+const QUESTIONS: Question[] = [
+  makeQuestion("single_1", "single"),
+  makeQuestion("blank_2", "blank"),
+  makeQuestion("judgment_3", "judgment"),
+  makeQuestion("hardest", "judgment"),
+  makeQuestion("single_3", "single"),
+  makeQuestion("multiple_12", "multiple"),
+  makeQuestion("judgment_5", "judgment"),
+  makeQuestion("xyz_abc", "judgment"),
+  makeQuestion("single_a3", "single"),
+  makeQuestion("custom_id", "blank"),
+  makeQuestion("^bad", "judgment"),
+];
 
 function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
   return {
@@ -39,14 +78,18 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
   };
 }
 
-/** 给定一个 compact 数组，按照内部编码流程产出一个合法编码串。 */
-async function encodeCompact(compact: unknown, hash: string): Promise<string> {
-  const json = JSON.stringify(compact);
-  const bytes = new TextEncoder().encode(json);
+async function encodePayload(payload: unknown, hash = HASH): Promise<string> {
+  const json = JSON.stringify(payload);
+  return encodeRawText(json, hash);
+}
+
+async function encodeRawText(text: string, hash = HASH): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
   const cs = new CompressionStream("deflate-raw");
   const writer = cs.writable.getWriter();
   writer.write(bytes);
   writer.close();
+
   const chunks: Uint8Array[] = [];
   const reader = cs.readable.getReader();
   while (true) {
@@ -54,6 +97,7 @@ async function encodeCompact(compact: unknown, hash: string): Promise<string> {
     if (done) break;
     chunks.push(value);
   }
+
   const total = chunks.reduce((n, c) => n + c.length, 0);
   const compressed = new Uint8Array(total);
   let off = 0;
@@ -61,6 +105,7 @@ async function encodeCompact(compact: unknown, hash: string): Promise<string> {
     compressed.set(c, off);
     off += c.length;
   }
+
   let binary = "";
   for (let i = 0; i < compressed.length; i++) {
     binary += String.fromCharCode(compressed[i]);
@@ -72,18 +117,74 @@ async function encodeCompact(compact: unknown, hash: string): Promise<string> {
   return `${hash}.${b64url}`;
 }
 
+async function decodePayload(encoded: string): Promise<unknown> {
+  const body = encoded.slice(encoded.indexOf(".") + 1);
+  const padded = body.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = (4 - (padded.length % 4)) % 4;
+  const binary = atob(padded + "=".repeat(pad));
+  const compressed = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    compressed[i] = binary.charCodeAt(i);
+  }
+
+  const ds = new DecompressionStream("deflate-raw");
+  const writer = ds.writable.getWriter();
+  writer.write(compressed);
+  writer.close();
+
+  const chunks: Uint8Array[] = [];
+  const reader = ds.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const bytes = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    bytes.set(c, off);
+    off += c.length;
+  }
+
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function compact(overrides: Partial<{
+  version: unknown;
+  questionCount: unknown;
+  masteredBitmap: unknown;
+  activePool: unknown;
+  currentRound: unknown;
+  filterCode: unknown;
+  settings: unknown;
+  ui: unknown;
+}> = {}): unknown[] {
+  return [
+    overrides.version ?? 3,
+    overrides.questionCount ?? QUESTIONS.length,
+    overrides.masteredBitmap ?? "0",
+    overrides.activePool ?? [],
+    overrides.currentRound ?? 0,
+    overrides.filterCode ?? 0,
+    overrides.settings ?? [0, 10, 3, 4, "random"],
+    overrides.ui ?? [0, 0],
+  ];
+}
+
 describe("exportProgress / importProgress round-trip", () => {
   it("完整 state round-trip 恢复 StoredState 字段", async () => {
     const state = makeState();
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
 
     expect(restored.masteredIds).toEqual(state.masteredIds);
     expect(restored.activePool).toEqual(state.activePool);
     expect(restored.currentRound).toBe(state.currentRound);
     expect(restored.filterType).toBe(state.filterType);
     expect(restored.settings).toEqual(state.settings);
-    // pendingIds 不应出现在导入结果里
+    expect(restored.ui).toEqual(state.ui);
     expect((restored as RuntimeState).pendingIds).toBeUndefined();
   });
 
@@ -102,69 +203,55 @@ describe("exportProgress / importProgress round-trip", () => {
       },
       ui: { progressFocused: false, showPool: false },
     };
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
     expect(restored).toEqual(state);
   });
 
   it("导出格式：{hash}.{base64url}", async () => {
-    const encoded = await exportProgress(makeState(), HASH);
+    const encoded = await exportProgress(makeState(), HASH, QUESTIONS);
     expect(encoded.startsWith(`${HASH}.`)).toBe(true);
     const body = encoded.slice(HASH.length + 1);
-    // base64url 字符集：A-Z a-z 0-9 - _
     expect(body).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 });
 
-describe("id 编码：各题型前缀", () => {
-  it("single_3 / multiple_12 / judgment_5 / blank_2 round-trip", async () => {
-    const state = makeState({
-      masteredIds: ["single_3", "multiple_12", "judgment_5", "blank_2"],
-      activePool: [],
-    });
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
-    expect(restored.masteredIds).toEqual([
-      "single_3",
-      "multiple_12",
-      "judgment_5",
-      "blank_2",
+describe("bitmap / index 编码", () => {
+  it("已掌握题目用 bitmap hex，活动池题目用题库 index", async () => {
+    const encoded = await exportProgress(makeState(), HASH, QUESTIONS);
+    const payload = await decodePayload(encoded);
+
+    expect(payload).toEqual([
+      3,
+      QUESTIONS.length,
+      "3",
+      [
+        [2, 1, 0, 5],
+        [3, 2, 1, 7],
+      ],
+      8,
+      1,
+      [1, 20, 3, 5, "sequential"],
+      [0, 0],
     ]);
+    expect(JSON.stringify(payload)).not.toContain("single_1");
+    expect(JSON.stringify(payload)).not.toContain("judgment_3");
   });
 
-  it("不含下划线的自定义 id 走 ^ 路径", async () => {
+  it("活动池题目即使出现在 masteredIds 中，导出 bitmap 时也按 0 处理", async () => {
     const state = makeState({
-      masteredIds: ["hardest"],
-      activePool: [],
+      masteredIds: ["single_1", "judgment_3"],
     });
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
-    expect(restored.masteredIds).toEqual(["hardest"]);
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.masteredIds).toEqual(["single_1"]);
+    expect(restored.activePool[0].id).toBe("judgment_3");
   });
 
-  it("含下划线但 type 非已知前缀的自定义 id 走 ^ 路径", async () => {
+  it("自定义 id 和 ^ 开头 id 不需要保留字路径", async () => {
     const state = makeState({
-      masteredIds: ["xyz_abc"],
-      activePool: [],
-    });
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
-    expect(restored.masteredIds).toEqual(["xyz_abc"]);
-  });
-
-  it("已知前缀但数字部分非纯数字的 id 走 ^ 路径", async () => {
-    const state = makeState({
-      masteredIds: ["single_a3"],
-      activePool: [],
-    });
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
-    expect(restored.masteredIds).toEqual(["single_a3"]);
-  });
-
-  it("activePool 中的自定义 id 也能 round-trip", async () => {
-    const state = makeState({
-      masteredIds: [],
+      masteredIds: ["xyz_abc", "single_a3", "^bad"],
       activePool: [
         {
           id: "custom_id",
@@ -174,13 +261,39 @@ describe("id 编码：各题型前缀", () => {
         },
       ],
     });
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.masteredIds).toEqual(["xyz_abc", "single_a3", "^bad"]);
     expect(restored.activePool[0].id).toBe("custom_id");
+  });
+
+  it("masteredIds 按题库顺序恢复", async () => {
+    const state = makeState({
+      masteredIds: ["judgment_5", "blank_2", "single_3"],
+      activePool: [],
+    });
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.masteredIds).toEqual(["blank_2", "single_3", "judgment_5"]);
+  });
+
+  it("导出时遇到题库外 id 会抛错", async () => {
+    await expect(
+      exportProgress(
+        makeState({
+          masteredIds: ["missing_id"],
+          activePool: [],
+        }),
+        HASH,
+        QUESTIONS,
+      ),
+    ).rejects.toThrow(/题库中不存在/);
   });
 });
 
-describe("filterType code round-trip", () => {
+describe("filterType / settings / ui round-trip", () => {
   const cases: Array<StoredState["filterType"]> = [
     "all",
     "single",
@@ -191,14 +304,12 @@ describe("filterType code round-trip", () => {
   for (const ft of cases) {
     it(`filterType=${ft}`, async () => {
       const state = makeState({ filterType: ft, masteredIds: [], activePool: [] });
-      const encoded = await exportProgress(state, HASH);
-      const restored = await importProgress(encoded, HASH);
+      const encoded = await exportProgress(state, HASH, QUESTIONS);
+      const restored = await importProgress(encoded, HASH, QUESTIONS);
       expect(restored.filterType).toBe(ft);
     });
   }
-});
 
-describe("settings round-trip", () => {
   it("selectionMode=random / autoNextOnCorrect=false", async () => {
     const state = makeState({
       settings: {
@@ -209,178 +320,147 @@ describe("settings round-trip", () => {
         selectionMode: "random",
       },
     });
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
     expect(restored.settings).toEqual(state.settings);
+  });
+
+  it("ui 段 round-trip：progressFocused=true, showPool=true", async () => {
+    const state = makeState({
+      ui: { progressFocused: true, showPool: true },
+    });
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+    expect(restored.ui).toEqual({ progressFocused: true, showPool: true });
   });
 });
 
 describe("importProgress 错误处理", () => {
   it("hash 不匹配抛错", async () => {
-    const encoded = await exportProgress(makeState(), HASH);
-    await expect(importProgress(encoded, "differenthash0000")).rejects.toThrow(
+    const encoded = await exportProgress(makeState(), HASH, QUESTIONS);
+    await expect(importProgress(encoded, "differenthash0000", QUESTIONS)).rejects.toThrow(
       /题库版本不匹配/,
     );
   });
 
   it("无分隔符抛 '找不到版本分隔符'", async () => {
-    await expect(importProgress("noseparator", HASH)).rejects.toThrow(
+    await expect(importProgress("noseparator", HASH, QUESTIONS)).rejects.toThrow(
       /找不到版本分隔符/,
     );
   });
 
-  it("hash 对但 base64 非法字符 → 解压失败（atob 容忍部分非法字符）", async () => {
-    // atob 对某些非法字符会抛、某些会跳过；这里用一个能解码但解压必败的 payload
-    await expect(importProgress(`${HASH}.!!!!`, HASH)).rejects.toThrow(
+  it("hash 对但 base64 非法字符 → 解压失败或 Base64 失败", async () => {
+    await expect(importProgress(`${HASH}.!!!!`, HASH, QUESTIONS)).rejects.toThrow(
       /解压失败|Base64 解码失败/,
     );
   });
 
   it("hash 对但解压后 JSON 非法 → 数据解析失败", async () => {
-    // 构造一个 deflate-raw 压缩的非 JSON 字符串
-    const bytes = new TextEncoder().encode("not a json {{{");
-    const cs = new CompressionStream("deflate-raw");
-    const w = cs.writable.getWriter();
-    w.write(bytes);
-    w.close();
-    const chunks: Uint8Array[] = [];
-    const reader = cs.readable.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
-    const total = chunks.reduce((n, c) => n + c.length, 0);
-    const compressed = new Uint8Array(total);
-    let off = 0;
-    for (const c of chunks) {
-      compressed.set(c, off);
-      off += c.length;
-    }
-    let binary = "";
-    for (let i = 0; i < compressed.length; i++) {
-      binary += String.fromCharCode(compressed[i]);
-    }
-    const b64url = btoa(binary)
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=/g, "");
-    await expect(importProgress(`${HASH}.${b64url}`, HASH)).rejects.toThrow(
+    const encoded = await encodeRawText("not a json {{{");
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /数据解析失败/,
     );
   });
 
   it("compact 不是数组 → 结构不符合预期", async () => {
-    const encoded = await encodeCompact({ not: "an array" }, HASH);
-    await expect(importProgress(encoded, HASH)).rejects.toThrow(/结构不符合预期/);
-  });
-
-  it("compact 长度 < 5 → 结构不符合预期", async () => {
-    const encoded = await encodeCompact([[], [], 0, 0], HASH);
-    await expect(importProgress(encoded, HASH)).rejects.toThrow(/结构不符合预期/);
-  });
-
-  it("masteredRaw 不是数组 → 已掌握列表格式错误", async () => {
-    const encoded = await encodeCompact(
-      ["nope", [], 0, 0, [0, 10, 3, 4, "random"]],
-      HASH,
+    const encoded = await encodePayload({ not: "an array" });
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /结构不符合预期/,
     );
-    await expect(importProgress(encoded, HASH)).rejects.toThrow(
-      /已掌握列表格式错误/,
+  });
+
+  it("compact 长度不等于 8 → 结构不符合预期", async () => {
+    const encoded = await encodePayload([3, QUESTIONS.length, "0"]);
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /结构不符合预期/,
+    );
+  });
+
+  it("version 不支持 → 进度格式版本不支持", async () => {
+    const encoded = await encodePayload(compact({ version: 2 }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /进度格式版本不支持/,
+    );
+  });
+
+  it("题目数量不匹配 → 题目数量不匹配", async () => {
+    const encoded = await encodePayload(compact({ questionCount: QUESTIONS.length + 1 }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /题目数量不匹配/,
+    );
+  });
+
+  it("masteredBitmap 不是 hex 字符串 → 已掌握位图格式错误", async () => {
+    const encoded = await encodePayload(compact({ masteredBitmap: "not-hex" }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /已掌握位图格式错误/,
+    );
+  });
+
+  it("masteredBitmap 含题库外 bit → 已掌握位图索引越界", async () => {
+    const encoded = await encodePayload(
+      compact({ questionCount: 2, masteredBitmap: "4" }),
+    );
+    await expect(importProgress(encoded, HASH, QUESTIONS.slice(0, 2))).rejects.toThrow(
+      /已掌握位图索引越界/,
     );
   });
 
   it("activeRaw 不是数组 → 活动池格式错误", async () => {
-    const encoded = await encodeCompact(
-      [[], "nope", 0, 0, [0, 10, 3, 4, "random"]],
-      HASH,
+    const encoded = await encodePayload(compact({ activePool: "nope" }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /活动池格式错误/,
     );
-    await expect(importProgress(encoded, HASH)).rejects.toThrow(/活动池格式错误/);
-  });
-
-  it("settings 不是数组或长度 < 4 → 设置格式错误", async () => {
-    const encoded1 = await encodeCompact([[], [], 0, 0, "nope"], HASH);
-    await expect(importProgress(encoded1, HASH)).rejects.toThrow(/设置格式错误/);
-
-    const encoded2 = await encodeCompact([[], [], 0, 0, [1, 10, 3]], HASH);
-    await expect(importProgress(encoded2, HASH)).rejects.toThrow(/设置格式错误/);
   });
 
   it("activePool 子项不是 4 元数组 → 活动池条目格式错误", async () => {
-    const encoded = await encodeCompact(
-      [[], [["s3", 1, 0]], 0, 0, [0, 10, 3, 4, "random"]],
-      HASH,
-    );
-    await expect(importProgress(encoded, HASH)).rejects.toThrow(
+    const encoded = await encodePayload(compact({ activePool: [[2, 1, 0]] }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /活动池条目格式错误/,
     );
   });
 
   it("activePool 子项不是数组 → 活动池条目格式错误", async () => {
-    const encoded = await encodeCompact(
-      [[], [{}], 0, 0, [0, 10, 3, 4, "random"]],
-      HASH,
-    );
-    await expect(importProgress(encoded, HASH)).rejects.toThrow(
+    const encoded = await encodePayload(compact({ activePool: [{}] }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /活动池条目格式错误/,
     );
   });
 
+  it("activePool 题目索引越界 → 活动池题目索引错误", async () => {
+    const encoded = await encodePayload(compact({ activePool: [[99, 1, 0, 1]] }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /活动池题目索引错误/,
+    );
+  });
+
+  it("settings 不是数组或长度 < 5 → 设置格式错误", async () => {
+    const encoded1 = await encodePayload(compact({ settings: "nope" }));
+    await expect(importProgress(encoded1, HASH, QUESTIONS)).rejects.toThrow(
+      /设置格式错误/,
+    );
+
+    const encoded2 = await encodePayload(compact({ settings: [1, 10, 3, 4] }));
+    await expect(importProgress(encoded2, HASH, QUESTIONS)).rejects.toThrow(
+      /设置格式错误/,
+    );
+  });
+
+  it("ui 不是数组或长度 < 2 → UI 偏好格式错误", async () => {
+    const encoded1 = await encodePayload(compact({ ui: "nope" }));
+    await expect(importProgress(encoded1, HASH, QUESTIONS)).rejects.toThrow(
+      /UI 偏好格式错误/,
+    );
+
+    const encoded2 = await encodePayload(compact({ ui: [1] }));
+    await expect(importProgress(encoded2, HASH, QUESTIONS)).rejects.toThrow(
+      /UI 偏好格式错误/,
+    );
+  });
+
   it("filterCode 越界 → 回退为 all", async () => {
-    const encoded = await encodeCompact(
-      [[], [], 0, 99, [0, 10, 3, 4, "random"]],
-      HASH,
-    );
-    const restored = await importProgress(encoded, HASH);
+    const encoded = await encodePayload(compact({ filterCode: 99 }));
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
     expect(restored.filterType).toBe("all");
-  });
-
-  it("settings 长度恰为 4（无 selectionMode）→ 默认 random", async () => {
-    const encoded = await encodeCompact([[], [], 0, 0, [1, 10, 3, 4]], HASH);
-    const restored = await importProgress(encoded, HASH);
-    expect(restored.settings.selectionMode).toBe("random");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 向后兼容：v1 格式（无 ui 段，compact.length === 5）
-// ---------------------------------------------------------------------------
-
-describe("向后兼容：v1 没有 ui 段 / v2 ui 段长度演化", () => {
-  it("v1 格式（compact 长度 5）→ ui 字段全为默认值", async () => {
-    const v1Encoded = await encodeCompact(
-      [[], [], 0, 0, [0, 25, 3, 4, "random"]],
-      HASH,
-    );
-    const restored = await importProgress(v1Encoded, HASH);
-    expect(restored.ui).toEqual({ progressFocused: false, showPool: false });
-  });
-
-  it("v2 早期格式（ui 段仅 progressFocused）→ showPool 默认 false", async () => {
-    // 老 v2 段只有 [progressFocused]，没有 showPool
-    const earlyV2Encoded = await encodeCompact(
-      [[], [], 0, 0, [0, 25, 3, 4, "random"], [1]],
-      HASH,
-    );
-    const restored = await importProgress(earlyV2Encoded, HASH);
-    expect(restored.ui).toEqual({ progressFocused: true, showPool: false });
-  });
-
-  it("v2 完整 ui 段 round-trip：progressFocused=true, showPool=true", async () => {
-    const v2Encoded = await encodeCompact(
-      [[], [], 0, 0, [0, 25, 3, 4, "random"], [1, 1]],
-      HASH,
-    );
-    const restored = await importProgress(v2Encoded, HASH);
-    expect(restored.ui).toEqual({ progressFocused: true, showPool: true });
-  });
-
-  it("exportProgress 输出包含完整 ui 段（progressFocused + showPool）", async () => {
-    const state = makeState({
-      ui: { progressFocused: true, showPool: true },
-    });
-    const encoded = await exportProgress(state, HASH);
-    const restored = await importProgress(encoded, HASH);
-    expect(restored.ui).toEqual({ progressFocused: true, showPool: true });
   });
 });

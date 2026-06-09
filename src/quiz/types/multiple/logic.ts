@@ -8,7 +8,6 @@ import { choiceLetters, formatChoiceAnswerText, validateChoiceQuestion } from ".
 export const multipleLogic: QuestionTypeLogic = {
   id: "multiple",
   name: "多选题",
-  exportPrefix: "m",
 
   validate(item, ctx) {
     return validateChoiceQuestion(item, ctx, /* isSingle */ false);

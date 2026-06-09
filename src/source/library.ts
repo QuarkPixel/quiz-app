@@ -195,7 +195,7 @@ export class LibrarySource implements QuizSource {
     let stateError: string | undefined;
     if (stateStr !== null) {
       try {
-        const decoded = await importProgress(stateStr, hash);
+        const decoded = await importProgress(stateStr, hash, validation.questions);
         try {
           localStorage.setItem(stateKey(hash), JSON.stringify(decoded));
         } catch (e) {
@@ -219,9 +219,21 @@ export class LibrarySource implements QuizSource {
     if (!this.index.some((b) => b.hash === hash)) {
       return { ok: false, error: "题库不存在" };
     }
+    let questions = this.questionsCache.get(hash);
+    if (!questions) {
+      const rawQuestions = localStorage.getItem(questionsKey(hash));
+      if (!rawQuestions) return { ok: false, error: "题库不存在" };
+      try {
+        questions = JSON.parse(rawQuestions) as Question[];
+      } catch {
+        return { ok: false, error: "题库解析失败" };
+      }
+      this.questionsCache.set(hash, questions);
+    }
+
     let decoded;
     try {
-      decoded = await importProgress(stateStr, hash);
+      decoded = await importProgress(stateStr, hash, questions);
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : "解码失败" };
     }
@@ -253,7 +265,7 @@ export class LibrarySource implements QuizSource {
 
     // 库里存的就是 canonical 形式，bank.hash 就是 canonical hash，直接用即可。
     const storedState = loadStoredState(hash);
-    const stateEncoded = await exportProgress(storedState, hash);
+    const stateEncoded = await exportProgress(storedState, hash, parsedQuestions);
 
     const mastered = storedState.masteredIds.length;
     const total = parsedQuestions.length;

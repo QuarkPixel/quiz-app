@@ -3,10 +3,9 @@ import { judgmentType } from "../../src/quiz/types/judgment";
 import type { Question } from "../../src/types";
 
 describe("judgmentType 元信息", () => {
-  it("id / name / exportPrefix 正确", () => {
+  it("id / name 正确", () => {
     expect(judgmentType.id).toBe("judgment");
     expect(judgmentType.name).toBe("判断题");
-    expect(judgmentType.exportPrefix).toBe("j");
   });
 });
 

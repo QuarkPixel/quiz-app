@@ -78,10 +78,6 @@ export interface QuestionTypeLogic {
   /** 中文显示名 */
   name: string;
 
-  /** 用于进度 import/export 的紧凑前缀，单字母（s/m/j/b）。
-   *  改动该值会破坏现有进度字符串的向后兼容，谨慎对待。 */
-  exportPrefix: string;
-
   /**
    * 校验题目的 type-specific 字段（answer、options 等）。
    * 不需要校验 id、type、question 本身——那些在 validateQuestions.ts 通用层做。

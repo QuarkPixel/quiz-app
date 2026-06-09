@@ -16,8 +16,6 @@ const VALID_TYPES = new Set<QuestionType>(QUESTION_TYPE_ORDER);
  * 同时被两处复用：
  *   1. vite.config.ts 的 validateQuestionIds plugin（bundled 构建时）
  *   2. LibrarySource.importBank（library 模式运行时）
- *
- * '^' 是进度编码（importExport.ts）的保留前缀，所有 id 不得以其开头。
  */
 export function validateQuestions(raw: unknown): ValidateResult {
   const errors: string[] = [];
@@ -44,9 +42,6 @@ export function validateQuestions(raw: unknown): ValidateResult {
     if (typeof id !== "string" || id.length === 0) {
       errors.push(`${label}：缺少 id 或 id 不是字符串。`);
       continue;
-    }
-    if (id.startsWith("^")) {
-      errors.push(`${label}（id=${id}）：id 不可以以保留字符 '^' 开头。`);
     }
     if (seenIds.has(id)) {
       errors.push(`${label}（id=${id}）：id 重复。`);

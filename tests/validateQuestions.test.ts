@@ -128,16 +128,11 @@ describe("validateQuestions id 校验", () => {
     }
   });
 
-  it("id 以 ^ 开头", () => {
+  it("id 允许以 ^ 开头", () => {
     const r = validateQuestions([
       { id: "^bad", type: "judgment", question: "q", answer: true },
     ]);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(
-        r.errors.some((e) => e.includes("不可以以保留字符 '^' 开头")),
-      ).toBe(true);
-    }
+    expect(r.ok).toBe(true);
   });
 });
 

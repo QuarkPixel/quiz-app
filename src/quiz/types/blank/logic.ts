@@ -8,7 +8,6 @@ import type { QuestionTypeLogic } from "../types";
 export const blankLogic: QuestionTypeLogic = {
   id: "blank",
   name: "填空题",
-  exportPrefix: "b",
 
   validate(item, ctx) {
     const answer = item.answer;

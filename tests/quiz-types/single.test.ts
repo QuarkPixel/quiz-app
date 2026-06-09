@@ -4,10 +4,9 @@ import type { Question } from "../../src/types";
 import type { ShuffledOption } from "../../src/quiz/types/types";
 
 describe("singleType 元信息", () => {
-  it("id / name / exportPrefix 正确", () => {
+  it("id / name 正确", () => {
     expect(singleType.id).toBe("single");
     expect(singleType.name).toBe("单选题");
-    expect(singleType.exportPrefix).toBe("s");
   });
 });
 

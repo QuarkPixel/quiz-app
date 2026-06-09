@@ -4,10 +4,9 @@ import type { Question } from "../../src/types";
 import type { ShuffledOption } from "../../src/quiz/types/types";
 
 describe("multipleType 元信息", () => {
-  it("id / name / exportPrefix 正确", () => {
+  it("id / name 正确", () => {
     expect(multipleType.id).toBe("multiple");
     expect(multipleType.name).toBe("多选题");
-    expect(multipleType.exportPrefix).toBe("m");
   });
 });
 

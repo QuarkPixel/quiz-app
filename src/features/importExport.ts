@@ -2,79 +2,34 @@
  * 进度导入/导出功能模块
  *
  * 编码流程（导出）：
- *   StoredState → 紧凑数组格式 → JSON → deflate-raw 压缩 → Base64url
+ *   StoredState + 当前题库 → 紧凑数组格式 → JSON → deflate-raw 压缩 → Base64url
  *
  * 最终格式：{16字符hash}.{Base64url压缩数据}
  *
  * 紧凑格式说明：
- *   [masteredIds[], activePool[][], currentRound, filterTypeCode, settings[]]
+ *   [version, questionCount, masteredBitmapHex, activePool[][], currentRound, filterTypeCode, settings[], ui[]]
  *
- *   - id 编码：'single_3' → 's3', 'multiple_12' → 'm12',
- *              'judgment_5' → 'j5', 'blank_2' → 'b2'
- *   - 若 id 不符合上述规则（自定义 id），编码时在前面加 '^' 前缀原样存储，
- *     例如 'hardest' → '^hardest'，'b11' → '^b11'（避免与 'blank_11' 编码后的 'b11' 混淆）
- *   - '^' 是保留字符，题目 id 不可以以 '^' 开头
- *   - activePool 每项：[encodedId, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound]
+ *   - 题目 id 按当前题库顺序映射为 index
+ *   - masteredBitmapHex：BitSet 的十六进制字符串，bit=1 表示已掌握；
+ *     活动池中的题目即使同时出现在 masteredIds 里也按 bit=0 导出
+ *   - activePool 每项：[questionIndex, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound]
  *   - filterTypeCode：all=0, single=1, multiple=2, judgment=3, blank=4
  *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode]
  */
 
-import type { StoredState, ActivePoolItem, QuestionType, UserSettings, UiPreferences } from "../types";
-import { listQuestionTypesLogic } from "../quiz/types/registry-logic";
-
-// ── ID 编解码 ─────────────────────────────────────────────────────────────────
-
-const TYPE_TO_PREFIX: Record<string, string> = Object.fromEntries(
-  listQuestionTypesLogic().map((t) => [t.id, t.exportPrefix]),
-);
-
-const PREFIX_TO_TYPE: Record<string, QuestionType> = Object.fromEntries(
-  listQuestionTypesLogic().map((t) => [t.exportPrefix, t.id]),
-);
-
-/**
- * 编码规则：
- *   - 已知类型（single/multiple/judgment/blank）且数字部分为纯数字：压缩为单字母前缀
- *     e.g. 'single_3' → 's3'
- *   - 其他所有情况（自定义 id、未知类型等）：原样存储并加 '^' 前缀
- *     e.g. 'hardest' → '^hardest'，'b11' → '^b11'
- */
-function encodeId(id: string): string {
-  const underscore = id.indexOf("_");
-  if (underscore !== -1) {
-    const type = id.slice(0, underscore);
-    const num = id.slice(underscore + 1);
-    const prefix = TYPE_TO_PREFIX[type];
-    // 只有已知类型且数字部分为纯数字时才压缩，避免解码歧义
-    if (prefix !== undefined && /^\d+$/.test(num)) {
-      return prefix + num;
-    }
-  }
-  // 其余情况：原样保留，加 '^' 标记
-  return "^" + id;
-}
-
-/**
- * 解码规则：
- *   - '^' 开头：去掉前缀，原样还原
- *   - 已知单字母前缀 + 纯数字：还原为 type_num 格式
- *   - 其他（理论上不会出现）：原样返回
- */
-function decodeId(encoded: string): string {
-  if (encoded[0] === "^") {
-    return encoded.slice(1);
-  }
-  const prefix = encoded[0];
-  const rest = encoded.slice(1);
-  const type = PREFIX_TO_TYPE[prefix];
-  if (type !== undefined && /^\d+$/.test(rest)) {
-    return type + "_" + rest;
-  }
-  // 兜底：原样返回（不应走到这里）
-  return encoded;
-}
+import BitSet from "bitset";
+import type {
+  ActivePoolItem,
+  Question,
+  QuestionType,
+  StoredState,
+  UiPreferences,
+  UserSettings,
+} from "../types";
 
 // ── filterType 编解码 ──────────────────────────────────────────────────────────
+
+const FORMAT_VERSION = 3;
 
 const FILTER_TO_CODE: Record<string, number> = {
   all: 0,
@@ -91,6 +46,116 @@ const CODE_TO_FILTER: Array<QuestionType | "all"> = [
   "judgment",
   "blank",
 ];
+
+// ── 题目索引 / bitmap 编解码 ───────────────────────────────────────────────────
+
+interface QuestionIndex {
+  ids: string[];
+  idToIndex: Map<string, number>;
+}
+
+function buildQuestionIndex(questions: readonly Question[]): QuestionIndex {
+  const ids = questions.map((q) => q.id);
+  const idToIndex = new Map<string, number>();
+
+  ids.forEach((id, index) => {
+    if (idToIndex.has(id)) {
+      throw new Error(`题库结构无效：题目 id 重复：${id}`);
+    }
+    idToIndex.set(id, index);
+  });
+
+  return { ids, idToIndex };
+}
+
+function requireQuestionIndex(id: string, idToIndex: Map<string, number>): number {
+  const index = idToIndex.get(id);
+  if (index === undefined) {
+    throw new Error(`导出失败：进度包含题库中不存在的题目 id：${id}`);
+  }
+  return index;
+}
+
+function encodeMasteredBitmap(
+  state: StoredState,
+  idToIndex: Map<string, number>,
+): string {
+  const activeIds = new Set(state.activePool.map((item) => item.id));
+  const bitmap = new BitSet();
+
+  for (const id of state.masteredIds) {
+    if (activeIds.has(id)) continue;
+    bitmap.set(requireQuestionIndex(id, idToIndex), 1);
+  }
+
+  return bitmap.toString(16);
+}
+
+function decodeMasteredBitmap(
+  raw: unknown,
+  questionIds: readonly string[],
+): string[] {
+  if (typeof raw !== "string" || !/^[0-9a-f]+$/i.test(raw)) {
+    throw new Error("数据格式无效：已掌握位图格式错误。");
+  }
+
+  const bitmap = BitSet.fromHexString(raw);
+  const indexes = bitmap.toArray();
+
+  for (const index of indexes) {
+    if (!Number.isInteger(index) || index < 0 || index >= questionIds.length) {
+      throw new Error("数据格式无效：已掌握位图索引越界。");
+    }
+  }
+
+  return indexes.map((index) => questionIds[index]);
+}
+
+function encodeActivePool(
+  activePool: readonly ActivePoolItem[],
+  idToIndex: Map<string, number>,
+): unknown[][] {
+  return activePool.map((item) => [
+    requireQuestionIndex(item.id, idToIndex),
+    item.consecutiveCorrect,
+    item.hasEverMistaken ? 1 : 0,
+    item.lastSelectedRound,
+  ]);
+}
+
+function decodeActivePool(
+  raw: unknown,
+  questionIds: readonly string[],
+): ActivePoolItem[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("数据格式无效：活动池格式错误。");
+  }
+
+  return raw.map((item) => {
+    if (!Array.isArray(item) || item.length < 4) {
+      throw new Error("数据格式无效：活动池条目格式错误。");
+    }
+
+    const [questionIndex, consecutiveCorrect, hasEverMistaken, lastSelectedRound] =
+      item;
+
+    if (
+      typeof questionIndex !== "number" ||
+      !Number.isInteger(questionIndex) ||
+      questionIndex < 0 ||
+      questionIndex >= questionIds.length
+    ) {
+      throw new Error("数据格式无效：活动池题目索引错误。");
+    }
+
+    return {
+      id: questionIds[questionIndex],
+      consecutiveCorrect: consecutiveCorrect as number,
+      hasEverMistaken: hasEverMistaken === 1,
+      lastSelectedRound: lastSelectedRound as number,
+    };
+  });
+}
 
 // ── deflate-raw 压缩/解压（Web Streams API） ───────────────────────────────────
 
@@ -171,17 +236,19 @@ function fromBase64url(str: string): Uint8Array {
  * 将学习进度导出为紧凑编码字符串（异步，因为压缩是异步的）
  * 返回格式：{16字符hash}.{Base64url压缩数据}
  */
-export async function exportProgress(state: StoredState, hash: string): Promise<string> {
+export async function exportProgress(
+  state: StoredState,
+  hash: string,
+  questions: readonly Question[],
+): Promise<string> {
+  const { ids, idToIndex } = buildQuestionIndex(questions);
   const filterCode = FILTER_TO_CODE[state.filterType] ?? 0;
 
   const compact: unknown[] = [
-    state.masteredIds.map(encodeId),
-    state.activePool.map((item: ActivePoolItem) => [
-      encodeId(item.id),
-      item.consecutiveCorrect,
-      item.hasEverMistaken ? 1 : 0,
-      item.lastSelectedRound,
-    ]),
+    FORMAT_VERSION,
+    ids.length,
+    encodeMasteredBitmap(state, idToIndex),
+    encodeActivePool(state.activePool, idToIndex),
     state.currentRound,
     filterCode,
     [
@@ -191,7 +258,6 @@ export async function exportProgress(state: StoredState, hash: string): Promise<
       state.settings.correctStreakAfterMistake,
       state.settings.selectionMode,
     ],
-    // 第 6 段（v2 新增）：UI 偏好。老版本导入时缺省段，按默认值处理。
     [
       state.ui.progressFocused ? 1 : 0,
       state.ui.showPool ? 1 : 0,
@@ -210,7 +276,12 @@ export async function exportProgress(state: StoredState, hash: string): Promise<
  * 从编码字符串导入学习进度（异步）
  * 成功返回 StoredState，失败抛出 Error（message 为中文，可直接展示给用户）
  */
-export async function importProgress(encoded: string, hash: string): Promise<StoredState> {
+export async function importProgress(
+  encoded: string,
+  hash: string,
+  questions: readonly Question[],
+): Promise<StoredState> {
+  const { ids } = buildQuestionIndex(questions);
   const dotIndex = encoded.indexOf(".");
   if (dotIndex === -1) {
     throw new Error("格式无效：找不到版本分隔符，请检查导入内容是否完整。");
@@ -252,37 +323,37 @@ export async function importProgress(encoded: string, hash: string): Promise<Sto
   }
 
   // 结构校验
-  if (!Array.isArray(compact) || compact.length < 5) {
+  if (!Array.isArray(compact) || compact.length !== 8) {
     throw new Error("数据格式无效：结构不符合预期。");
   }
 
-  const [masteredRaw, activeRaw, currentRound, filterCode, settingsRaw, uiRaw] =
-    compact as unknown[];
+  const [
+    version,
+    questionCount,
+    masteredBitmapRaw,
+    activeRaw,
+    currentRound,
+    filterCode,
+    settingsRaw,
+    uiRaw,
+  ] = compact as unknown[];
 
-  if (!Array.isArray(masteredRaw)) {
-    throw new Error("数据格式无效：已掌握列表格式错误。");
+  if (version !== FORMAT_VERSION) {
+    throw new Error("数据格式无效：进度格式版本不支持。");
   }
-  if (!Array.isArray(activeRaw)) {
-    throw new Error("数据格式无效：活动池格式错误。");
+  if (questionCount !== ids.length) {
+    throw new Error("数据格式无效：题目数量不匹配。");
   }
-  if (!Array.isArray(settingsRaw) || settingsRaw.length < 4) {
+  if (!Array.isArray(settingsRaw) || settingsRaw.length < 5) {
     throw new Error("数据格式无效：设置格式错误。");
+  }
+  if (!Array.isArray(uiRaw) || uiRaw.length < 2) {
+    throw new Error("数据格式无效：UI 偏好格式错误。");
   }
 
   // 还原数据
-  const masteredIds: string[] = (masteredRaw as string[]).map(decodeId);
-
-  const activePool: ActivePoolItem[] = (activeRaw as unknown[][]).map((item) => {
-    if (!Array.isArray(item) || item.length < 4) {
-      throw new Error("数据格式无效：活动池条目格式错误。");
-    }
-    return {
-      id: decodeId(item[0] as string),
-      consecutiveCorrect: item[1] as number,
-      hasEverMistaken: item[2] === 1,
-      lastSelectedRound: item[3] as number,
-    };
-  });
+  const masteredIds = decodeMasteredBitmap(masteredBitmapRaw, ids);
+  const activePool = decodeActivePool(activeRaw, ids);
 
   const filterType: QuestionType | "all" =
     CODE_TO_FILTER[filterCode as number] ?? "all";
@@ -295,10 +366,9 @@ export async function importProgress(encoded: string, hash: string): Promise<Sto
     selectionMode: settingsRaw[4] === "sequential" ? "sequential" : "random",
   };
 
-  // v2 新增的 ui 段；老版本（compact.length < 6）走默认值
   const ui: UiPreferences = {
-    progressFocused: Array.isArray(uiRaw) ? uiRaw[0] === 1 : false,
-    showPool: Array.isArray(uiRaw) ? uiRaw[1] === 1 : false,
+    progressFocused: uiRaw[0] === 1,
+    showPool: uiRaw[1] === 1,
   };
 
   return {

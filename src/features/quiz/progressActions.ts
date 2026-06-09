@@ -1,14 +1,15 @@
 import { exportProgress, importProgress } from "../importExport";
-import type { RuntimeState, StoredState } from "../../types";
+import type { Question, RuntimeState, StoredState } from "../../types";
 
 export type CopyResult = { ok: true } | { ok: false; error: string };
 
 export async function copyProgressToClipboard(
   state: RuntimeState,
   hash: string,
+  questions: readonly Question[],
 ): Promise<CopyResult> {
   try {
-    const encoded = await exportProgress(state, hash);
+    const encoded = await exportProgress(state, hash, questions);
     await navigator.clipboard.writeText(encoded);
     return { ok: true };
   } catch (e) {
@@ -41,9 +42,10 @@ export type ParseResult =
 export async function parseImportedProgress(
   text: string,
   hash: string,
+  questions: readonly Question[],
 ): Promise<ParseResult> {
   try {
-    const state = await importProgress(text, hash);
+    const state = await importProgress(text, hash, questions);
     return { ok: true, state };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "未知错误" };

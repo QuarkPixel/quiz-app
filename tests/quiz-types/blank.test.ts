@@ -3,10 +3,9 @@ import { blankType } from "../../src/quiz/types/blank";
 import type { Question } from "../../src/types";
 
 describe("blankType 元信息", () => {
-  it("id / name / exportPrefix 正确", () => {
+  it("id / name 正确", () => {
     expect(blankType.id).toBe("blank");
     expect(blankType.name).toBe("填空题");
-    expect(blankType.exportPrefix).toBe("b");
   });
 });
 
