@@ -11,7 +11,7 @@ function selectionWeight(
   roundsSinceSelected: number,
   poolSize: number,
 ): number {
-  const cooldownRounds = poolSize / 3;
+  const cooldownRounds = poolSize * 0.6;
   const cappedRounds = Math.min(roundsSinceSelected, poolSize);
   const t = Math.max(
     0,
