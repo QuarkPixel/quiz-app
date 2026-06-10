@@ -102,6 +102,15 @@ describe("QuizSession 构造", () => {
     session.initialize();
     expect(session.appState.activePool.length).toBeGreaterThan(0);
     expect(session.currentQuestion).not.toBeNull();
+    const currentItem = session.appState.activePool.find(
+      (item) => item.id === session.currentQuestion?.id,
+    );
+    expect(currentItem?.hasBeenShown).toBe(true);
+    expect(
+      session.appState.activePool.some(
+        (item) => item.id !== session.currentQuestion?.id && !item.hasBeenShown,
+      ),
+    ).toBe(true);
   });
 });
 

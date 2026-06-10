@@ -33,9 +33,9 @@
             (item) => item.id !== currentId,
         );
         // 最近被选过的（lastSelectedRound 最大）在最上面
-        const sorted = visible.slice().sort(
-            (a, b) => b.lastSelectedRound - a.lastSelectedRound,
-        );
+        const sorted = visible
+            .slice()
+            .sort((a, b) => b.lastSelectedRound - a.lastSelectedRound);
         const result: PoolEntry[] = [];
         for (let i = 0; i < sorted.length; i++) {
             const item = sorted[i];
@@ -53,14 +53,9 @@
     });
 </script>
 
-<div
-    class="pool-mask flex-1 min-h-0 overflow-y-auto"
-    aria-label="活动题目池"
->
+<div class="pool-mask flex-1 min-h-0 overflow-y-auto" aria-label="活动题目池">
     {#if entries.length === 0}
-        <p
-            class="text-muted-foreground/60 px-3 py-12 text-center text-xs"
-        >
+        <p class="text-muted-foreground/60 px-3 py-12 text-center text-xs">
             池中暂无其它题目
         </p>
     {:else}
@@ -86,12 +81,20 @@
                         class="text-muted-foreground/70 flex items-center gap-2 text-[10px]"
                     >
                         <span class="font-mono">{entry.item.id}</span>
+                        {#if !entry.item.hasBeenShown}
+                            <span
+                                class="font-semibold font-mono text-success"
+                            >
+                                NEW
+                            </span>
+                        {/if}
                         <div class="ml-auto">
                             <StreakIndicator
                                 item={entry.item}
                                 requiredStreak={entry.requiredStreak}
                                 size="compact"
-                                onMaster={() => session.markAsMastered(entry.item.id)}
+                                onMaster={() =>
+                                    session.markAsMastered(entry.item.id)}
                             />
                         </div>
                     </div>

@@ -69,9 +69,8 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
 function poolItem(
   id: string,
   patch: Partial<ActivePoolItem> = {},
-  activePoolSize = 25,
 ): ActivePoolItem {
-  return { ...createActivePoolItem(id, activePoolSize), ...patch };
+  return { ...createActivePoolItem(id), ...patch };
 }
 
 afterEach(() => {
@@ -152,7 +151,7 @@ describe("getStats", () => {
 // ---------------------------------------------------------------------------
 
 describe("fillActivePool", () => {
-  it("sequential 模式按 pendingIds 顺序选", () => {
+  it("sequential 模式按 pendingIds 正序入池", () => {
     const state = makeState({
       pendingIds: ["a", "b", "c", "d"],
       activePool: [],
@@ -162,6 +161,18 @@ describe("fillActivePool", () => {
     const result = fillActivePool(state);
     expect(result.activePool.map((item) => item.id)).toEqual(["a", "b"]);
     expect(result.pendingIds).toEqual(["c", "d"]);
+  });
+
+  it("sequential 模式非空池补题时仍按 pendingIds 正序追加", () => {
+    const state = makeState({
+      pendingIds: ["b", "c", "d"],
+      activePool: [poolItem("a")],
+      settings: makeSettings({ activePoolSize: 3, selectionMode: "sequential" }),
+    });
+
+    const result = fillActivePool(state);
+    expect(result.activePool.map((item) => item.id)).toEqual(["a", "b", "c"]);
+    expect(result.pendingIds).toEqual(["d"]);
   });
 
   it("random 模式不超 targetSize", () => {
@@ -212,7 +223,8 @@ describe("fillActivePool", () => {
       id: "a",
       consecutiveCorrect: 0,
       hasEverMistaken: false,
-      lastSelectedRound: 32,
+      hasBeenShown: false,
+      lastSelectedRound: 42,
     });
   });
 });
@@ -258,28 +270,24 @@ describe("selectNextFromPool", () => {
     expect(selectNextFromPool(questions, state)).toBeNull();
   });
 
-  it("sequential 模式按题库原顺序选下一题", () => {
+  it("sequential 模式只影响入池，活动池内仍按加权随机选题", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
     const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const state = makeState({
-      activePool: [poolItem("c"), poolItem("a"), poolItem("b")],
+      currentRound: 10,
+      activePool: [
+        poolItem("a", { lastSelectedRound: -10 }),
+        poolItem("b", { lastSelectedRound: 10 }),
+        poolItem("c", { lastSelectedRound: -10 }),
+      ],
       settings: makeSettings({ selectionMode: "sequential" }),
     });
 
-    // currentQuestionId 为 "a"，下一题应该是 "b"（题库顺序中 a 之后）
     const next = selectNextFromPool(questions, state, "a");
-    expect(next?.id).toBe("b");
+    expect(next?.id).toBe("c");
   });
 
-  it("sequential 模式无 currentQuestionId 时返回题库顺序最靠前的", () => {
-    const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
-    const state = makeState({
-      activePool: [poolItem("c"), poolItem("b")],
-      settings: makeSettings({ selectionMode: "sequential" }),
-    });
-    expect(selectNextFromPool(questions, state)?.id).toBe("b");
-  });
-
-  it("sequential 模式池中只剩 currentQuestionId 时回到该题（兜底）", () => {
+  it("池中只剩 currentQuestionId 时回到该题（兜底）", () => {
     const questions = [makeQuestion("a"), makeQuestion("b")];
     const state = makeState({
       activePool: [poolItem("a")],
@@ -288,19 +296,10 @@ describe("selectNextFromPool", () => {
     expect(selectNextFromPool(questions, state, "a")?.id).toBe("a");
   });
 
-  it("random 模式池中只剩 currentQuestionId 时回到该题（兜底）", () => {
-    const questions = [makeQuestion("a"), makeQuestion("b")];
-    const state = makeState({
-      activePool: [poolItem("a")],
-      settings: makeSettings({ selectionMode: "random" }),
-    });
-    expect(selectNextFromPool(questions, state, "a")?.id).toBe("a");
-  });
-
-  it("random 模式：刚选过的题权重接近 0（与上一轮 lastSelectedRound 同步时跳过）", () => {
+  it("活动池加权抽题：零权重题不会因为 Math.random=0 被选中", () => {
     // currentRound=10, length=2, item a lastSelectedRound=10 → cooldown 内，weight 0
     // item b lastSelectedRound=-10 → roundsSince 超过 length，weight 封顶为 1
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    vi.spyOn(Math, "random").mockReturnValue(0);
     const questions = [makeQuestion("a"), makeQuestion("b")];
     const state = makeState({
       currentRound: 10,
@@ -315,11 +314,11 @@ describe("selectNextFromPool", () => {
     expect(next?.id).toBe("b");
   });
 
-  it("random 模式：权重在 x=m 时封顶，并使用二次曲线压低中段题", () => {
-    // length=3：cooldown=m/3=1，cap=m=3。
-    // b 的 t=(2-1)/(3-1)=0.5，weight=0.25；c 的 weight=1。
-    // b 的累计概率为 0.25/(0.25+1)=0.2，所以 random=0.21 应越过 b 选 c。
-    vi.spyOn(Math, "random").mockReturnValue(0.21);
+  it("活动池加权抽题：权重在 x=m 时封顶，并使用二次曲线压低中段题", () => {
+    // length=3：cooldown=0.6m=1.8，cap=m=3。
+    // b 的 t=(2-1.8)/(3-1.8)=1/6，weight≈0.028；c 的 weight=1。
+    // b 的累计概率约为 0.027，所以 random=0.03 应越过 b 选 c。
+    vi.spyOn(Math, "random").mockReturnValue(0.03);
     const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const state = makeState({
       currentRound: 10,
@@ -335,7 +334,7 @@ describe("selectNextFromPool", () => {
     expect(next?.id).toBe("c");
   });
 
-  it("random 模式跳过 currentQuestionId", () => {
+  it("活动池加权抽题跳过 currentQuestionId", () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
     const questions = [makeQuestion("a"), makeQuestion("b")];
     const state = makeState({
@@ -350,7 +349,7 @@ describe("selectNextFromPool", () => {
     expect(next?.id).toBe("b");
   });
 
-  it("random 模式：Math.random=0.999 时倾向选最后一个累计到的", () => {
+  it("活动池加权抽题：Math.random=0.999 时倾向选最后一个累计到的", () => {
     vi.spyOn(Math, "random").mockReturnValue(0.999);
     const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const state = makeState({

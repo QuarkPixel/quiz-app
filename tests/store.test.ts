@@ -72,21 +72,21 @@ describe("createDefaultSettings", () => {
 
 describe("createActivePoolItem", () => {
   it("初始字段符合预期", () => {
-    const item = createActivePoolItem("q1", 25);
+    const item = createActivePoolItem("q1");
     expect(item.id).toBe("q1");
     expect(item.consecutiveCorrect).toBe(0);
     expect(item.hasEverMistaken).toBe(false);
-    expect(item.lastSelectedRound).toBe(-50); // -25 * 2
+    expect(item.hasBeenShown).toBe(false);
+    expect(item.lastSelectedRound).toBe(0);
   });
 
-  it("lastSelectedRound 与 activePoolSize 联动", () => {
-    expect(createActivePoolItem("q1", 5).lastSelectedRound).toBe(-10);
-    expect(createActivePoolItem("q1", 100).lastSelectedRound).toBe(-200);
+  it("lastSelectedRound 不再与 activePoolSize 联动", () => {
+    expect(createActivePoolItem("q1").lastSelectedRound).toBe(0);
   });
 
-  it("lastSelectedRound 以当前轮次为基准应用 offset", () => {
-    expect(createActivePoolItem("q1", 5, 42).lastSelectedRound).toBe(32);
-    expect(createActivePoolItem("q1", 20, 3241).lastSelectedRound).toBe(3201);
+  it("lastSelectedRound 以当前轮次为基准", () => {
+    expect(createActivePoolItem("q1", 42).lastSelectedRound).toBe(42);
+    expect(createActivePoolItem("q1", 3241).lastSelectedRound).toBe(3241);
   });
 });
 
@@ -137,7 +137,7 @@ describe("loadStoredState", () => {
   it("有完整数据 → 解析正确", () => {
     const stored: StoredState = {
       masteredIds: ["a", "b"],
-      activePool: [createActivePoolItem("c", 25)],
+      activePool: [createActivePoolItem("c")],
       currentRound: 7,
       filterType: "single",
       settings: createDefaultSettings(),
@@ -206,7 +206,7 @@ describe("saveState", () => {
   it("saveState → loadStoredState round-trip", () => {
     const runtime: RuntimeState = {
       masteredIds: ["a"],
-      activePool: [createActivePoolItem("b", 25)],
+      activePool: [createActivePoolItem("b")],
       currentRound: 3,
       filterType: "blank",
       settings: createDefaultSettings(),
@@ -282,7 +282,7 @@ describe("resetStoredState", () => {
     };
     saveState(HASH, {
       masteredIds: ["a", "b"],
-      activePool: [createActivePoolItem("c", 25)],
+      activePool: [createActivePoolItem("c")],
       currentRound: 10,
       filterType: "single",
       settings,
@@ -297,7 +297,7 @@ describe("resetStoredState", () => {
   it("其他字段重置为默认", () => {
     saveState(HASH, {
       masteredIds: ["a", "b"],
-      activePool: [createActivePoolItem("c", 25)],
+      activePool: [createActivePoolItem("c")],
       currentRound: 10,
       filterType: "single",
       settings: createDefaultSettings(),
@@ -370,7 +370,7 @@ describe("computePendingIds", () => {
     ];
     const state: StoredState = {
       masteredIds: ["a"],
-      activePool: [createActivePoolItem("b", 25)],
+      activePool: [createActivePoolItem("b")],
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
@@ -421,8 +421,8 @@ describe("buildRuntimeState", () => {
     const state: StoredState = {
       masteredIds: [],
       activePool: [
-        createActivePoolItem("a", 25), // judgment，不在 single filter 范围内
-        createActivePoolItem("b", 25),
+        createActivePoolItem("a"), // judgment，不在 single filter 范围内
+        createActivePoolItem("b"),
       ],
       currentRound: 0,
       filterType: "single",
@@ -441,7 +441,7 @@ describe("buildRuntimeState", () => {
     ];
     const state: StoredState = {
       masteredIds: ["a"],
-      activePool: [createActivePoolItem("b", 25)],
+      activePool: [createActivePoolItem("b")],
       currentRound: 0,
       filterType: "single",
       settings: createDefaultSettings(),
@@ -500,13 +500,13 @@ describe("getActivePoolItem", () => {
   }
 
   it("命中 → 返回该项", () => {
-    const item = createActivePoolItem("a", 25);
-    const state = makeRuntime([item, createActivePoolItem("b", 25)]);
+    const item = createActivePoolItem("a");
+    const state = makeRuntime([item, createActivePoolItem("b")]);
     expect(getActivePoolItem(state, "a")).toBe(item);
   });
 
   it("未命中 → undefined", () => {
-    const state = makeRuntime([createActivePoolItem("a", 25)]);
+    const state = makeRuntime([createActivePoolItem("a")]);
     expect(getActivePoolItem(state, "z")).toBeUndefined();
   });
 

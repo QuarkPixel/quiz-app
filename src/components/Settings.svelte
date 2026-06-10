@@ -64,12 +64,11 @@
                 <h3
                     class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
                 >
-                    刷题方式
+                    刷题顺序
                 </h3>
                 <QuestionOrder
                     activeOrder={session.appState.settings.selectionMode}
                     onSelect={(v) => {
-                        console.log(v);
                         session.appState.settings.selectionMode = v;
                         session.handleAlgorithmChange();
                     }}

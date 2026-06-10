@@ -151,6 +151,7 @@ export class QuizSession {
       this.appState,
       this.currentQuestion?.id,
     );
+    this.markCurrentQuestionAsShown();
 
     if (this.currentQuestion?.options) {
       const optionsWithIndex = this.currentQuestion.options.map((opt, idx) => ({
@@ -406,6 +407,21 @@ export class QuizSession {
 
   private save(): void {
     saveState(this.hash, this.appState);
+  }
+
+  private markCurrentQuestionAsShown(): void {
+    if (!this.currentQuestion) return;
+
+    const itemIndex = this.appState.activePool.findIndex(
+      (item) => item.id === this.currentQuestion?.id,
+    );
+    const item = this.appState.activePool[itemIndex];
+    if (!item || item.hasBeenShown) return;
+
+    const activePool = [...this.appState.activePool];
+    activePool[itemIndex] = { ...item, hasBeenShown: true };
+    this.appState = { ...this.appState, activePool };
+    this.save();
   }
 
   private focusBlankInputIfNeeded(): void {

@@ -48,9 +48,8 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
 function poolItem(
   id: string,
   patch: Partial<ActivePoolItem> = {},
-  activePoolSize = 25,
 ): ActivePoolItem {
-  return { ...createActivePoolItem(id, activePoolSize), ...patch };
+  return { ...createActivePoolItem(id), ...patch };
 }
 
 // ---------------------------------------------------------------------------

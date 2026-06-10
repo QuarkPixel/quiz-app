@@ -7,6 +7,12 @@ import { createActivePoolItem, filterQuestions } from "./store";
 import { LEARNING_COLOR_HIGH, LEARNING_COLOR_LOW } from "./config";
 import { isDebugModeEnabled } from "./debug";
 
+interface WeightedPoolItem {
+  id: string;
+  weight: number;
+  roundsSinceSelected: number;
+}
+
 function selectionWeight(
   roundsSinceSelected: number,
   poolSize: number,
@@ -18,6 +24,103 @@ function selectionWeight(
     Math.min(1, (cappedRounds - cooldownRounds) / (poolSize - cooldownRounds)),
   );
   return t * t;
+}
+
+function buildWeightedPool(
+  activePool: ActivePoolItem[],
+  currentRound: number,
+  currentQuestionId?: string,
+): WeightedPoolItem[] {
+  const poolSize = activePool.length;
+
+  return activePool
+    .filter((item) => item.id !== currentQuestionId)
+    .map((item) => {
+      const roundsSinceSelected = currentRound - item.lastSelectedRound;
+      return {
+        id: item.id,
+        roundsSinceSelected,
+        weight: selectionWeight(roundsSinceSelected, poolSize),
+      };
+    })
+    .sort((a, b) => a.weight - b.weight);
+}
+
+function logWeightDistribution(
+  weights: WeightedPoolItem[],
+  currentRound: number,
+): void {
+  if (!isDebugModeEnabled()) return;
+
+  console.groupCollapsed(
+    "%cWeight Distribution %c(Round: %s)",
+    "font-weight: bold;",
+    "font-weight: normal; color: gray;",
+    currentRound,
+  );
+
+  weights.forEach((q) => {
+    const val = q.weight;
+    const LENGTH = 20;
+    const solidCount = Math.round(LENGTH * val);
+
+    console.log(
+      "%c%s %c%s%c%s %c| %c%s",
+      "font-family: monospace; font-weight: bold; color: gray;",
+      val.toFixed(3),
+      "font-family: monospace; font-weight: bold;",
+      "=".repeat(solidCount),
+      "font-family: monospace; color: gray;",
+      "·".repeat(LENGTH - solidCount),
+      "font-family: monospace; color: gray;",
+      "font-family: monospace;",
+      q.id,
+    );
+  });
+
+  console.groupEnd();
+}
+
+function selectOldestId(weights: WeightedPoolItem[]): string {
+  return weights.reduce((best, item) =>
+    item.roundsSinceSelected > best.roundsSinceSelected ? item : best,
+  ).id;
+}
+
+function selectWeightedId(weights: WeightedPoolItem[]): string | null {
+  if (weights.length === 0) return null;
+
+  const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
+  if (totalWeight <= 0) return selectOldestId(weights);
+
+  let cursor = Math.random() * totalWeight;
+  for (const w of weights) {
+    if (cursor < w.weight) return w.id;
+    cursor -= w.weight;
+  }
+
+  return weights[weights.length - 1].id;
+}
+
+function takePendingIdsForPool(
+  pendingIds: string[],
+  count: number,
+  isSequential: boolean,
+): string[] {
+  if (count <= 0) return [];
+
+  if (isSequential) {
+    return pendingIds.splice(0, count);
+  }
+
+  const selectedIds: string[] = [];
+  while (selectedIds.length < count && pendingIds.length > 0) {
+    const pickIndex = Math.floor(Math.random() * pendingIds.length);
+    const [selectedId] = pendingIds.splice(pickIndex, 1);
+    selectedIds.push(selectedId);
+  }
+
+  return selectedIds;
 }
 
 /**
@@ -45,17 +148,18 @@ export function fillActivePool(state: RuntimeState): RuntimeState {
   const newPendingIds = [...state.pendingIds];
 
   const targetSize = state.settings.activePoolSize;
+  // selectionMode 只决定新题从 pendingIds 进入活动池的顺序。
+  // 进入活动池后，selectNextFromPool 始终使用同一套加权抽题逻辑。
   const isSequential = state.settings.selectionMode === "sequential";
+  const selectedIds = takePendingIdsForPool(
+    newPendingIds,
+    targetSize - newActivePool.length,
+    isSequential,
+  );
 
-  while (newActivePool.length < targetSize && newPendingIds.length > 0) {
-    const pickIndex = isSequential
-      ? 0
-      : Math.floor(Math.random() * newPendingIds.length);
-    const selectedId = newPendingIds[pickIndex];
-
-    newPendingIds.splice(pickIndex, 1);
+  for (const selectedId of selectedIds) {
     newActivePool.push(
-      createActivePoolItem(selectedId, targetSize, state.currentRound),
+      createActivePoolItem(selectedId, state.currentRound),
     );
   }
 
@@ -74,85 +178,19 @@ export function selectNextFromPool(
   state: RuntimeState,
   currentQuestionId?: string,
 ): Question | null {
-  const length = state.activePool.length;
-
-  if (length === 0) return null;
+  if (state.activePool.length === 0) return null;
 
   const questionsById = new Map(questions.map((q) => [q.id, q]));
+  const weights = buildWeightedPool(
+    state.activePool,
+    state.currentRound,
+    currentQuestionId,
+  );
 
-  if (state.settings.selectionMode === "sequential") {
-    const questionIndex = new Map(questions.map((q, i) => [q.id, i]));
-    const sorted = [...state.activePool].sort(
-      (a, b) =>
-        (questionIndex.get(a.id) ?? Infinity) -
-        (questionIndex.get(b.id) ?? Infinity),
-    );
-    const next =
-      sorted.find((item) => item.id !== currentQuestionId) ?? sorted[0];
-    return questionsById.get(next.id) ?? null;
-  }
+  logWeightDistribution(weights, state.currentRound);
 
-  const weights: { id: string; weight: number }[] = [];
-
-  for (const item of state.activePool) {
-    if (item.id === currentQuestionId) continue;
-
-    const roundsSinceSelected = state.currentRound - item.lastSelectedRound;
-    const weight = selectionWeight(roundsSinceSelected, length);
-
-    weights.push({ id: item.id, weight });
-  }
-
-  weights.sort((a, b) => a.weight - b.weight);
-
-  if (isDebugModeEnabled()) {
-    console.groupCollapsed(
-      "%cWeight Distribution %c(Round: %s)",
-      "font-weight: bold;",
-      "font-weight: normal; color: gray;",
-      state.currentRound,
-    );
-
-    weights.forEach((q) => {
-      const val = q.weight;
-      const LENGTH = 20;
-      const solidCount = Math.round(LENGTH * val);
-
-      // 使用 %c 对每一行进行样式注入
-      console.log(
-        "%c%s %c%s%c%s %c| %c%s",
-        "font-family: monospace; font-weight: bold; color: gray;", // 数字部分的样式
-        val.toFixed(3),
-        "font-family: monospace; font-weight: bold;",
-        "=".repeat(solidCount),
-        "font-family: monospace; color: gray;",
-        "·".repeat(LENGTH - solidCount),
-        "font-family: monospace; color: gray;", // 分隔符样式
-        "font-family: monospace;", // ID 的样式
-        q.id, // ID 的样式
-      );
-    });
-
-    console.groupEnd();
-  }
-
-  if (weights.length === 0) {
-    const onlyId = state.activePool[0].id;
-    return questionsById.get(onlyId) ?? null;
-  }
-
-  const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
-  let random = Math.random() * totalWeight;
-
-  for (const w of weights) {
-    random -= w.weight;
-    if (random <= 0) {
-      return questionsById.get(w.id) ?? null;
-    }
-  }
-
-  const lastId = weights[weights.length - 1].id;
-  return questionsById.get(lastId) ?? null;
+  const selectedId = selectWeightedId(weights) ?? state.activePool[0].id;
+  return questionsById.get(selectedId) ?? null;
 }
 
 /**
@@ -184,6 +222,7 @@ export function processAnswer(
   if (itemIndex === -1) return newState;
 
   const item = { ...newState.activePool[itemIndex] };
+  item.hasBeenShown = true;
   item.lastSelectedRound = newState.currentRound;
 
   if (isCorrect) {

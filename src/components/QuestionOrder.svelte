@@ -5,16 +5,16 @@
     import IconArrowsRight from "@tabler/icons-svelte/icons/arrow-narrow-right";
 
     interface Props {
-        activeOrder: "random" | "sequential";
-        onSelect: (type: QuestionOrder) => void;
+        activeOrder: QuestionOrder;
+        onSelect: (order: QuestionOrder) => void;
     }
 
     let { activeOrder, onSelect }: Props = $props();
 
-    // 单选筛选必须恒有一个选中项。bits-ui 单选模式允许点击已选项取消选择
-    // （onValueChange 收到空串）；取消后因外部 activeType 未变不会回灌，视觉上会
-    // 变成「全部未选中」。故用本地受控值，收到空串时强制回到 activeType 拒绝取消。
-    // 初值仅作种子，后续由下面的 $effect 跟随 activeType 同步。
+    // 入池模式必须恒有一个选中项。bits-ui 单选模式允许点击已选项取消选择
+    // （onValueChange 收到空串）；取消后因外部 activeOrder 未变不会回灌，视觉上会
+    // 变成「全部未选中」。故用本地受控值，收到空串时强制回到 activeOrder 拒绝取消。
+    // 初值仅作种子，后续由下面的 $effect 跟随 activeOrder 同步。
     // svelte-ignore state_referenced_locally
     let selected = $state<QuestionOrder>(activeOrder);
     $effect(() => {

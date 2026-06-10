@@ -51,12 +51,14 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
         id: "judgment_3",
         consecutiveCorrect: 1,
         hasEverMistaken: false,
+        hasBeenShown: true,
         lastSelectedRound: 5,
       },
       {
         id: "hardest",
         consecutiveCorrect: 2,
         hasEverMistaken: true,
+        hasBeenShown: true,
         lastSelectedRound: 7,
       },
     ],
@@ -162,7 +164,7 @@ function compact(overrides: Partial<{
   ui: unknown;
 }> = {}): unknown[] {
   return [
-    overrides.version ?? 3,
+    overrides.version ?? 4,
     overrides.questionCount ?? QUESTIONS.length,
     overrides.masteredBitmap ?? "0",
     overrides.activePool ?? [],
@@ -222,12 +224,12 @@ describe("bitmap / index 编码", () => {
     const payload = await decodePayload(encoded);
 
     expect(payload).toEqual([
-      3,
+      4,
       QUESTIONS.length,
       "3",
       [
-        [2, 1, 0, 5],
-        [3, 2, 1, 7],
+        [2, 1, 0, 5, 1],
+        [3, 2, 1, 7, 1],
       ],
       8,
       1,
@@ -257,6 +259,7 @@ describe("bitmap / index 编码", () => {
           id: "custom_id",
           consecutiveCorrect: 0,
           hasEverMistaken: false,
+          hasBeenShown: false,
           lastSelectedRound: 1,
         },
       ],
@@ -370,14 +373,14 @@ describe("importProgress 错误处理", () => {
   });
 
   it("compact 长度不等于 8 → 结构不符合预期", async () => {
-    const encoded = await encodePayload([3, QUESTIONS.length, "0"]);
+    const encoded = await encodePayload([4, QUESTIONS.length, "0"]);
     await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /结构不符合预期/,
     );
   });
 
   it("version 不支持 → 进度格式版本不支持", async () => {
-    const encoded = await encodePayload(compact({ version: 2 }));
+    const encoded = await encodePayload(compact({ version: 3 }));
     await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /进度格式版本不支持/,
     );
@@ -413,9 +416,14 @@ describe("importProgress 错误处理", () => {
     );
   });
 
-  it("activePool 子项不是 4 元数组 → 活动池条目格式错误", async () => {
+  it("activePool 子项不是 5 元数组 → 活动池条目格式错误", async () => {
     const encoded = await encodePayload(compact({ activePool: [[2, 1, 0]] }));
     await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /活动池条目格式错误/,
+    );
+
+    const encoded2 = await encodePayload(compact({ activePool: [[2, 1, 0, 1]] }));
+    await expect(importProgress(encoded2, HASH, QUESTIONS)).rejects.toThrow(
       /活动池条目格式错误/,
     );
   });
@@ -428,7 +436,7 @@ describe("importProgress 错误处理", () => {
   });
 
   it("activePool 题目索引越界 → 活动池题目索引错误", async () => {
-    const encoded = await encodePayload(compact({ activePool: [[99, 1, 0, 1]] }));
+    const encoded = await encodePayload(compact({ activePool: [[99, 1, 0, 1, 1]] }));
     await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /活动池题目索引错误/,
     );

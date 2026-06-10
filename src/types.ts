@@ -10,7 +10,7 @@ export interface Option {
 /** 题目类型 */
 export type QuestionType = "judgment" | "single" | "multiple" | "blank";
 
-/** 题目顺序 */
+/** 新题入池顺序 */
 export type QuestionOrder = "random" | "sequential";
 
 /** 题目 */
@@ -29,6 +29,8 @@ export interface ActivePoolItem {
   consecutiveCorrect: number;
   /** 是否曾经答错过 */
   hasEverMistaken: boolean;
+  /** 是否已经真正展示给用户 */
+  hasBeenShown: boolean;
   /** 上次被选中的轮次 */
   lastSelectedRound: number;
 }
@@ -43,7 +45,7 @@ export interface UserSettings {
   correctStreakToMaster: number;
   /** 答错后掌握所需连续正确次数 */
   correctStreakAfterMistake: number;
-  /** 题目选择模式：random=随机加权，sequential=按题库顺序 */
+  /** 新题入池模式：random=随机入池，sequential=按题库顺序入池 */
   selectionMode: QuestionOrder;
   /** 是否启用音效（仅 library 模式使用） */
   soundEnabled?: boolean;

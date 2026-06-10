@@ -45,24 +45,22 @@ export function createDefaultUiPreferences(): UiPreferences {
 /** 创建默认的活动池项 */
 export function createActivePoolItem(
   id: string,
-  activePoolSize: number,
   currentRound = 0,
 ): ActivePoolItem {
   return {
     id,
     consecutiveCorrect: 0,
     hasEverMistaken: false,
-    lastSelectedRound: currentRound - activePoolSize * 2,
+    hasBeenShown: false,
+    lastSelectedRound: currentRound,
   };
 }
 
 export function isUnansweredNewActivePoolItem(
   item: ActivePoolItem,
-  currentRound: number,
-  activePoolSize: number,
 ): boolean {
   if (item.consecutiveCorrect !== 0 || item.hasEverMistaken) return false;
-  return currentRound - item.lastSelectedRound >= activePoolSize * 2;
+  return !item.hasBeenShown;
 }
 
 /** 创建默认的存储状态 */

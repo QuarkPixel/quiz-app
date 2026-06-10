@@ -12,7 +12,7 @@
  *   - 题目 id 按当前题库顺序映射为 index
  *   - masteredBitmapHex：BitSet 的十六进制字符串，bit=1 表示已掌握；
  *     活动池中的题目即使同时出现在 masteredIds 里也按 bit=0 导出
- *   - activePool 每项：[questionIndex, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound]
+ *   - activePool 每项：[questionIndex, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound, hasBeenShown(0|1)]
  *   - filterTypeCode：all=0, single=1, multiple=2, judgment=3, blank=4
  *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode]
  */
@@ -29,7 +29,7 @@ import type {
 
 // ── filterType 编解码 ──────────────────────────────────────────────────────────
 
-const FORMAT_VERSION = 3;
+const FORMAT_VERSION = 4;
 
 const FILTER_TO_CODE: Record<string, number> = {
   all: 0,
@@ -120,6 +120,7 @@ function encodeActivePool(
     item.consecutiveCorrect,
     item.hasEverMistaken ? 1 : 0,
     item.lastSelectedRound,
+    item.hasBeenShown ? 1 : 0,
   ]);
 }
 
@@ -132,12 +133,17 @@ function decodeActivePool(
   }
 
   return raw.map((item) => {
-    if (!Array.isArray(item) || item.length < 4) {
+    if (!Array.isArray(item) || item.length !== 5) {
       throw new Error("数据格式无效：活动池条目格式错误。");
     }
 
-    const [questionIndex, consecutiveCorrect, hasEverMistaken, lastSelectedRound] =
-      item;
+    const [
+      questionIndex,
+      consecutiveCorrect,
+      hasEverMistaken,
+      lastSelectedRound,
+      hasBeenShown,
+    ] = item;
 
     if (
       typeof questionIndex !== "number" ||
@@ -152,6 +158,7 @@ function decodeActivePool(
       id: questionIds[questionIndex],
       consecutiveCorrect: consecutiveCorrect as number,
       hasEverMistaken: hasEverMistaken === 1,
+      hasBeenShown: hasBeenShown === 1,
       lastSelectedRound: lastSelectedRound as number,
     };
   });
@@ -352,6 +359,7 @@ export async function importProgress(
   }
 
   // 还原数据
+  const activePoolSize = settingsRaw[1] as number;
   const masteredIds = decodeMasteredBitmap(masteredBitmapRaw, ids);
   const activePool = decodeActivePool(activeRaw, ids);
 
@@ -360,7 +368,7 @@ export async function importProgress(
 
   const settings: UserSettings = {
     autoNextOnCorrect: settingsRaw[0] === 1,
-    activePoolSize: settingsRaw[1] as number,
+    activePoolSize,
     correctStreakToMaster: settingsRaw[2] as number,
     correctStreakAfterMistake: settingsRaw[3] as number,
     selectionMode: settingsRaw[4] === "sequential" ? "sequential" : "random",

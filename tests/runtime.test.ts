@@ -198,7 +198,7 @@ describe("loadRuntimeState", () => {
     ];
     const stored: StoredState = {
       masteredIds: ["a"],
-      activePool: [createActivePoolItem("b", 25)],
+      activePool: [createActivePoolItem("b")],
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
@@ -234,12 +234,11 @@ describe("rebuildRuntimeState", () => {
       makeQuestion("b", "single"),
       makeQuestion("c", "judgment"),
     ];
-    // 全部都是 currentRound - activePoolSize * 2（初始值），还没答过
     const state = baseRuntime({
       activePool: [
-        createActivePoolItem("a", 25),
-        createActivePoolItem("b", 25),
-        createActivePoolItem("c", 25),
+        createActivePoolItem("a"),
+        createActivePoolItem("b"),
+        createActivePoolItem("c"),
       ],
       filterType: "all",
     });
@@ -254,11 +253,11 @@ describe("rebuildRuntimeState", () => {
       makeQuestion("b", "single"),
     ];
     const shownItem = {
-      ...createActivePoolItem("a", 25),
+      ...createActivePoolItem("a"),
       consecutiveCorrect: 1,
       lastSelectedRound: 3,
     };
-    const notShown = createActivePoolItem("b", 25); // lastSelectedRound = -50
+    const notShown = createActivePoolItem("b");
     const state = baseRuntime({
       activePool: [shownItem, notShown],
       filterType: "all",
@@ -290,9 +289,9 @@ describe("rebuildRuntimeState", () => {
       makeQuestion("b", "single"),
     ];
     const shownJudgment = {
-      ...createActivePoolItem("a", 25),
+      ...createActivePoolItem("a"),
       consecutiveCorrect: 1,
-      lastSelectedRound: 3, // 已展示
+      lastSelectedRound: 3,
     };
     const state = baseRuntime({
       activePool: [shownJudgment],
@@ -322,7 +321,7 @@ describe("rebuildRuntimeState", () => {
     expect(rebuilt.settings.activePoolSize).toBe(30);
   });
 
-  it("用自定义 activePoolSize 计算 initialRound", () => {
+  it("显式 hasBeenShown=false 的未展示题会被清掉", () => {
     const questions = [
       makeQuestion("a", "single"),
       makeQuestion("b", "single"),
@@ -332,10 +331,9 @@ describe("rebuildRuntimeState", () => {
       ...createDefaultSettings(),
       activePoolSize: customPoolSize,
     };
-    // 用 customPoolSize 的 offset 创建未展示的项
-    const notShown = createActivePoolItem("a", customPoolSize); // lastSelectedRound = -20
+    const notShown = createActivePoolItem("a");
     const shownItem = {
-      ...createActivePoolItem("b", customPoolSize),
+      ...createActivePoolItem("b"),
       consecutiveCorrect: 1,
       lastSelectedRound: 5,
     };
@@ -349,7 +347,7 @@ describe("rebuildRuntimeState", () => {
     expect(rebuilt.activePool.map((i) => i.id)).toEqual(["b"]);
   });
 
-  it("当前轮次很高时，未答过的新入池题也按相对 offset 清掉", () => {
+  it("当前轮次很高时，未展示的新入池题也会被清掉", () => {
     const questions = [
       makeQuestion("a", "single"),
       makeQuestion("b", "single"),
@@ -361,9 +359,9 @@ describe("rebuildRuntimeState", () => {
     const state = baseRuntime({
       currentRound: 3241,
       activePool: [
-        createActivePoolItem("a", settings.activePoolSize, 3241),
+        createActivePoolItem("a", 3241),
         {
-          ...createActivePoolItem("b", settings.activePoolSize, 3241),
+          ...createActivePoolItem("b", 3241),
           consecutiveCorrect: 1,
         },
       ],
@@ -373,7 +371,7 @@ describe("rebuildRuntimeState", () => {
 
     const rebuilt = rebuildRuntimeState(questions, state, "single");
     expect(rebuilt.activePool.map((i) => i.id)).toEqual(["b"]);
-    expect(rebuilt.activePool[0].lastSelectedRound).toBe(3201);
+    expect(rebuilt.activePool[0].lastSelectedRound).toBe(3241);
   });
 });
 
@@ -394,7 +392,7 @@ describe("createResetRuntimeState", () => {
     };
     saveState(HASH, {
       masteredIds: ["a"],
-      activePool: [createActivePoolItem("b", 25)],
+      activePool: [createActivePoolItem("b")],
       currentRound: 9,
       filterType: "single",
       settings,
@@ -410,7 +408,7 @@ describe("createResetRuntimeState", () => {
     const questions = [makeQuestion("a"), makeQuestion("b")];
     saveState(HASH, {
       masteredIds: ["a", "b"],
-      activePool: [createActivePoolItem("a", 25)],
+      activePool: [createActivePoolItem("a")],
       currentRound: 99,
       filterType: "all",
       settings: createDefaultSettings(),
