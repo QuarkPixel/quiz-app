@@ -19,6 +19,10 @@ import type { Question, QuestionType, RuntimeState } from "../../types";
 import { normalizeFilterType } from "./filters";
 import { sanitizeUserSettings } from "./settings";
 
+export interface RuntimePersistenceOptions {
+  usePersistedDefaultSettings?: boolean;
+}
+
 export {
   applyAnswer,
   computeLearningSegments,
@@ -35,8 +39,9 @@ export type { LearningSegment } from "../../algorithm";
 export function loadRuntimeState(
   questions: Question[],
   hash: string,
+  options: RuntimePersistenceOptions = {},
 ): RuntimeState {
-  const storedState = loadStoredState(hash);
+  const storedState = loadStoredState(hash, options);
   storedState.filterType = normalizeFilterType(storedState.filterType, questions);
   storedState.settings = sanitizeUserSettings(storedState.settings);
   return buildRuntimeState(questions, storedState);
@@ -65,8 +70,9 @@ export function rebuildRuntimeState(
 export function createResetRuntimeState(
   questions: Question[],
   hash: string,
+  options: RuntimePersistenceOptions = {},
 ): RuntimeState {
-  const resetState = resetStoredState(hash);
+  const resetState = resetStoredState(hash, options);
   resetState.filterType = normalizeFilterType(resetState.filterType, questions);
   resetState.settings = sanitizeUserSettings(resetState.settings);
   return buildRuntimeState(questions, resetState);

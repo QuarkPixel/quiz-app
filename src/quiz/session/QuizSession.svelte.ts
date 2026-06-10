@@ -66,6 +66,11 @@ export interface QuizSessionDeps {
   sound: SoundPlayer;
 }
 
+export interface QuizSessionOptions {
+  /** Library 模式：设置变更同步写入本地默认设置，新题库加载时使用。 */
+  persistDefaultSettings?: boolean;
+}
+
 export type ShuffledOption = Option & { originalIndex: number };
 
 export class QuizSession {
@@ -124,12 +129,15 @@ export class QuizSession {
   constructor(
     bank: Bank,
     private readonly deps: QuizSessionDeps,
+    private readonly options: QuizSessionOptions = {},
   ) {
     this.bank = bank;
     this.questions = bank.questions;
     this.hash = bank.hash;
     this.filterOptions = buildFilterOptions(this.questions);
-    this.appState = loadRuntimeState(this.questions, this.hash);
+    this.appState = loadRuntimeState(this.questions, this.hash, {
+      usePersistedDefaultSettings: this.options.persistDefaultSettings === true,
+    });
     initializeSoundPreference(this.appState);
   }
 
@@ -271,14 +279,16 @@ export class QuizSession {
   }
 
   reset(): void {
-    this.appState = createResetRuntimeState(this.questions, this.hash);
+    this.appState = createResetRuntimeState(this.questions, this.hash, {
+      usePersistedDefaultSettings: this.options.persistDefaultSettings === true,
+    });
     this.initialize();
   }
 
   toggleAutoNext(): void {
     const next = !this.appState.settings.autoNextOnCorrect;
     this.appState.settings.autoNextOnCorrect = next;
-    this.save();
+    this.saveSettingsChange();
     this.deps.toast(
       next ? "答对自动下一题已开启" : "答对自动下一题已关闭",
       next
@@ -295,7 +305,7 @@ export class QuizSession {
     setSoundEnabledPreference(
       this.appState,
       next,
-      () => this.save(),
+      () => this.saveSettingsChange(),
       this.deps.toast,
       this.deps.sound,
     );
@@ -320,14 +330,14 @@ export class QuizSession {
       this.currentQuestion?.id,
     );
     this.appState = reconcileResult.state;
-    this.save();
+    this.saveSettingsChange();
     // 注：reconcileResult.shouldSelectNext 历史上未被消费（旧 QuizView 行为），
     // 这里保留原行为。如未来需要"当前题被裁出池时自动 selectNext" 可在这里启用。
   }
 
-  /** 非算法偏好变更（如 autoNextOnCorrect）：只持久化 */
+  /** 非算法偏好变更（如 autoNextOnCorrect）：持久化当前题库与默认设置 */
   handlePreferenceChange(): void {
-    this.save();
+    this.saveSettingsChange();
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -405,8 +415,16 @@ export class QuizSession {
   // 内部
   // ────────────────────────────────────────────────────────────────
 
-  private save(): void {
-    saveState(this.hash, this.appState);
+  private save(options: { updateDefaultSettings?: boolean } = {}): void {
+    saveState(this.hash, this.appState, {
+      updateDefaultSettings:
+        this.options.persistDefaultSettings === true &&
+        options.updateDefaultSettings === true,
+    });
+  }
+
+  private saveSettingsChange(): void {
+    this.save({ updateDefaultSettings: true });
   }
 
   private markCurrentQuestionAsShown(): void {

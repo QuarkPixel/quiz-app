@@ -7,6 +7,7 @@ import {
 import type { Bank } from "../src/source/types";
 import type { Question, QuestionType } from "../src/types";
 import { saveState, loadStoredState, createDefaultSettings } from "../src/store";
+import { STORAGE_KEY_DEFAULT_SETTINGS } from "../src/config";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -340,6 +341,49 @@ describe("UI 偏好 toggle", () => {
     session.toggleAutoNext();
     expect(session.appState.settings.autoNextOnCorrect).toBe(true);
     expect(toast).toHaveBeenCalled();
+  });
+
+  it("默认情况下，设置变更不会写入持久化默认设置", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+
+    session.toggleAutoNext();
+
+    expect(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)).toBeNull();
+  });
+
+  it("启用持久化默认设置时，设置变更会同步写入默认设置", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps, {
+      persistDefaultSettings: true,
+    });
+
+    session.toggleAutoNext();
+
+    expect(
+      JSON.parse(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)!),
+    ).toMatchObject({
+      autoNextOnCorrect: true,
+    });
+  });
+
+  it("启用持久化默认设置时，新题库会继承默认设置", () => {
+    localStorage.setItem(
+      STORAGE_KEY_DEFAULT_SETTINGS,
+      JSON.stringify({
+        ...createDefaultSettings(),
+        autoNextOnCorrect: true,
+        activePoolSize: 30,
+      }),
+    );
+    const { deps } = makeDeps();
+
+    const session = new QuizSession(makeBank(), deps, {
+      persistDefaultSettings: true,
+    });
+
+    expect(session.appState.settings.autoNextOnCorrect).toBe(true);
+    expect(session.appState.settings.activePoolSize).toBe(30);
   });
 });
 

@@ -264,7 +264,9 @@ export class LibrarySource implements QuizSource {
     }
 
     // 库里存的就是 canonical 形式，bank.hash 就是 canonical hash，直接用即可。
-    const storedState = loadStoredState(hash);
+    const storedState = loadStoredState(hash, {
+      usePersistedDefaultSettings: true,
+    });
     const stateEncoded = await exportProgress(storedState, hash, parsedQuestions);
 
     const mastered = storedState.masteredIds.length;

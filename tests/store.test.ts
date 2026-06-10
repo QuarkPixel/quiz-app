@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   createDefaultSettings,
+  loadDefaultSettings,
   createActivePoolItem,
   loadStoredState,
   saveState,
@@ -15,6 +16,7 @@ import {
   CORRECT_STREAK_TO_MASTER,
   CORRECT_STREAK_AFTER_MISTAKE,
   STORAGE_PREFIX_STATE,
+  STORAGE_KEY_DEFAULT_SETTINGS,
 } from "../src/config";
 import type {
   Question,
@@ -67,6 +69,44 @@ describe("createDefaultSettings", () => {
 });
 
 // ---------------------------------------------------------------------------
+// loadDefaultSettings
+// ---------------------------------------------------------------------------
+
+describe("loadDefaultSettings", () => {
+  it("默认设置不存在时回落到代码默认值", () => {
+    expect(loadDefaultSettings()).toEqual(createDefaultSettings());
+  });
+
+  it("读取本地持久化的默认设置，并用代码默认值补齐缺失字段", () => {
+    localStorage.setItem(
+      STORAGE_KEY_DEFAULT_SETTINGS,
+      JSON.stringify({
+        autoNextOnCorrect: true,
+        soundEnabled: true,
+      }),
+    );
+
+    const settings = loadDefaultSettings();
+
+    expect(settings.autoNextOnCorrect).toBe(true);
+    expect(settings.soundEnabled).toBe(true);
+    expect(settings.activePoolSize).toBe(ACTIVE_POOL_SIZE);
+    expect(settings.correctStreakToMaster).toBe(CORRECT_STREAK_TO_MASTER);
+    expect(settings.correctStreakAfterMistake).toBe(
+      CORRECT_STREAK_AFTER_MISTAKE,
+    );
+    expect(settings.selectionMode).toBe("random");
+  });
+
+  it("默认设置损坏时不抛错，回落到代码默认值", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    localStorage.setItem(STORAGE_KEY_DEFAULT_SETTINGS, "{not valid json");
+
+    expect(loadDefaultSettings()).toEqual(createDefaultSettings());
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createActivePoolItem
 // ---------------------------------------------------------------------------
 
@@ -105,6 +145,47 @@ describe("loadStoredState", () => {
     expect(state.ui).toEqual({ progressFocused: false, showPool: false });
   });
 
+  it("启用持久化默认设置时，无 bank state 的新题库使用本地默认设置", () => {
+    localStorage.setItem(
+      STORAGE_KEY_DEFAULT_SETTINGS,
+      JSON.stringify({
+        autoNextOnCorrect: true,
+        activePoolSize: 42,
+        correctStreakToMaster: 5,
+        correctStreakAfterMistake: 8,
+        selectionMode: "sequential",
+        soundEnabled: true,
+      }),
+    );
+
+    const state = loadStoredState("new_hash", {
+      usePersistedDefaultSettings: true,
+    });
+
+    expect(state.settings).toEqual({
+      autoNextOnCorrect: true,
+      activePoolSize: 42,
+      correctStreakToMaster: 5,
+      correctStreakAfterMistake: 8,
+      selectionMode: "sequential",
+      soundEnabled: true,
+    });
+  });
+
+  it("未启用持久化默认设置时，忽略本地默认设置", () => {
+    localStorage.setItem(
+      STORAGE_KEY_DEFAULT_SETTINGS,
+      JSON.stringify({
+        autoNextOnCorrect: true,
+        activePoolSize: 42,
+      }),
+    );
+
+    const state = loadStoredState("bundled_like_hash");
+
+    expect(state.settings).toEqual(createDefaultSettings());
+  });
+
   it("ui 段缺失字段 → 用默认值补齐", () => {
     const partial = {
       masteredIds: [],
@@ -118,6 +199,39 @@ describe("loadStoredState", () => {
     const loaded = loadStoredState(HASH);
     expect(loaded.ui.progressFocused).toBe(true);
     expect(loaded.ui.showPool).toBe(false);
+  });
+
+  it("bank settings 部分字段缺失时，用持久化默认设置补齐", () => {
+    localStorage.setItem(
+      STORAGE_KEY_DEFAULT_SETTINGS,
+      JSON.stringify({
+        autoNextOnCorrect: false,
+        activePoolSize: 33,
+        correctStreakToMaster: 4,
+        correctStreakAfterMistake: 7,
+        selectionMode: "sequential",
+        soundEnabled: true,
+      }),
+    );
+    const partial = {
+      masteredIds: [],
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: { autoNextOnCorrect: true },
+    };
+    localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(partial));
+
+    const loaded = loadStoredState(HASH, {
+      usePersistedDefaultSettings: true,
+    });
+
+    expect(loaded.settings.autoNextOnCorrect).toBe(true);
+    expect(loaded.settings.activePoolSize).toBe(33);
+    expect(loaded.settings.correctStreakToMaster).toBe(4);
+    expect(loaded.settings.correctStreakAfterMistake).toBe(7);
+    expect(loaded.settings.selectionMode).toBe("sequential");
+    expect(loaded.settings.soundEnabled).toBe(true);
   });
 
   it("ui 段完整 round-trip", () => {
@@ -234,6 +348,44 @@ describe("saveState", () => {
     const raw = localStorage.getItem(STORAGE_PREFIX_STATE + HASH)!;
     const parsed = JSON.parse(raw);
     expect(parsed).not.toHaveProperty("pendingIds");
+  });
+
+  it("默认不更新持久化默认设置", () => {
+    const runtime: RuntimeState = {
+      masteredIds: [],
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: { ...createDefaultSettings(), autoNextOnCorrect: true },
+      pendingIds: [],
+    };
+
+    saveState(HASH, runtime);
+
+    expect(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)).toBeNull();
+  });
+
+  it("传入 updateDefaultSettings 时同步写入持久化默认设置", () => {
+    const runtime: RuntimeState = {
+      masteredIds: [],
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: {
+        ...createDefaultSettings(),
+        autoNextOnCorrect: true,
+        activePoolSize: 24,
+        selectionMode: "sequential",
+        soundEnabled: true,
+      },
+      pendingIds: [],
+    };
+
+    saveState(HASH, runtime, { updateDefaultSettings: true });
+
+    expect(
+      JSON.parse(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)!),
+    ).toEqual(runtime.settings);
   });
 
   it("写入配额异常仅 warn 不抛错", () => {

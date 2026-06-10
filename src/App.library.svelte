@@ -38,7 +38,7 @@
 
     {#if activeBank}
         {#key activeBank.hash}
-            <QuizView bank={activeBank} />
+            <QuizView bank={activeBank} persistDefaultSettings={true} />
         {/key}
     {:else}
         <main class="flex flex-1 flex-col items-center justify-center px-6">

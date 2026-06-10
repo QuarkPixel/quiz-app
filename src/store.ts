@@ -18,10 +18,21 @@ import type {
 
 import {
   STORAGE_PREFIX_STATE,
+  STORAGE_KEY_DEFAULT_SETTINGS,
   ACTIVE_POOL_SIZE,
   CORRECT_STREAK_TO_MASTER,
   CORRECT_STREAK_AFTER_MISTAKE,
 } from "./config";
+
+export interface LoadStoredStateOptions {
+  /** 使用本地持久化的默认设置作为缺省值（library 模式使用）。 */
+  usePersistedDefaultSettings?: boolean;
+}
+
+export interface SaveStateOptions {
+  /** 保存当前 bank 状态时，同步把 settings 写入默认设置。 */
+  updateDefaultSettings?: boolean;
+}
 
 /** 创建默认的用户设置 */
 export function createDefaultSettings(): UserSettings {
@@ -32,6 +43,45 @@ export function createDefaultSettings(): UserSettings {
     correctStreakAfterMistake: CORRECT_STREAK_AFTER_MISTAKE,
     selectionMode: "random",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function mergeSettings(
+  defaults: UserSettings,
+  settings: unknown,
+): UserSettings {
+  if (!isRecord(settings)) return { ...defaults };
+  return {
+    ...defaults,
+    ...(settings as Partial<UserSettings>),
+  };
+}
+
+/** 从 localStorage 加载用户默认设置；不存在时回落到代码默认配置。 */
+export function loadDefaultSettings(): UserSettings {
+  const codeDefaults = createDefaultSettings();
+
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS);
+    if (saved === null) return codeDefaults;
+    return mergeSettings(codeDefaults, JSON.parse(saved));
+  } catch (e) {
+    console.error("Failed to load default settings:", e);
+    return codeDefaults;
+  }
+}
+
+/** 保存用户默认设置。失败仅 warn，不打断当前题库设置保存流程。 */
+export function saveDefaultSettings(settings: UserSettings): void {
+  try {
+    const toStore = mergeSettings(createDefaultSettings(), settings);
+    localStorage.setItem(STORAGE_KEY_DEFAULT_SETTINGS, JSON.stringify(toStore));
+  } catch (e) {
+    console.warn("Failed to save default settings:", e);
+  }
 }
 
 /** 创建默认的 UI 偏好 */
@@ -64,13 +114,17 @@ export function isUnansweredNewActivePoolItem(
 }
 
 /** 创建默认的存储状态 */
-function createDefaultStoredState(): StoredState {
+function createDefaultStoredState(
+  options: LoadStoredStateOptions = {},
+): StoredState {
   return {
     masteredIds: [],
     activePool: [],
     currentRound: 0,
     filterType: "all",
-    settings: createDefaultSettings(),
+    settings: options.usePersistedDefaultSettings
+      ? loadDefaultSettings()
+      : createDefaultSettings(),
     ui: createDefaultUiPreferences(),
   };
 }
@@ -80,36 +134,44 @@ function stateKey(hash: string): string {
 }
 
 /** 从 localStorage 加载指定 bank 的状态 */
-export function loadStoredState(hash: string): StoredState {
+export function loadStoredState(
+  hash: string,
+  options: LoadStoredStateOptions = {},
+): StoredState {
+  const defaultState = createDefaultStoredState(options);
+
   try {
     const saved = localStorage.getItem(stateKey(hash));
     if (saved) {
-      const parsed = JSON.parse(saved) as StoredState;
-      const defaultState = createDefaultStoredState();
+      const parsed = JSON.parse(saved);
+      const parsedState = isRecord(parsed)
+        ? (parsed as Partial<StoredState>)
+        : {};
       return {
         ...defaultState,
-        ...parsed,
-        settings: {
-          ...defaultState.settings,
-          ...parsed.settings,
-        },
+        ...parsedState,
+        settings: mergeSettings(defaultState.settings, parsedState.settings),
         ui: {
           ...defaultState.ui,
-          ...(parsed.ui ?? {}),
+          ...(isRecord(parsedState.ui) ? parsedState.ui : {}),
         },
       };
     }
   } catch (e) {
     console.error("Failed to load state:", e);
   }
-  return createDefaultStoredState();
+  return defaultState;
 }
 
 /**
  * 保存指定 bank 的状态到 localStorage。
  * 配额异常仅 warn 不抛错——做题流不应因此被打断。
  */
-export function saveState(hash: string, state: RuntimeState): void {
+export function saveState(
+  hash: string,
+  state: RuntimeState,
+  options: SaveStateOptions = {},
+): void {
   const toStore: StoredState = {
     masteredIds: state.masteredIds,
     activePool: state.activePool,
@@ -123,12 +185,19 @@ export function saveState(hash: string, state: RuntimeState): void {
   } catch (e) {
     console.warn("Failed to save state:", e);
   }
+
+  if (options.updateDefaultSettings) {
+    saveDefaultSettings(state.settings);
+  }
 }
 
 /** 重置指定 bank 的进度（保留 filterType 和 settings 和 ui） */
-export function resetStoredState(hash: string): StoredState {
-  const previous = loadStoredState(hash);
-  const defaultState = createDefaultStoredState();
+export function resetStoredState(
+  hash: string,
+  options: LoadStoredStateOptions = {},
+): StoredState {
+  const previous = loadStoredState(hash, options);
+  const defaultState = createDefaultStoredState(options);
 
   try {
     localStorage.removeItem(stateKey(hash));
