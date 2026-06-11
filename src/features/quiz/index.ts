@@ -4,7 +4,11 @@ export {
   getCorrectChoiceLetters,
 } from "./answer";
 export { buildFilterOptions, getTypeName, normalizeFilterType } from "./filters";
-export { isEditingTarget } from "./keyboard";
+export {
+  hasSelectedText,
+  isEditingTarget,
+  isInteractiveTarget,
+} from "./keyboard";
 export { reconcileAfterSettingsChange, sanitizeUserSettings } from "./settings";
 export {
   applyAnswer,

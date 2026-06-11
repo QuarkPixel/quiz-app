@@ -13,6 +13,7 @@ function makeSessionStub(showResult = false) {
     showResult,
     submit: vi.fn(),
     selectNext: vi.fn(),
+    copyCurrentQuestion: vi.fn(),
     togglePool: vi.fn(),
     toggleAutoNext: vi.fn(),
     startImport: vi.fn(),
@@ -20,6 +21,7 @@ function makeSessionStub(showResult = false) {
   } as unknown as QuizSession & {
     submit: ReturnType<typeof vi.fn>;
     selectNext: ReturnType<typeof vi.fn>;
+    copyCurrentQuestion: ReturnType<typeof vi.fn>;
     togglePool: ReturnType<typeof vi.fn>;
     toggleAutoNext: ReturnType<typeof vi.fn>;
     startImport: ReturnType<typeof vi.fn>;
@@ -51,6 +53,8 @@ function mkEvent(
     ctrlKey: init.ctrlKey ?? false,
     altKey: init.altKey ?? false,
     shiftKey: init.shiftKey ?? false,
+    defaultPrevented: init.defaultPrevented ?? false,
+    isComposing: init.isComposing ?? false,
     target: init.target ?? document.body,
     preventDefault: vi.fn(),
   };
@@ -79,13 +83,64 @@ describe("Mod 快捷键派发", () => {
     expect(ui.toggleReview).toHaveBeenCalledOnce();
   });
 
-  it("Cmd+C → toggleSettings", () => {
+  it("Cmd+C → copyCurrentQuestion", () => {
+    const session = makeSessionStub();
+    const ui = makeUiStub();
+    const ev = mkEvent({ metaKey: true, key: SHORTCUTS.copyQuestion });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.copyCurrentQuestion).toHaveBeenCalledWith({
+      announce: true,
+    });
+    expect(ev.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("Cmd+C on input → 不抢默认复制", () => {
+    const session = makeSessionStub();
+    const ui = makeUiStub();
+    const input = document.createElement("input");
+    const ev = mkEvent({
+      metaKey: true,
+      key: SHORTCUTS.copyQuestion,
+      target: input,
+    });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.copyCurrentQuestion).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("Cmd+C 有选中文本 → 不抢默认复制", () => {
+    const session = makeSessionStub();
+    const ui = makeUiStub();
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => "selected text",
+    } as Selection);
+    const ev = mkEvent({ metaKey: true, key: SHORTCUTS.copyQuestion });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.copyCurrentQuestion).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("Cmd+I → toggleSettings", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
     createKeyboardHandler(session, ui)(
       mkEvent({ metaKey: true, key: SHORTCUTS.toggleSettings }),
     );
     expect(ui.toggleSettings).toHaveBeenCalledOnce();
+  });
+
+  it("Cmd+P on input → 不抢编辑区快捷键", () => {
+    const session = makeSessionStub();
+    const ui = makeUiStub();
+    const input = document.createElement("input");
+    const ev = mkEvent({
+      metaKey: true,
+      key: SHORTCUTS.togglePool,
+      target: input,
+    });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.togglePool).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 
   it("Cmd+A → toggleAutoNext", () => {
@@ -166,6 +221,42 @@ describe("Space / Enter 全局快捷键", () => {
       mkEvent({ code: "Enter", key: "Enter" }),
     );
     expect(session.submit).toHaveBeenCalledOnce();
+  });
+
+  it("Enter on button → 不抢控件默认激活", () => {
+    const session = makeSessionStub(false);
+    const ui = makeUiStub();
+    const button = document.createElement("button");
+    const ev = mkEvent({ code: "Enter", key: "Enter", target: button });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(session.selectNext).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("Space on ARIA button → 不抢控件默认激活", () => {
+    const session = makeSessionStub(false);
+    const ui = makeUiStub();
+    const button = document.createElement("div");
+    button.setAttribute("role", "button");
+    const ev = mkEvent({ code: "Space", key: " ", target: button });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(session.selectNext).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("IME 组合输入中的 Enter → 不提交", () => {
+    const session = makeSessionStub(false);
+    const ui = makeUiStub();
+    const ev = mkEvent({
+      code: "Enter",
+      key: "Enter",
+      isComposing: true,
+    });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 
   it("其他键 → 不触发", () => {

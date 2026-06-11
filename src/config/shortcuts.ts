@@ -12,6 +12,8 @@ export const SHORTCUTS = {
   togglePool: "p",
   /** 切换答案预览 */
   toggleReview: "d",
+  /** 复制当前题目 */
+  copyQuestion: "c",
   /** 切换设置 */
   toggleSettings: "i",
   /** 切换"答对自动下一题" */

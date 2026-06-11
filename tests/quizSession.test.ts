@@ -388,6 +388,69 @@ describe("UI 偏好 toggle", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 复制当前题目
+// ---------------------------------------------------------------------------
+
+describe("复制当前题目", () => {
+  it("copyCurrentQuestion 写入当前题目文本", async () => {
+    const { deps } = makeDeps();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(global.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const session = new QuizSession(
+      makeBank([q("only_q", "judgment", true)]),
+      deps,
+    );
+    session.initialize();
+    const result = await session.copyCurrentQuestion();
+
+    expect(result).toBe("copied");
+    expect(writeText).toHaveBeenCalledWith("判断题：\nq-only_q");
+  });
+
+  it("copyCurrentQuestion 快捷键触发时用 toast 反馈", async () => {
+    const { deps, toast } = makeDeps();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(global.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const session = new QuizSession(
+      makeBank([q("only_q", "judgment", true)]),
+      deps,
+    );
+    session.initialize();
+    const result = await session.copyCurrentQuestion({ announce: true });
+
+    expect(result).toBe("copied");
+    expect(toast).toHaveBeenCalledWith(
+      "题目已复制到剪贴板",
+      expect.any(String),
+      "success",
+    );
+  });
+
+  it("copyCurrentQuestion 无当前题时不写剪贴板", async () => {
+    const { deps } = makeDeps();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(global.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const session = new QuizSession(makeBank(), deps);
+    const result = await session.copyCurrentQuestion();
+
+    expect(result).toBe("unavailable");
+    expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 导入导出
 // ---------------------------------------------------------------------------
 

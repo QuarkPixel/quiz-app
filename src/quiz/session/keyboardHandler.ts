@@ -5,7 +5,11 @@
  * 留在 QuizView 局部，通过 uiActions 注入。
  */
 
-import { isEditingTarget } from "../../features/quiz";
+import {
+  hasSelectedText,
+  isEditingTarget,
+  isInteractiveTarget,
+} from "../../features/quiz";
 import { SHORTCUTS } from "../../config";
 import type { QuizSession } from "./QuizSession.svelte";
 
@@ -19,13 +23,28 @@ export function createKeyboardHandler(
   uiActions: KeyboardUiActions,
 ): (event: KeyboardEvent) => void {
   return (event: KeyboardEvent) => {
-    const isMod = event.metaKey || event.ctrlKey;
+    if (event.defaultPrevented || event.isComposing) return;
 
-    // Cmd/Ctrl + 单键：全局快捷键。在输入框内不抢，让 Cmd+A 等浏览器默认生效。
+    const isMod = event.metaKey || event.ctrlKey;
+    const target =
+      typeof Element !== "undefined" && event.target instanceof Element
+        ? event.target
+        : null;
+    const inDialog = target?.closest('[role="dialog"]') !== null;
+    const inBlankInput = target?.classList.contains("blank-input") === true;
+
+    // Cmd/Ctrl + 单键：全局快捷键。
     if (isMod && !event.altKey && !event.shiftKey) {
       const key = event.key.toLowerCase();
       // Cmd+B (sidebar) 留给 Sidebar context 处理
       if (key === SHORTCUTS.sidebar) return;
+      if (inDialog || isEditingTarget(event)) return;
+      if (key === SHORTCUTS.copyQuestion) {
+        if (hasSelectedText()) return;
+        event.preventDefault();
+        void session.copyCurrentQuestion({ announce: true });
+        return;
+      }
       if (key === SHORTCUTS.togglePool) {
         event.preventDefault();
         session.togglePool();
@@ -66,10 +85,6 @@ export function createKeyboardHandler(
 
     if (event.code !== "Space" && event.code !== "Enter") return;
 
-    const target = event.target as HTMLElement | null;
-    const inDialog = !!target?.closest('[role="dialog"]');
-    const inBlankInput = !!target?.classList?.contains("blank-input");
-
     // L2: 设置 / 答案预览 dialog 内 — Enter 让输入框 blur 触发 onchange
     if (inDialog) {
       if (event.code === "Enter" && isEditingTarget(event)) {
@@ -87,8 +102,8 @@ export function createKeyboardHandler(
       return;
     }
 
-    // 其他编辑目标（兜底）：保留默认
-    if (isEditingTarget(event)) return;
+    // 其他原生 / ARIA 交互目标：保留默认键盘行为。
+    if (isInteractiveTarget(event)) return;
 
     // L3: 全局
     event.preventDefault();

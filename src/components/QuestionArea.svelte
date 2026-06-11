@@ -64,26 +64,10 @@
 
     async function copyCurrentQuestion(event: MouseEvent): Promise<void> {
         event.stopPropagation();
-        if (!session.currentQuestion || !session.currentTypeDef) return;
-
-        const text = session.currentTypeDef.formatCopyText(
-            session.currentQuestion,
-            {
-                showResult: session.showResult,
-                isCorrect: session.isCorrect,
-                shuffledOptions: session.shuffledOptions,
-                selectedAnswers: session.selectedAnswers,
-                blankAnswerInputs: session.blankAnswerInputs,
-            },
-        );
-
-        try {
-            if (!navigator.clipboard?.writeText) {
-                throw new Error("Clipboard API is unavailable.");
-            }
-            await navigator.clipboard.writeText(text);
+        const result = await session.copyCurrentQuestion();
+        if (result === "copied") {
             setCopyStatus("copied");
-        } catch {
+        } else if (result === "error") {
             setCopyStatus("error");
         }
     }

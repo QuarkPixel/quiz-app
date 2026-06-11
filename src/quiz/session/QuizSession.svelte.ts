@@ -54,6 +54,7 @@ import {
 import type { SoundPlayer } from "../../sound/types";
 
 export type ExportStatus = "idle" | "copied" | "error";
+export type CopyQuestionResult = "copied" | "error" | "unavailable";
 
 export type ToastVariant = "default" | "success" | "destructive";
 
@@ -69,6 +70,11 @@ export interface QuizSessionDeps {
 export interface QuizSessionOptions {
   /** Library 模式：设置变更同步写入本地默认设置，新题库加载时使用。 */
   persistDefaultSettings?: boolean;
+}
+
+export interface CopyQuestionOptions {
+  /** 快捷键触发时用 toast 提供反馈；按钮触发时用按钮状态反馈。 */
+  announce?: boolean;
 }
 
 export type ShuffledOption = Option & { originalIndex: number };
@@ -320,6 +326,47 @@ export class QuizSession {
   togglePool(): void {
     this.appState.ui.showPool = !this.appState.ui.showPool;
     this.save();
+  }
+
+  async copyCurrentQuestion(
+    options: CopyQuestionOptions = {},
+  ): Promise<CopyQuestionResult> {
+    if (!this.currentQuestion || !this.currentTypeDef) return "unavailable";
+
+    const text = this.currentTypeDef.formatCopyText(this.currentQuestion, {
+      showResult: this.showResult,
+      isCorrect: this.isCorrect,
+      shuffledOptions: this.shuffledOptions,
+      selectedAnswers: this.selectedAnswers,
+      blankAnswerInputs: this.blankAnswerInputs,
+    });
+
+    try {
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.clipboard?.writeText
+      ) {
+        throw new Error("Clipboard API is unavailable.");
+      }
+      await navigator.clipboard.writeText(text);
+      if (options.announce) {
+        this.deps.toast(
+          "题目已复制到剪贴板",
+          "可直接粘贴到任意位置。",
+          "success",
+        );
+      }
+      return "copied";
+    } catch {
+      if (options.announce) {
+        this.deps.toast(
+          "复制失败",
+          "当前浏览器不允许写入剪贴板。",
+          "destructive",
+        );
+      }
+      return "error";
+    }
   }
 
   /** 算法相关设置变更：钳值、重 reconcile 活动池 */
