@@ -1,10 +1,10 @@
 {
     "name": "Quiz! aPP.",
-    "short_name": "Quiz",
+    "short_name": "QuizPP",
     "description": "中文题库刷题应用",
     "lang": "zh-CN",
-    "start_url": ".",
-    "scope": ".",
+    "start_url": "/",
+    "scope": "/",
     "display": "standalone",
     "orientation": "portrait",
     "background_color": "#ffffff",

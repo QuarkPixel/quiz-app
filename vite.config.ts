@@ -65,10 +65,6 @@ function faviconDataUrl(): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-function pngDataUrl(path: string): string {
-  return `data:image/png;base64,${readFileSync(path).toString("base64")}`;
-}
-
 function injectIntoHead(html: string, tags: string[]): string {
   return html.replace(
     /\s*<\/head>/,
@@ -78,13 +74,18 @@ function injectIntoHead(html: string, tags: string[]): string {
 
 function createHeadAssetTags(options: {
   faviconHref: string;
-  appleTouchIconHref: string;
+  appleTouchIconHref?: string;
   manifestHref?: string;
 }): string[] {
   const tags = [
     `<link rel="icon" type="image/svg+xml" href="${options.faviconHref}" />`,
-    `<link rel="apple-touch-icon" sizes="180x180" href="${options.appleTouchIconHref}" />`,
   ];
+
+  if (options.appleTouchIconHref) {
+    tags.push(
+      `<link rel="apple-touch-icon" sizes="180x180" href="${options.appleTouchIconHref}" />`,
+    );
+  }
 
   if (options.manifestHref) {
     tags.push(`<link rel="manifest" href="${options.manifestHref}" />`);
@@ -93,27 +94,53 @@ function createHeadAssetTags(options: {
   return tags;
 }
 
-function createWebManifest(icon192Href: string, icon512Href: string): string {
+function createMobileMetaTags(): string[] {
+  return [
+    `<meta name="description" content="中文题库刷题应用" />`,
+    `<meta name="application-name" content="Quiz! aPP." />`,
+    `<meta name="apple-mobile-web-app-title" content="Quiz" />`,
+    `<meta name="apple-mobile-web-app-capable" content="yes" />`,
+    `<meta name="mobile-web-app-capable" content="yes" />`,
+    `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`,
+    `<meta name="format-detection" content="telephone=no,email=no,address=no" />`,
+    `<meta name="color-scheme" content="light dark" />`,
+    `<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />`,
+    `<meta name="theme-color" content="#171717" media="(prefers-color-scheme: dark)" />`,
+  ];
+}
+
+function enhanceViewportForMobile(html: string): string {
+  return html.replace(
+    /<meta\s+name="viewport"[\s\S]*?\/>/,
+    `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />`,
+  );
+}
+
+function createWebManifest(options: {
+  appHref: string;
+  icon192Href: string;
+  icon512Href: string;
+}): string {
   return JSON.stringify(
     {
       name: "Quiz! aPP.",
       short_name: "Quiz",
       description: "中文题库刷题应用",
       lang: "zh-CN",
-      start_url: ".",
-      scope: ".",
+      start_url: options.appHref,
+      scope: options.appHref,
       display: "standalone",
       orientation: "portrait",
       background_color: "#ffffff",
       theme_color: "#ffffff",
       icons: [
         {
-          src: icon192Href,
+          src: options.icon192Href,
           sizes: "192x192",
           type: "image/png",
         },
         {
-          src: icon512Href,
+          src: options.icon512Href,
           sizes: "512x512",
           type: "image/png",
           purpose: "any maskable",
@@ -132,6 +159,11 @@ function injectWebAppAssets(): Plugin {
   function outputHref(fileName: string): string {
     if (base === "" || base === "./") return fileName;
     return `${base}${fileName}`;
+  }
+
+  function appHref(): string {
+    if (base === "" || base === "./") return "../";
+    return base.endsWith("/") ? base : `${base}/`;
   }
 
   return {
@@ -166,10 +198,11 @@ function injectWebAppAssets(): Plugin {
       this.emitFile({
         type: "asset",
         fileName: "assets/site.webmanifest",
-        source: createWebManifest(
-          outputHref("assets/icons/pwa-192.png"),
-          outputHref("assets/icons/pwa-512.png"),
-        ),
+        source: createWebManifest({
+          appHref: appHref(),
+          icon192Href: outputHref("assets/icons/pwa-192.png"),
+          icon512Href: outputHref("assets/icons/pwa-512.png"),
+        }),
       });
     },
     transformIndexHtml(html) {
@@ -178,27 +211,29 @@ function injectWebAppAssets(): Plugin {
           html,
           createHeadAssetTags({
             faviconHref: faviconDataUrl(),
-            appleTouchIconHref: pngDataUrl(appleTouchIconPath),
           }),
         );
       }
 
       return injectIntoHead(
-        html,
-        createHeadAssetTags({
-          faviconHref:
-            command === "serve"
-              ? "/assets/icons/icon.svg"
-              : outputHref("assets/icons/icon.svg"),
-          appleTouchIconHref:
-            command === "serve"
-              ? "/assets/icons/apple-touch-icon.png"
-              : outputHref("assets/icons/apple-touch-icon.png"),
-          manifestHref:
-            command === "serve"
-              ? "/assets/site.webmanifest"
-              : outputHref("assets/site.webmanifest"),
-        }),
+        enhanceViewportForMobile(html),
+        [
+          ...createMobileMetaTags(),
+          ...createHeadAssetTags({
+            faviconHref:
+              command === "serve"
+                ? "/assets/icons/icon.svg"
+                : outputHref("assets/icons/icon.svg"),
+            appleTouchIconHref:
+              command === "serve"
+                ? "/assets/icons/apple-touch-icon.png"
+                : outputHref("assets/icons/apple-touch-icon.png"),
+            manifestHref:
+              command === "serve"
+                ? "/assets/site.webmanifest"
+                : outputHref("assets/site.webmanifest"),
+          }),
+        ],
       );
     },
   };
