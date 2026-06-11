@@ -89,7 +89,7 @@ function displayOptions(
 }
 
 function copyChoiceLetter(position: number): string {
-  return String.fromCharCode(97 + position);
+  return String.fromCharCode(65 + position);
 }
 
 function choiceCopyLetters(
@@ -127,19 +127,19 @@ export function formatChoiceCopyText(
     context.shuffledOptions,
     question.answer as number[],
   );
+  const myAnswer = choiceCopyLetters(
+    question,
+    context.shuffledOptions,
+    context.selectedAnswers,
+  );
 
-  if (context.isCorrect) {
-    lines.push(`正确答案：${correctAnswer}`);
+  if (context.isCorrect || !myAnswer) {
+    lines.push("", `答案：${correctAnswer}`);
   } else {
     lines.push(
-      `我的答案：${
-        choiceCopyLetters(
-          question,
-          context.shuffledOptions,
-          context.selectedAnswers,
-        ) || "未作答"
-      }`,
-      `正确答案：${correctAnswer}`,
+      "",
+      `我的答案：${myAnswer}`,
+      `实际答案：${correctAnswer}`,
     );
   }
 

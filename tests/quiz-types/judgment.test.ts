@@ -90,7 +90,7 @@ describe("judgmentType.formatCopyText", () => {
 
   it("未作答时复制判断题选项", () => {
     expect(judgmentType.formatCopyText(q, baseContext)).toBe(
-      ["判断题：", "地球是圆的", "a. 正确", "b. 错误"].join("\n"),
+      ["判断题：", "地球是圆的"].join("\n"),
     );
   });
 
@@ -102,7 +102,7 @@ describe("judgmentType.formatCopyText", () => {
         selectedAnswers: [1],
       }),
     ).toBe(
-      ["判断题：", "地球是圆的", "a. 正确", "b. 错误", "我的答案：错误", "正确答案：正确"].join(
+      ["判断题：", "地球是圆的", "", "我的答案：错误", "实际答案：正确"].join(
         "\n",
       ),
     );

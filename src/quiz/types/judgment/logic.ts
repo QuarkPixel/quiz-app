@@ -29,18 +29,20 @@ export const judgmentLogic: QuestionTypeLogic = {
   },
 
   formatCopyText(question: Question, context) {
-    const lines = ["判断题：", question.question, "a. 正确", "b. 错误"];
+    const lines = ["判断题：", question.question];
 
     if (!context.showResult) return lines.join("\n");
 
     const correctAnswer = question.answer ? "正确" : "错误";
-    if (context.isCorrect) {
-      lines.push(`正确答案：${correctAnswer}`);
+    const selected = context.selectedAnswers[0];
+
+    if (context.isCorrect || selected === undefined) {
+      lines.push("", `答案：${correctAnswer}`);
     } else {
-      const selected = context.selectedAnswers[0];
       lines.push(
-        `我的答案：${selected === 0 ? "正确" : selected === 1 ? "错误" : "未作答"}`,
-        `正确答案：${correctAnswer}`,
+        "",
+        `我的答案：${selected === 0 ? "正确" : "错误"}`,
+        `实际答案：${correctAnswer}`,
       );
     }
 

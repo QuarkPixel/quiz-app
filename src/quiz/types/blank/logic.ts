@@ -41,15 +41,15 @@ export const blankLogic: QuestionTypeLogic = {
     const correctAnswer = Array.isArray(question.answer)
       ? (question.answer as string[]).join(" | ")
       : (question.answer as string);
-    if (context.isCorrect) {
-      lines.push(`正确答案：${correctAnswer}`);
+    const myAnswer = context.blankAnswerInputs
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(" | ");
+
+    if (context.isCorrect || !myAnswer) {
+      lines.push("", `答案：${correctAnswer}`);
     } else {
-      const myAnswer =
-        context.blankAnswerInputs
-          .map((value) => value.trim())
-          .filter(Boolean)
-          .join(" | ") || "未作答";
-      lines.push(`我的答案：${myAnswer}`, `正确答案：${correctAnswer}`);
+      lines.push("", `我的答案：${myAnswer}`, `实际答案：${correctAnswer}`);
     }
 
     return lines.join("\n");

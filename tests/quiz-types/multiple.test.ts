@@ -127,7 +127,7 @@ describe("multipleType.formatCopyText", () => {
 
   it("未作答时复制题干和当前选项顺序", () => {
     expect(multipleType.formatCopyText(q, baseContext)).toBe(
-      ["选择题：", "请选择所有正确项", "a. 丙", "b. 乙", "c. 甲", "d. 丁"].join(
+      ["选择题：", "请选择所有正确项", "A. 丙", "B. 乙", "C. 甲", "D. 丁"].join(
         "\n",
       ),
     );
@@ -145,11 +145,12 @@ describe("multipleType.formatCopyText", () => {
       [
         "选择题：",
         "请选择所有正确项",
-        "a. 丙",
-        "b. 乙",
-        "c. 甲",
-        "d. 丁",
-        "正确答案：ac",
+        "A. 丙",
+        "B. 乙",
+        "C. 甲",
+        "D. 丁",
+        "",
+        "答案：AC",
       ].join("\n"),
     );
   });
@@ -165,12 +166,13 @@ describe("multipleType.formatCopyText", () => {
       [
         "选择题：",
         "请选择所有正确项",
-        "a. 丙",
-        "b. 乙",
-        "c. 甲",
-        "d. 丁",
-        "我的答案：ad",
-        "正确答案：ac",
+        "A. 丙",
+        "B. 乙",
+        "C. 甲",
+        "D. 丁",
+        "",
+        "我的答案：AD",
+        "实际答案：AC",
       ].join("\n"),
     );
   });

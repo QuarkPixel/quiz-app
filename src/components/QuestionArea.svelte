@@ -96,44 +96,44 @@
                 QUESTION_TYPES[session.currentQuestion.type].icon}
             <TypeIcon size={16} stroke={1.75} class="text-muted-foreground" />
         {/key}
-        <span class="text-muted-foreground text-xs font-mono">
-            {session.currentQuestion.id}
-        </span>
+        <div class="flex items-center gap-1 text-muted-foreground">
+            <span class="text-xs font-mono">
+                {session.currentQuestion.id}
+            </span>
 
-        <Tooltip.Root delayDuration={0}>
-            <Tooltip.Trigger>
-                {#snippet child({ props })}
-                    <Button
-                        {...props}
-                        variant="ghost"
-                        size="icon-sm"
-                        class={cn(
-                            "ml-auto",
-                            copyStatus === "copied" &&
-                                "text-success hover:text-success",
-                            copyStatus === "error" &&
-                                "text-destructive hover:text-destructive",
-                        )}
-                        aria-label={copyLabel}
-                        onclick={copyCurrentQuestion}
-                    >
-                        {#if copyStatus === "copied"}
-                            <IconCopyCheck stroke={1.75} />
-                        {:else if copyStatus === "error"}
-                            <IconAlertCircle stroke={1.75} />
-                        {:else}
-                            <IconCopy stroke={1.75} />
-                        {/if}
-                    </Button>
-                {/snippet}
-            </Tooltip.Trigger>
-            <Tooltip.Content side="bottom" align="end">
-                <span>{copyLabel}</span>
-            </Tooltip.Content>
-        </Tooltip.Root>
-
+            <Tooltip.Root delayDuration={0}>
+                <Tooltip.Trigger>
+                    {#snippet child({ props })}
+                        <Button
+                            {...props}
+                            variant="ghost"
+                            size="icon-xs"
+                            class={cn(
+                                copyStatus === "copied" &&
+                                    "text-success hover:text-success",
+                                copyStatus === "error" &&
+                                    "text-destructive hover:text-destructive",
+                            )}
+                            aria-label={copyLabel}
+                            onclick={copyCurrentQuestion}
+                        >
+                            {#if copyStatus === "copied"}
+                                <IconCopyCheck stroke={1.75} />
+                            {:else if copyStatus === "error"}
+                                <IconAlertCircle stroke={1.75} />
+                            {:else}
+                                <IconCopy stroke={1.75} />
+                            {/if}
+                        </Button>
+                    {/snippet}
+                </Tooltip.Trigger>
+                <Tooltip.Content side="bottom" align="end">
+                    <span>{copyLabel}</span>
+                </Tooltip.Content>
+            </Tooltip.Root>
+        </div>
         {#if session.currentPoolItem}
-            <div>
+            <div class="ml-auto">
                 <StreakIndicator
                     item={session.currentPoolItem}
                     requiredStreak={session.requiredStreak}

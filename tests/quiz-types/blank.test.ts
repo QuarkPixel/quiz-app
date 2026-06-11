@@ -116,7 +116,7 @@ describe("blankType.formatCopyText", () => {
         isCorrect: true,
         blankAnswerInputs: ["hello"],
       }),
-    ).toBe(["填空题：", "默写 hello", "正确答案：hello"].join("\n"));
+    ).toBe(["填空题：", "默写 hello", "", "答案：hello"].join("\n"));
   });
 
   it("答错时追加我的答案和正确答案", () => {
@@ -126,7 +126,9 @@ describe("blankType.formatCopyText", () => {
         showResult: true,
         blankAnswerInputs: ["helo"],
       }),
-    ).toBe(["填空题：", "默写 hello", "我的答案：helo", "正确答案：hello"].join("\n"));
+    ).toBe(
+      ["填空题：", "默写 hello", "", "我的答案：helo", "实际答案：hello"].join("\n"),
+    );
   });
 });
 
