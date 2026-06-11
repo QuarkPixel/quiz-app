@@ -20,8 +20,8 @@
         new Map(session.questions.map((q) => [q.id, q])),
     );
 
-    const ANSWER_LONG_PRESS_MS = 450;
-    const ANSWER_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+    const ANSWER_TOUCH_REVEAL_MS = 3000;
+    const ANSWER_TOUCH_TAP_MOVE_TOLERANCE_PX = 10;
 
     type PoolEntry = {
         item: ActivePoolItem;
@@ -31,89 +31,72 @@
         answerText: string;
     };
 
-    type LongPressState = {
+    type TouchTapState = {
         id: string;
         pointerId: number;
         startX: number;
         startY: number;
-        timeout: ReturnType<typeof setTimeout>;
     };
 
-    let pressedAnswerId = $state<string | null>(null);
-    let pressedAnswerPointerId: number | null = null;
-    let longPressState: LongPressState | null = null;
+    let revealedAnswerId = $state<string | null>(null);
+    let revealAnswerTimer: ReturnType<typeof setTimeout> | null = null;
+    let touchTapState: TouchTapState | null = null;
 
-    function clearLongPressTimer(): void {
-        if (!longPressState) return;
-        clearTimeout(longPressState.timeout);
-        longPressState = null;
+    function clearRevealAnswerTimer(): void {
+        if (!revealAnswerTimer) return;
+        clearTimeout(revealAnswerTimer);
+        revealAnswerTimer = null;
+    }
+
+    function revealAnswerForTouch(id: string): void {
+        clearRevealAnswerTimer();
+        revealedAnswerId = id;
+        revealAnswerTimer = setTimeout(() => {
+            revealedAnswerId = null;
+            revealAnswerTimer = null;
+        }, ANSWER_TOUCH_REVEAL_MS);
     }
 
     function handlePoolItemPointerDown(event: PointerEvent, id: string): void {
         if (event.pointerType !== "touch") return;
 
-        clearLongPressTimer();
-        pressedAnswerId = null;
-        pressedAnswerPointerId = null;
-
-        if (event.currentTarget instanceof Element) {
-            event.currentTarget.setPointerCapture(event.pointerId);
-        }
-
-        longPressState = {
+        touchTapState = {
             id,
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
-            timeout: setTimeout(() => {
-                if (
-                    !longPressState ||
-                    longPressState.id !== id ||
-                    longPressState.pointerId !== event.pointerId
-                ) {
-                    return;
-                }
-
-                pressedAnswerId = id;
-                pressedAnswerPointerId = event.pointerId;
-                longPressState = null;
-            }, ANSWER_LONG_PRESS_MS),
         };
     }
 
     function handlePoolItemPointerMove(event: PointerEvent): void {
-        if (!longPressState || event.pointerId !== longPressState.pointerId) {
+        if (!touchTapState || event.pointerId !== touchTapState.pointerId) {
             return;
         }
 
-        const dx = event.clientX - longPressState.startX;
-        const dy = event.clientY - longPressState.startY;
-        if (Math.hypot(dx, dy) > ANSWER_LONG_PRESS_MOVE_TOLERANCE_PX) {
-            clearLongPressTimer();
+        const dx = event.clientX - touchTapState.startX;
+        const dy = event.clientY - touchTapState.startY;
+        if (Math.hypot(dx, dy) > ANSWER_TOUCH_TAP_MOVE_TOLERANCE_PX) {
+            touchTapState = null;
         }
     }
 
     function handlePoolItemPointerEnd(event: PointerEvent): void {
         if (event.pointerType !== "touch") return;
 
-        if (longPressState?.pointerId === event.pointerId) {
-            clearLongPressTimer();
-        }
-
-        if (pressedAnswerPointerId === event.pointerId) {
-            pressedAnswerId = null;
-            pressedAnswerPointerId = null;
+        if (touchTapState?.pointerId === event.pointerId) {
+            revealAnswerForTouch(touchTapState.id);
+            touchTapState = null;
         }
     }
 
-    function handlePoolItemContextMenu(event: MouseEvent): void {
-        if (longPressState || pressedAnswerId) {
-            event.preventDefault();
+    function handlePoolItemPointerCancel(event: PointerEvent): void {
+        if (touchTapState?.pointerId === event.pointerId) {
+            touchTapState = null;
         }
     }
 
     onDestroy(() => {
-        clearLongPressTimer();
+        clearRevealAnswerTimer();
     });
 
     let entries = $derived.by<PoolEntry[]>(() => {
@@ -169,8 +152,7 @@
                         handlePoolItemPointerDown(event, entry.item.id)}
                     onpointermove={handlePoolItemPointerMove}
                     onpointerup={handlePoolItemPointerEnd}
-                    onpointercancel={handlePoolItemPointerEnd}
-                    oncontextmenu={handlePoolItemContextMenu}
+                    onpointercancel={handlePoolItemPointerCancel}
                 >
                     <div
                         class="text-muted-foreground/70 flex items-center gap-2 text-[10px]"
@@ -204,7 +186,8 @@
                         class={cn(
                             "pool-answer",
                             "text-success/90 truncate text-[12px] leading-snug transition-opacity duration-300 ease-spring",
-                            entry.isLatest || pressedAnswerId === entry.item.id
+                            entry.isLatest ||
+                                revealedAnswerId === entry.item.id
                                 ? "opacity-100"
                                 : "opacity-0",
                         )}
@@ -245,6 +228,7 @@
         .pool-item {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
+            touch-action: manipulation;
             user-select: none;
         }
     }
