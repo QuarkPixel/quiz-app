@@ -52,6 +52,12 @@ if (mode === "bundled" && !isTest) {
 
 const bundledOutputName = `bundled-${bundledHash}.html`;
 const faviconPath = resolve(__dirname, "assets/icons/icon.svg");
+const appleTouchIconPath = resolve(
+  __dirname,
+  "assets/icons/apple-touch-icon.png",
+);
+const pwaIcon192Path = resolve(__dirname, "assets/icons/pwa-192.png");
+const pwaIcon512Path = resolve(__dirname, "assets/icons/pwa-512.png");
 
 // ─── HTML 常量注入 ───────────────────────────────────────────────────────────
 function faviconDataUrl(): string {
@@ -59,15 +65,69 @@ function faviconDataUrl(): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-function injectIntoHead(html: string, href: string): string {
-  const tag = `<link rel="icon" type="image/svg+xml" href="${href}" />`;
-  return html.replace("</head>", `        ${tag}\n    </head>`);
+function pngDataUrl(path: string): string {
+  return `data:image/png;base64,${readFileSync(path).toString("base64")}`;
 }
 
-function injectFavicon(): Plugin {
+function injectIntoHead(html: string, tags: string[]): string {
+  return html.replace(
+    /\s*<\/head>/,
+    `\n${tags.map((tag) => `        ${tag}`).join("\n")}\n    </head>`,
+  );
+}
+
+function createHeadAssetTags(options: {
+  faviconHref: string;
+  appleTouchIconHref: string;
+  manifestHref?: string;
+}): string[] {
+  const tags = [
+    `<link rel="icon" type="image/svg+xml" href="${options.faviconHref}" />`,
+    `<link rel="apple-touch-icon" sizes="180x180" href="${options.appleTouchIconHref}" />`,
+  ];
+
+  if (options.manifestHref) {
+    tags.push(`<link rel="manifest" href="${options.manifestHref}" />`);
+  }
+
+  return tags;
+}
+
+function createWebManifest(icon192Href: string, icon512Href: string): string {
+  return JSON.stringify(
+    {
+      name: "Quiz! aPP.",
+      short_name: "Quiz",
+      description: "中文题库刷题应用",
+      lang: "zh-CN",
+      start_url: ".",
+      scope: ".",
+      display: "standalone",
+      orientation: "portrait",
+      background_color: "#ffffff",
+      theme_color: "#ffffff",
+      icons: [
+        {
+          src: icon192Href,
+          sizes: "192x192",
+          type: "image/png",
+        },
+        {
+          src: icon512Href,
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any maskable",
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+function injectWebAppAssets(): Plugin {
   let command: "build" | "serve" = "build";
   let base = "/";
-  let libraryFaviconRef: string | null = null;
 
   function outputHref(fileName: string): string {
     if (base === "" || base === "./") return fileName;
@@ -75,34 +135,71 @@ function injectFavicon(): Plugin {
   }
 
   return {
-    name: "inject-favicon",
+    name: "inject-web-app-assets",
     configResolved(config) {
       command = config.command;
       base = config.base;
     },
     buildStart() {
       if (mode !== "library" || command !== "build") return;
-      libraryFaviconRef = this.emitFile({
+
+      this.emitFile({
         type: "asset",
-        name: "icon.svg",
+        fileName: "assets/icons/icon.svg",
         source: readFileSync(faviconPath),
+      });
+      this.emitFile({
+        type: "asset",
+        fileName: "assets/icons/apple-touch-icon.png",
+        source: readFileSync(appleTouchIconPath),
+      });
+      this.emitFile({
+        type: "asset",
+        fileName: "assets/icons/pwa-192.png",
+        source: readFileSync(pwaIcon192Path),
+      });
+      this.emitFile({
+        type: "asset",
+        fileName: "assets/icons/pwa-512.png",
+        source: readFileSync(pwaIcon512Path),
+      });
+      this.emitFile({
+        type: "asset",
+        fileName: "assets/site.webmanifest",
+        source: createWebManifest(
+          outputHref("assets/icons/pwa-192.png"),
+          outputHref("assets/icons/pwa-512.png"),
+        ),
       });
     },
     transformIndexHtml(html) {
-      if (mode === "bundled") return injectIntoHead(html, faviconDataUrl());
-      if (command === "serve") return injectIntoHead(html, "/assets/icons/icon.svg");
-      return html;
-    },
-    generateBundle(_, bundle) {
-      if (mode !== "library" || !libraryFaviconRef) return;
-
-      const href = outputHref(this.getFileName(libraryFaviconRef));
-      for (const item of Object.values(bundle)) {
-        if (item.type !== "asset" || !item.fileName.endsWith(".html")) continue;
-        if (typeof item.source !== "string") continue;
-
-        item.source = injectIntoHead(item.source, href);
+      if (mode === "bundled") {
+        return injectIntoHead(
+          html,
+          createHeadAssetTags({
+            faviconHref: faviconDataUrl(),
+            appleTouchIconHref: pngDataUrl(appleTouchIconPath),
+          }),
+        );
       }
+
+      return injectIntoHead(
+        html,
+        createHeadAssetTags({
+          faviconHref:
+            command === "serve"
+              ? "/assets/icons/icon.svg"
+              : outputHref("assets/icons/icon.svg"),
+          appleTouchIconHref:
+            command === "serve"
+              ? "/assets/icons/apple-touch-icon.png"
+              : outputHref("assets/icons/apple-touch-icon.png"),
+          manifestHref:
+            command === "serve"
+              ? "/assets/site.webmanifest"
+              : outputHref("assets/site.webmanifest"),
+        }),
+      );
     },
   };
 }
@@ -171,7 +268,7 @@ export default defineConfig(async () => ({
   plugins: [
     ...(await loadTailwindPlugins()),
     svelte(),
-    injectFavicon(),
+    injectWebAppAssets(),
     ...(mode === "bundled"
       ? [viteSingleFile({ useRecommendedBuildConfig: false }), renameOutput()]
       : []),
