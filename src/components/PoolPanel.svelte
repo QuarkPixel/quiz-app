@@ -20,8 +20,8 @@
         new Map(session.questions.map((q) => [q.id, q])),
     );
 
-    const ANSWER_TOUCH_REVEAL_MS = 3000;
-    const ANSWER_TOUCH_TAP_MOVE_TOLERANCE_PX = 10;
+    const ANSWER_POINTER_REVEAL_MS = 3000;
+    const ANSWER_POINTER_TAP_MOVE_TOLERANCE_PX = 10;
 
     type PoolEntry = {
         item: ActivePoolItem;
@@ -31,7 +31,7 @@
         answerText: string;
     };
 
-    type TouchTapState = {
+    type PointerTapState = {
         id: string;
         pointerId: number;
         startX: number;
@@ -43,7 +43,7 @@
         string,
         ReturnType<typeof setTimeout>
     >();
-    const touchTapStates = new Map<number, TouchTapState>();
+    const pointerTapStates = new Map<number, PointerTapState>();
 
     function clearRevealAnswerTimer(id: string): void {
         const timer = revealAnswerTimers.get(id);
@@ -59,7 +59,7 @@
         revealedAnswerKeys = nextRevealedAnswerKeys;
     }
 
-    function revealAnswerForTouch(id: string): void {
+    function revealAnswerForPointerTap(id: string): void {
         clearRevealAnswerTimer(id);
 
         revealedAnswerKeys = {
@@ -71,14 +71,18 @@
             if (revealAnswerTimers.get(id) !== timer) return;
             revealAnswerTimers.delete(id);
             hideRevealedAnswer(id);
-        }, ANSWER_TOUCH_REVEAL_MS);
+        }, ANSWER_POINTER_REVEAL_MS);
         revealAnswerTimers.set(id, timer);
     }
 
-    function handlePoolItemPointerDown(event: PointerEvent, id: string): void {
-        if (event.pointerType !== "touch") return;
+    function canRevealAnswerWithPointer(event: PointerEvent): boolean {
+        return event.pointerType === "touch" || event.pointerType === "pen";
+    }
 
-        touchTapStates.set(event.pointerId, {
+    function handlePoolItemPointerDown(event: PointerEvent, id: string): void {
+        if (!canRevealAnswerWithPointer(event)) return;
+
+        pointerTapStates.set(event.pointerId, {
             id,
             pointerId: event.pointerId,
             startX: event.clientX,
@@ -87,34 +91,34 @@
     }
 
     function handlePoolItemPointerMove(event: PointerEvent): void {
-        const touchTapState = touchTapStates.get(event.pointerId);
-        if (!touchTapState) return;
+        const pointerTapState = pointerTapStates.get(event.pointerId);
+        if (!pointerTapState) return;
 
-        const dx = event.clientX - touchTapState.startX;
-        const dy = event.clientY - touchTapState.startY;
-        if (Math.hypot(dx, dy) > ANSWER_TOUCH_TAP_MOVE_TOLERANCE_PX) {
-            touchTapStates.delete(event.pointerId);
+        const dx = event.clientX - pointerTapState.startX;
+        const dy = event.clientY - pointerTapState.startY;
+        if (Math.hypot(dx, dy) > ANSWER_POINTER_TAP_MOVE_TOLERANCE_PX) {
+            pointerTapStates.delete(event.pointerId);
         }
     }
 
     function handlePoolItemPointerEnd(event: PointerEvent): void {
-        if (event.pointerType !== "touch") return;
+        if (!canRevealAnswerWithPointer(event)) return;
 
-        const touchTapState = touchTapStates.get(event.pointerId);
-        if (touchTapState) {
-            revealAnswerForTouch(touchTapState.id);
-            touchTapStates.delete(event.pointerId);
+        const pointerTapState = pointerTapStates.get(event.pointerId);
+        if (pointerTapState) {
+            revealAnswerForPointerTap(pointerTapState.id);
+            pointerTapStates.delete(event.pointerId);
         }
     }
 
     function handlePoolItemPointerCancel(event: PointerEvent): void {
-        touchTapStates.delete(event.pointerId);
+        pointerTapStates.delete(event.pointerId);
     }
 
     onDestroy(() => {
         revealAnswerTimers.forEach((timer) => clearTimeout(timer));
         revealAnswerTimers.clear();
-        touchTapStates.clear();
+        pointerTapStates.clear();
     });
 
     let entries = $derived.by<PoolEntry[]>(() => {
@@ -209,7 +213,7 @@
                                     ? "opacity-100"
                                     : revealedAnswerKeys[entry.item.id] !==
                                         undefined
-                                      ? "touch-reveal"
+                                      ? "pointer-reveal"
                                       : "opacity-0",
                             )}
                         >
@@ -240,7 +244,7 @@
         display: none;
     }
 
-    .pool-answer.touch-reveal {
+    .pool-answer.pointer-reveal {
         animation: pool-answer-fade-out 3000ms linear forwards;
     }
 
