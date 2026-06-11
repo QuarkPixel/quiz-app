@@ -42,7 +42,7 @@
     >
         <span
             class={cn(
-                "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
+                "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-xs text-sm font-semibold",
                 isOptionCorrect
                     ? "bg-success text-success-foreground"
                     : isWrong
