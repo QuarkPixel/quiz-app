@@ -39,6 +39,7 @@
     };
 
     let revealedAnswerId = $state<string | null>(null);
+    let revealedAnswerReplayKey = $state(0);
     let revealAnswerTimer: ReturnType<typeof setTimeout> | null = null;
     let touchTapState: TouchTapState | null = null;
 
@@ -51,6 +52,7 @@
     function revealAnswerForTouch(id: string): void {
         clearRevealAnswerTimer();
         revealedAnswerId = id;
+        revealedAnswerReplayKey += 1;
         revealAnswerTimer = setTimeout(() => {
             revealedAnswerId = null;
             revealAnswerTimer = null;
@@ -182,18 +184,21 @@
                         {entry.question.question}
                     </p>
 
-                    <p
-                        class={cn(
-                            "pool-answer",
-                            "text-success/90 truncate text-[12px] leading-snug transition-opacity duration-300 ease-spring",
-                            entry.isLatest ||
-                                revealedAnswerId === entry.item.id
-                                ? "opacity-100"
-                                : "opacity-0",
-                        )}
-                    >
-                        {entry.answerText}
-                    </p>
+                    {#key revealedAnswerId === entry.item.id ? revealedAnswerReplayKey : 0}
+                        <p
+                            class={cn(
+                                "pool-answer",
+                                "text-success/90 truncate text-[12px] leading-snug transition-opacity duration-300 ease-spring",
+                                entry.isLatest
+                                    ? "opacity-100"
+                                    : revealedAnswerId === entry.item.id
+                                      ? "touch-reveal"
+                                      : "opacity-0",
+                            )}
+                        >
+                            {entry.answerText}
+                        </p>
+                    {/key}
                 </li>
             {/each}
         </ul>
@@ -216,6 +221,19 @@
     }
     .pool-mask::-webkit-scrollbar {
         display: none;
+    }
+
+    .pool-answer.touch-reveal {
+        animation: pool-answer-fade-out 3000ms linear forwards;
+    }
+
+    @keyframes pool-answer-fade-out {
+        from {
+            opacity: 1;
+        }
+        to {
+            opacity: 0;
+        }
     }
 
     @media (hover: hover) and (pointer: fine) {
