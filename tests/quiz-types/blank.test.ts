@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { blankType } from "../../src/quiz/types/blank";
 import type { Question } from "../../src/types";
+import type { QuestionCopyContext } from "../../src/quiz/types/types";
 
 describe("blankType 元信息", () => {
   it("id / name 正确", () => {
@@ -88,6 +89,44 @@ describe("blankType.formatAnswerText", () => {
   it("字符串数组用 ' | ' 拼接", () => {
     const q: Question = { id: "b2", type: "blank", question: "?", answer: ["a", "b", "c"] };
     expect(blankType.formatAnswerText(q)).toBe("a | b | c");
+  });
+});
+
+describe("blankType.formatCopyText", () => {
+  const q: Question = { id: "b1", type: "blank", question: "默写 hello", answer: "hello" };
+  const baseContext: QuestionCopyContext = {
+    showResult: false,
+    isCorrect: false,
+    shuffledOptions: [],
+    selectedAnswers: [],
+    blankAnswerInputs: [],
+  };
+
+  it("未作答时复制题干", () => {
+    expect(blankType.formatCopyText(q, baseContext)).toBe(
+      ["填空题：", "默写 hello"].join("\n"),
+    );
+  });
+
+  it("答对时追加正确答案", () => {
+    expect(
+      blankType.formatCopyText(q, {
+        ...baseContext,
+        showResult: true,
+        isCorrect: true,
+        blankAnswerInputs: ["hello"],
+      }),
+    ).toBe(["填空题：", "默写 hello", "正确答案：hello"].join("\n"));
+  });
+
+  it("答错时追加我的答案和正确答案", () => {
+    expect(
+      blankType.formatCopyText(q, {
+        ...baseContext,
+        showResult: true,
+        blankAnswerInputs: ["helo"],
+      }),
+    ).toBe(["填空题：", "默写 hello", "我的答案：helo", "正确答案：hello"].join("\n"));
   });
 });
 

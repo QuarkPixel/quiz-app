@@ -33,6 +33,28 @@ export const blankLogic: QuestionTypeLogic = {
     return question.answer as string;
   },
 
+  formatCopyText(question: Question, context) {
+    const lines = ["填空题：", question.question];
+
+    if (!context.showResult) return lines.join("\n");
+
+    const correctAnswer = Array.isArray(question.answer)
+      ? (question.answer as string[]).join(" | ")
+      : (question.answer as string);
+    if (context.isCorrect) {
+      lines.push(`正确答案：${correctAnswer}`);
+    } else {
+      const myAnswer =
+        context.blankAnswerInputs
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .join(" | ") || "未作答";
+      lines.push(`我的答案：${myAnswer}`, `正确答案：${correctAnswer}`);
+    }
+
+    return lines.join("\n");
+  },
+
   getCorrectChoiceLetters() {
     return "";
   },

@@ -44,6 +44,15 @@ export interface QuestionReviewProps {
   question: Question;
 }
 
+/** 复制当前题目时需要的答题上下文。 */
+export interface QuestionCopyContext {
+  showResult: boolean;
+  isCorrect: boolean;
+  shuffledOptions: ShuffledOption[];
+  selectedAnswers: number[];
+  blankAnswerInputs: string[];
+}
+
 /**
  * 一个题型的「能力声明」。每个题型在 `src/quiz/types/<type>/` 下实现一份，
  * 注册到 `registry.ts`。所有跨题型的 `switch (type)` 都应该改成 dispatch 到这里。
@@ -99,6 +108,9 @@ export interface QuestionTypeLogic {
 
   /** 答案的简短文字摘要，用于 PoolPanel / ReviewView 等概览。 */
   formatAnswerText(question: Question): string;
+
+  /** 当前题目的剪贴板文本。按钮在 QuestionArea，文案由各题型自己生成。 */
+  formatCopyText(question: Question, context: QuestionCopyContext): string;
 
   /**
    * 答错反馈用的字母（基于 shuffled 后位置）。

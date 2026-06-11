@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { multipleType } from "../../src/quiz/types/multiple";
 import type { Question } from "../../src/types";
-import type { ShuffledOption } from "../../src/quiz/types/types";
+import type { QuestionCopyContext, ShuffledOption } from "../../src/quiz/types/types";
 
 describe("multipleType 元信息", () => {
   it("id / name 正确", () => {
@@ -100,6 +100,79 @@ describe("multipleType.formatAnswerText", () => {
     };
     // answer 顺序 [2, 0]，但 formatChoiceAnswerText 会先按索引升序排
     expect(multipleType.formatAnswerText(q)).toBe("甲 / 丙");
+  });
+});
+
+describe("multipleType.formatCopyText", () => {
+  const q: Question = {
+    id: "m1",
+    type: "multiple",
+    question: "请选择所有正确项",
+    options: [{ text: "甲" }, { text: "乙" }, { text: "丙" }, { text: "丁" }],
+    answer: [0, 2],
+  };
+  const shuffled: ShuffledOption[] = [
+    { text: "丙", originalIndex: 2 },
+    { text: "乙", originalIndex: 1 },
+    { text: "甲", originalIndex: 0 },
+    { text: "丁", originalIndex: 3 },
+  ];
+  const baseContext: QuestionCopyContext = {
+    showResult: false,
+    isCorrect: false,
+    shuffledOptions: shuffled,
+    selectedAnswers: [],
+    blankAnswerInputs: [],
+  };
+
+  it("未作答时复制题干和当前选项顺序", () => {
+    expect(multipleType.formatCopyText(q, baseContext)).toBe(
+      ["选择题：", "请选择所有正确项", "a. 丙", "b. 乙", "c. 甲", "d. 丁"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("答对时正确答案按当前选项字母顺序拼接", () => {
+    expect(
+      multipleType.formatCopyText(q, {
+        ...baseContext,
+        showResult: true,
+        isCorrect: true,
+        selectedAnswers: [2, 0],
+      }),
+    ).toBe(
+      [
+        "选择题：",
+        "请选择所有正确项",
+        "a. 丙",
+        "b. 乙",
+        "c. 甲",
+        "d. 丁",
+        "正确答案：ac",
+      ].join("\n"),
+    );
+  });
+
+  it("答错时我的答案也按当前选项字母顺序拼接", () => {
+    expect(
+      multipleType.formatCopyText(q, {
+        ...baseContext,
+        showResult: true,
+        selectedAnswers: [3, 2],
+      }),
+    ).toBe(
+      [
+        "选择题：",
+        "请选择所有正确项",
+        "a. 丙",
+        "b. 乙",
+        "c. 甲",
+        "d. 丁",
+        "我的答案：ad",
+        "正确答案：ac",
+      ].join("\n"),
+    );
   });
 });
 

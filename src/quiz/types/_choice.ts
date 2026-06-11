@@ -1,3 +1,6 @@
+import type { Question } from "../../types";
+import type { QuestionCopyContext, ShuffledOption } from "./types";
+
 /**
  * 选择题（single / multiple）共享的校验逻辑。
  * 错误消息文本严格匹配原 validateQuestions.ts 的写法，避免回归。
@@ -70,4 +73,75 @@ export function choiceLetters(
     })
     .sort()
     .join("");
+}
+
+function displayOptions(
+  question: Question,
+  shuffledOptions: ShuffledOption[],
+): ShuffledOption[] {
+  if (shuffledOptions.length > 0) return shuffledOptions;
+  return (
+    question.options?.map((opt, originalIndex) => ({
+      ...opt,
+      originalIndex,
+    })) ?? []
+  );
+}
+
+function copyChoiceLetter(position: number): string {
+  return String.fromCharCode(97 + position);
+}
+
+function choiceCopyLetters(
+  question: Question,
+  shuffledOptions: ShuffledOption[],
+  answers: number[],
+): string {
+  const options = displayOptions(question, shuffledOptions);
+  return answers
+    .map((originalIndex) =>
+      options.findIndex((opt) => opt.originalIndex === originalIndex),
+    )
+    .filter((position) => position >= 0)
+    .sort((a, b) => a - b)
+    .map(copyChoiceLetter)
+    .join("");
+}
+
+export function formatChoiceCopyText(
+  question: Question,
+  context: QuestionCopyContext,
+  heading: string,
+): string {
+  const options = displayOptions(question, context.shuffledOptions);
+  const lines = [
+    `${heading}：`,
+    question.question,
+    ...options.map((opt, idx) => `${copyChoiceLetter(idx)}. ${opt.text}`),
+  ];
+
+  if (!context.showResult) return lines.join("\n");
+
+  const correctAnswer = choiceCopyLetters(
+    question,
+    context.shuffledOptions,
+    question.answer as number[],
+  );
+
+  if (context.isCorrect) {
+    lines.push(`正确答案：${correctAnswer}`);
+  } else {
+    lines.push(
+      `我的答案：${
+        choiceCopyLetters(
+          question,
+          context.shuffledOptions,
+          context.selectedAnswers,
+        ) || "未作答"
+      }`,
+      `正确答案：${correctAnswer}`,
+    );
+  }
+
+  return lines.join("\n");
 }

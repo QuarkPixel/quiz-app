@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { singleType } from "../../src/quiz/types/single";
 import type { Question } from "../../src/types";
-import type { ShuffledOption } from "../../src/quiz/types/types";
+import type { QuestionCopyContext, ShuffledOption } from "../../src/quiz/types/types";
 
 describe("singleType 元信息", () => {
   it("id / name 正确", () => {
@@ -98,6 +98,69 @@ describe("singleType.formatAnswerText", () => {
       answer: [1],
     };
     expect(singleType.formatAnswerText(q)).toBe("B 选项");
+  });
+});
+
+describe("singleType.formatCopyText", () => {
+  const q: Question = {
+    id: "s1",
+    type: "single",
+    question: "请选择正确说法",
+    options: [{ text: "甲" }, { text: "乙" }, { text: "丙" }],
+    answer: [2],
+  };
+  const shuffled: ShuffledOption[] = [
+    { text: "丙", originalIndex: 2 },
+    { text: "甲", originalIndex: 0 },
+    { text: "乙", originalIndex: 1 },
+  ];
+  const baseContext: QuestionCopyContext = {
+    showResult: false,
+    isCorrect: false,
+    shuffledOptions: shuffled,
+    selectedAnswers: [],
+    blankAnswerInputs: [],
+  };
+
+  it("未作答时只复制题干和当前选项顺序", () => {
+    expect(singleType.formatCopyText(q, baseContext)).toBe(
+      ["选择题：", "请选择正确说法", "a. 丙", "b. 甲", "c. 乙"].join("\n"),
+    );
+  });
+
+  it("答对时追加正确答案字母", () => {
+    expect(
+      singleType.formatCopyText(q, {
+        ...baseContext,
+        showResult: true,
+        isCorrect: true,
+        selectedAnswers: [2],
+      }),
+    ).toBe(
+      ["选择题：", "请选择正确说法", "a. 丙", "b. 甲", "c. 乙", "正确答案：a"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("答错时追加我的答案和正确答案字母", () => {
+    expect(
+      singleType.formatCopyText(q, {
+        ...baseContext,
+        showResult: true,
+        selectedAnswers: [0],
+      }),
+    ).toBe(
+      [
+        "选择题：",
+        "请选择正确说法",
+        "a. 丙",
+        "b. 甲",
+        "c. 乙",
+        "我的答案：b",
+        "正确答案：a",
+      ].join("\n"),
+    );
   });
 });
 
