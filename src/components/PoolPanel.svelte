@@ -10,6 +10,7 @@
     import { flip } from "svelte/animate";
     import { fly } from "svelte/transition";
     import { backOut, cubicOut } from "svelte/easing";
+    import { onDestroy } from "svelte";
     import StreakIndicator from "./StreakIndicator.svelte";
     import { useQuizSession } from "../quiz/session/context";
 
@@ -19,6 +20,9 @@
         new Map(session.questions.map((q) => [q.id, q])),
     );
 
+    const ANSWER_LONG_PRESS_MS = 450;
+    const ANSWER_LONG_PRESS_MOVE_TOLERANCE_PX = 10;
+
     type PoolEntry = {
         item: ActivePoolItem;
         question: Question;
@@ -26,6 +30,91 @@
         isLatest: boolean;
         answerText: string;
     };
+
+    type LongPressState = {
+        id: string;
+        pointerId: number;
+        startX: number;
+        startY: number;
+        timeout: ReturnType<typeof setTimeout>;
+    };
+
+    let pressedAnswerId = $state<string | null>(null);
+    let pressedAnswerPointerId: number | null = null;
+    let longPressState: LongPressState | null = null;
+
+    function clearLongPressTimer(): void {
+        if (!longPressState) return;
+        clearTimeout(longPressState.timeout);
+        longPressState = null;
+    }
+
+    function handlePoolItemPointerDown(event: PointerEvent, id: string): void {
+        if (event.pointerType !== "touch") return;
+
+        clearLongPressTimer();
+        pressedAnswerId = null;
+        pressedAnswerPointerId = null;
+
+        if (event.currentTarget instanceof Element) {
+            event.currentTarget.setPointerCapture(event.pointerId);
+        }
+
+        longPressState = {
+            id,
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            timeout: setTimeout(() => {
+                if (
+                    !longPressState ||
+                    longPressState.id !== id ||
+                    longPressState.pointerId !== event.pointerId
+                ) {
+                    return;
+                }
+
+                pressedAnswerId = id;
+                pressedAnswerPointerId = event.pointerId;
+                longPressState = null;
+            }, ANSWER_LONG_PRESS_MS),
+        };
+    }
+
+    function handlePoolItemPointerMove(event: PointerEvent): void {
+        if (!longPressState || event.pointerId !== longPressState.pointerId) {
+            return;
+        }
+
+        const dx = event.clientX - longPressState.startX;
+        const dy = event.clientY - longPressState.startY;
+        if (Math.hypot(dx, dy) > ANSWER_LONG_PRESS_MOVE_TOLERANCE_PX) {
+            clearLongPressTimer();
+        }
+    }
+
+    function handlePoolItemPointerEnd(event: PointerEvent): void {
+        if (event.pointerType !== "touch") return;
+
+        if (longPressState?.pointerId === event.pointerId) {
+            clearLongPressTimer();
+        }
+
+        if (pressedAnswerPointerId === event.pointerId) {
+            pressedAnswerId = null;
+            pressedAnswerPointerId = null;
+        }
+    }
+
+    function handlePoolItemContextMenu(event: MouseEvent): void {
+        if (longPressState || pressedAnswerId) {
+            event.preventDefault();
+        }
+    }
+
+    onDestroy(() => {
+        clearLongPressTimer();
+    });
 
     let entries = $derived.by<PoolEntry[]>(() => {
         const currentId = session.currentQuestion?.id ?? null;
@@ -75,7 +164,13 @@
                         easing: cubicOut,
                         opacity: 0,
                     }}
-                    class="group/pool-item flex flex-col gap-1.5"
+                    class="pool-item flex flex-col gap-1.5"
+                    onpointerdown={(event) =>
+                        handlePoolItemPointerDown(event, entry.item.id)}
+                    onpointermove={handlePoolItemPointerMove}
+                    onpointerup={handlePoolItemPointerEnd}
+                    onpointercancel={handlePoolItemPointerEnd}
+                    oncontextmenu={handlePoolItemContextMenu}
                 >
                     <div
                         class="text-muted-foreground/70 flex items-center gap-2 text-[10px]"
@@ -107,10 +202,11 @@
 
                     <p
                         class={cn(
+                            "pool-answer",
                             "text-success/90 truncate text-[12px] leading-snug transition-opacity duration-300 ease-spring",
-                            entry.isLatest
+                            entry.isLatest || pressedAnswerId === entry.item.id
                                 ? "opacity-100"
-                                : "opacity-0 group-hover/pool-item:opacity-100",
+                                : "opacity-0",
                         )}
                     >
                         {entry.answerText}
@@ -137,5 +233,19 @@
     }
     .pool-mask::-webkit-scrollbar {
         display: none;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+        .pool-item:hover .pool-answer {
+            opacity: 1;
+        }
+    }
+
+    @media (hover: none) and (pointer: coarse) {
+        .pool-item {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
     }
 </style>
