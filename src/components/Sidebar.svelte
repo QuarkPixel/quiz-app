@@ -1,12 +1,10 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
     import * as Sidebar from "$lib/components/ui/sidebar";
     import * as Dialog from "$lib/components/ui/dialog";
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
-    import * as Tooltip from "$lib/components/ui/tooltip";
     import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
-    import { cn } from "$lib/utils";
+    import AlertToast from "./AlertToast.svelte";
     import Prompt from "../../assets/prompt.md?raw";
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
@@ -14,7 +12,6 @@
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import IconFileImport from "@tabler/icons-svelte/icons/file-import";
     import IconPromptCopy from "@tabler/icons-svelte/icons/message-circle-share";
-    import IconCopyCheck from "@tabler/icons-svelte/icons/copy-check";
     import IconDots from "@tabler/icons-svelte/icons/dots";
     import IconEdit from "@tabler/icons-svelte/icons/edit";
     import IconTrash from "@tabler/icons-svelte/icons/trash";
@@ -49,40 +46,30 @@
     let importSession = $state<LibraryImportSession | null>(null);
     let importMessage = $state<LibraryFileMessage | null>(null);
     let overwriteRequest = $state<OverwriteImportRequest | null>(null);
+    let toast: AlertToast;
 
     let renameTarget = $state<{ hash: string; name: string } | null>(null);
     let renameInput = $state("");
     let deleteTarget = $state<{ hash: string; name: string } | null>(null);
-    let promptCopyStatus = $state<"idle" | "copied" | "error">("idle");
-    let promptCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const promptCopyLabel = "给 LLM 的生成题库 Prompt";
-
-    onDestroy(() => {
-        if (promptCopyResetTimer) clearTimeout(promptCopyResetTimer);
-    });
-
-    async function copyPrompt(event: MouseEvent): Promise<void> {
-        event.stopPropagation();
-        if (promptCopyResetTimer) {
-            clearTimeout(promptCopyResetTimer);
-            promptCopyResetTimer = null;
-        }
-
+    async function copyPrompt(): Promise<void> {
         try {
             if (!navigator.clipboard?.writeText) {
                 throw new Error("Clipboard API is unavailable.");
             }
             await navigator.clipboard.writeText(Prompt);
-            promptCopyStatus = "copied";
+            toast?.show(
+                "Prompt 已复制",
+                "已复制到剪贴板。把它粘贴到与 AI 的对话中，再在后面附上原始题目内容，让 AI 按格式生成题库 JSON。",
+                "success",
+            );
         } catch {
-            promptCopyStatus = "error";
+            toast?.show(
+                "复制失败",
+                "浏览器未允许访问剪贴板，请检查权限后重试。",
+                "destructive",
+            );
         }
-
-        promptCopyResetTimer = setTimeout(() => {
-            promptCopyStatus = "idle";
-            promptCopyResetTimer = null;
-        }, 1800);
     }
 
     function showImportPrompt(prompt: LibraryImportPrompt): void {
@@ -134,9 +121,8 @@
 
         isImporting = true;
         try {
-            const session = await LibraryImportSession.createFromClipboard(
-                source,
-            );
+            const session =
+                await LibraryImportSession.createFromClipboard(source);
             importSession = session;
             showImportPrompt(session.currentPrompt());
         } finally {
@@ -179,7 +165,7 @@
 </script>
 
 {#snippet importMenuContent()}
-    <DropdownMenu.Content side="right" align="start" class="w-44">
+    <DropdownMenu.Content side="right" align="start" class="w-60">
         <DropdownMenu.Item
             disabled={isImporting || importSession !== null}
             onSelect={() => openFileImport()}
@@ -193,6 +179,14 @@
         >
             <IconClipboard size={14} stroke={1.75} />
             <span>从剪贴板导入</span>
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item
+            class="text-muted-foreground justify-end text-right text-xs"
+            onSelect={() => void copyPrompt()}
+        >
+            <span>复制「给 LLM 的生成题库 Prompt」</span>
+            <IconPromptCopy size={12} stroke={1.75} />
         </DropdownMenu.Item>
     </DropdownMenu.Content>
 {/snippet}
@@ -222,32 +216,6 @@
                                     >题库</span
                                 >
                             </div>
-                            <Tooltip.Root delayDuration={0}>
-                                <Tooltip.Trigger>
-                                    {#snippet child({ props })}
-                                        <Button
-                                            {...props}
-                                            variant="ghost"
-                                            size="icon-sm"
-                                            class={cn(
-                                                promptCopyStatus === "copied" &&
-                                                    "text-success hover:text-success",
-                                            )}
-                                            aria-label={promptCopyLabel}
-                                            onclick={copyPrompt}
-                                        >
-                                            {#if promptCopyStatus === "copied"}
-                                                <IconCopyCheck />
-                                            {:else}
-                                                <IconPromptCopy />
-                                            {/if}
-                                        </Button>
-                                    {/snippet}
-                                </Tooltip.Trigger>
-                                <Tooltip.Content side="bottom" align="end">
-                                    <span>{promptCopyLabel}</span>
-                                </Tooltip.Content>
-                            </Tooltip.Root>
                         </div>
                     {/snippet}
                 </Sidebar.MenuButton>
@@ -352,19 +320,16 @@
                         <Sidebar.MenuItem>
                             <DropdownMenu.Root>
                                 <DropdownMenu.Trigger
-                                    disabled={isImporting || importSession !== null}
+                                    disabled={isImporting ||
+                                        importSession !== null}
                                 >
                                     {#snippet child({ props })}
                                         <Sidebar.MenuButton
                                             {...props}
                                             class="text-sidebar-foreground/70 justify-center"
                                         >
-                                            <IconAdd
-                                                size={16}
-                                                stroke={1.75}
-                                            />
-                                            <span class="sr-only"
-                                                >导入题库</span
+                                            <IconAdd size={16} stroke={1.75} />
+                                            <span class="sr-only">导入题库</span
                                             >
                                         </Sidebar.MenuButton>
                                     {/snippet}
@@ -380,6 +345,8 @@
 
     <Sidebar.Rail />
 </Sidebar.Root>
+
+<AlertToast bind:this={toast} />
 
 <input
     bind:this={fileInput}
