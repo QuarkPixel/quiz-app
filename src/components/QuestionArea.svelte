@@ -18,12 +18,9 @@
 {#if session.currentQuestion && (session.currentPoolItem || session.showResult)}
     <div class="flex items-center gap-3">
         {#key session.currentQuestion.type}
-            {@const TypeIcon = QUESTION_TYPES[session.currentQuestion.type].icon}
-            <TypeIcon
-                size={16}
-                stroke={1.75}
-                class="text-muted-foreground"
-            />
+            {@const TypeIcon =
+                QUESTION_TYPES[session.currentQuestion.type].icon}
+            <TypeIcon size={16} stroke={1.75} class="text-muted-foreground" />
         {/key}
         <span class="text-muted-foreground text-xs font-mono">
             {session.currentQuestion.id}
@@ -91,9 +88,9 @@
                         {#if !session.isCorrect}正确答案：{/if}{Array.isArray(
                             session.currentQuestion.answer,
                         )
-                            ? (
-                                  session.currentQuestion.answer as string[]
-                              ).join(" | ")
+                            ? (session.currentQuestion.answer as string[]).join(
+                                  " | ",
+                              )
                             : (session.currentQuestion.answer as string)}
                     </span>
                 {:else if !session.isCorrect && session.currentQuestion.type !== "judgment"}
@@ -133,11 +130,7 @@
                 提交答案
             </Button>
         {:else}
-            <Button
-                size="lg"
-                class="px-8"
-                onclick={() => session.selectNext()}
-            >
+            <Button size="lg" class="px-8" onclick={() => session.selectNext()}>
                 下一题
             </Button>
         {/if}
@@ -150,14 +143,14 @@
             <span class="text-base">当前筛选条件下没有题目</span>
         {:else if session.stats.mastered === session.stats.total}
             {#if session.allMastered}
-                <span class="text-foreground text-lg font-medium">
-                    恭喜！所有题目已掌握
+                <span class="text-foreground text-lg font-bold">
+                    所有题目已掌握
                 </span>
                 <Button variant="outline" onclick={() => session.reset()}>
                     重新开始
                 </Button>
             {:else}
-                <span class="text-foreground text-lg font-medium">
+                <span class="text-foreground text-lg font-bold">
                     当前题型筛选下所有题目已掌握
                 </span>
                 <Button
