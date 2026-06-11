@@ -12,6 +12,27 @@ type Toast = (
   variant?: "default" | "success" | "destructive",
 ) => void;
 
+type AudioSessionType =
+  | "ambient"
+  | "playback"
+  | "transient"
+  | "transient-solo"
+  | "auto";
+
+interface AudioSession {
+  type: AudioSessionType;
+}
+
+type NavigatorWithAudioSession = Navigator & {
+  audioSession?: AudioSession;
+};
+
+const SOUND_NAMES: SoundName[] = [
+  "answer-correct",
+  "answer-wrong",
+  "success",
+];
+
 const SOUND_URLS: Record<SoundName, string> = {
   "answer-correct": answerCorrectUrl,
   "answer-wrong": answerWrongUrl,
@@ -32,7 +53,8 @@ export function createSoundPlayer(): SoundPlayer {
     return element;
   }
 
-  return {
+  const player: SoundPlayer = {
+    preload,
     playAnswer(isCorrect) {
       play(isCorrect ? "answer-correct" : "answer-wrong");
     },
@@ -41,12 +63,42 @@ export function createSoundPlayer(): SoundPlayer {
     },
   };
 
+  preload();
+  return player;
+
+  function preload(): void {
+    preferAmbientAudioSession();
+
+    for (const name of SOUND_NAMES) {
+      const element = getAudio(name);
+      try {
+        element.load();
+      } catch {
+        // Some test/browser environments expose Audio but not load().
+      }
+    }
+  }
+
   function play(name: SoundName): void {
+    preferAmbientAudioSession();
     const element = getAudio(name);
     element.currentTime = 0;
     void element.play().catch(() => {
       // Browsers can still reject playback until a user gesture unlocks audio.
     });
+  }
+}
+
+function preferAmbientAudioSession(): void {
+  if (typeof navigator === "undefined") return;
+
+  const audioSession = (navigator as NavigatorWithAudioSession).audioSession;
+  if (!audioSession) return;
+
+  try {
+    audioSession.type = "ambient";
+  } catch {
+    // Unsupported or read-only implementations should not block sound effects.
   }
 }
 
@@ -94,6 +146,9 @@ export function setSoundEnabledPreference(
   if (state.settings.soundEnabled === next) return;
   state.settings.soundEnabled = next;
   save();
-  if (next) player.playSuccess();
+  if (next) {
+    player.preload();
+    player.playSuccess();
+  }
   toast(next ? "音效已开启" : "音效已关闭");
 }

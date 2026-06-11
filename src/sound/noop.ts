@@ -3,6 +3,7 @@ import type { SoundPlayer } from "./types";
 
 export function createSoundPlayer(): SoundPlayer {
   return {
+    preload() {},
     playAnswer() {},
     playSuccess() {},
   };
