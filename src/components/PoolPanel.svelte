@@ -38,67 +38,83 @@
         startY: number;
     };
 
-    let revealedAnswerId = $state<string | null>(null);
-    let revealedAnswerReplayKey = $state(0);
-    let revealAnswerTimer: ReturnType<typeof setTimeout> | null = null;
-    let touchTapState: TouchTapState | null = null;
+    let revealedAnswerKeys = $state<Record<string, number>>({});
+    const revealAnswerTimers = new Map<
+        string,
+        ReturnType<typeof setTimeout>
+    >();
+    const touchTapStates = new Map<number, TouchTapState>();
 
-    function clearRevealAnswerTimer(): void {
-        if (!revealAnswerTimer) return;
-        clearTimeout(revealAnswerTimer);
-        revealAnswerTimer = null;
+    function clearRevealAnswerTimer(id: string): void {
+        const timer = revealAnswerTimers.get(id);
+        if (!timer) return;
+
+        clearTimeout(timer);
+        revealAnswerTimers.delete(id);
+    }
+
+    function hideRevealedAnswer(id: string): void {
+        const nextRevealedAnswerKeys = { ...revealedAnswerKeys };
+        delete nextRevealedAnswerKeys[id];
+        revealedAnswerKeys = nextRevealedAnswerKeys;
     }
 
     function revealAnswerForTouch(id: string): void {
-        clearRevealAnswerTimer();
-        revealedAnswerId = id;
-        revealedAnswerReplayKey += 1;
-        revealAnswerTimer = setTimeout(() => {
-            revealedAnswerId = null;
-            revealAnswerTimer = null;
+        clearRevealAnswerTimer(id);
+
+        revealedAnswerKeys = {
+            ...revealedAnswerKeys,
+            [id]: (revealedAnswerKeys[id] ?? 0) + 1,
+        };
+
+        const timer = setTimeout(() => {
+            if (revealAnswerTimers.get(id) !== timer) return;
+            revealAnswerTimers.delete(id);
+            hideRevealedAnswer(id);
         }, ANSWER_TOUCH_REVEAL_MS);
+        revealAnswerTimers.set(id, timer);
     }
 
     function handlePoolItemPointerDown(event: PointerEvent, id: string): void {
         if (event.pointerType !== "touch") return;
 
-        touchTapState = {
+        touchTapStates.set(event.pointerId, {
             id,
             pointerId: event.pointerId,
             startX: event.clientX,
             startY: event.clientY,
-        };
+        });
     }
 
     function handlePoolItemPointerMove(event: PointerEvent): void {
-        if (!touchTapState || event.pointerId !== touchTapState.pointerId) {
-            return;
-        }
+        const touchTapState = touchTapStates.get(event.pointerId);
+        if (!touchTapState) return;
 
         const dx = event.clientX - touchTapState.startX;
         const dy = event.clientY - touchTapState.startY;
         if (Math.hypot(dx, dy) > ANSWER_TOUCH_TAP_MOVE_TOLERANCE_PX) {
-            touchTapState = null;
+            touchTapStates.delete(event.pointerId);
         }
     }
 
     function handlePoolItemPointerEnd(event: PointerEvent): void {
         if (event.pointerType !== "touch") return;
 
-        if (touchTapState?.pointerId === event.pointerId) {
+        const touchTapState = touchTapStates.get(event.pointerId);
+        if (touchTapState) {
             revealAnswerForTouch(touchTapState.id);
-            touchTapState = null;
+            touchTapStates.delete(event.pointerId);
         }
     }
 
     function handlePoolItemPointerCancel(event: PointerEvent): void {
-        if (touchTapState?.pointerId === event.pointerId) {
-            touchTapState = null;
-        }
+        touchTapStates.delete(event.pointerId);
     }
 
     onDestroy(() => {
-        clearRevealAnswerTimer();
+        revealAnswerTimers.forEach((timer) => clearTimeout(timer));
+        revealAnswerTimers.clear();
+        touchTapStates.clear();
     });
 
     let entries = $derived.by<PoolEntry[]>(() => {
@@ -184,14 +200,15 @@
                         {entry.question.question}
                     </p>
 
-                    {#key revealedAnswerId === entry.item.id ? revealedAnswerReplayKey : 0}
+                    {#key revealedAnswerKeys[entry.item.id] ?? 0}
                         <p
                             class={cn(
                                 "pool-answer",
                                 "text-success/90 truncate text-[12px] leading-snug transition-opacity duration-300 ease-spring",
                                 entry.isLatest
                                     ? "opacity-100"
-                                    : revealedAnswerId === entry.item.id
+                                    : revealedAnswerKeys[entry.item.id] !==
+                                        undefined
                                       ? "touch-reveal"
                                       : "opacity-0",
                             )}
