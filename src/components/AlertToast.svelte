@@ -21,6 +21,21 @@
     let showTimer: ReturnType<typeof setTimeout> | null = null;
     let clearTimer: ReturnType<typeof setTimeout> | null = null;
 
+    function startHideTimer() {
+        if (showTimer) clearTimeout(showTimer);
+
+        showTimer = setTimeout(() => {
+            visible = false;
+
+            clearTimer = setTimeout(() => {
+                current = null;
+                clearTimer = null;
+            }, TOAST_FADE_MS);
+
+            showTimer = null;
+        }, TOAST_DURATION_MS);
+    }
+
     export function show(
         title: string,
         description?: string,
@@ -32,14 +47,7 @@
         current = { title, description, variant };
         visible = true;
 
-        showTimer = setTimeout(() => {
-            visible = false;
-            clearTimer = setTimeout(() => {
-                current = null;
-                clearTimer = null;
-            }, TOAST_FADE_MS);
-            showTimer = null;
-        }, TOAST_DURATION_MS);
+        startHideTimer();
     }
 </script>
 
@@ -52,6 +60,17 @@
     )}
     role="status"
     aria-live="polite"
+    onmouseenter={() => {
+        if (showTimer) {
+            clearTimeout(showTimer);
+            showTimer = null;
+        }
+    }}
+    onmouseleave={() => {
+        if (visible) {
+            startHideTimer();
+        }
+    }}
 >
     {#if current}
         <AlertUI.Root
