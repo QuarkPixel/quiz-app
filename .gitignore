@@ -1,9 +1,10 @@
 # macOS
 .DS_Store
 
-# Claude Code instructions
+# Agent instructions
 CLAUDE.md
 .claude
+AGENTS.md
 
 # Quiz data (replace with your own)
 banks/questions.json
