@@ -127,7 +127,7 @@ describe("multipleType.formatCopyText", () => {
 
   it("未作答时复制题干和当前选项顺序", () => {
     expect(multipleType.formatCopyText(q, baseContext)).toBe(
-      ["选择题：", "请选择所有正确项", "A. 丙", "B. 乙", "C. 甲", "D. 丁"].join(
+      ["多选题：", "请选择所有正确项", "A. 丙", "B. 乙", "C. 甲", "D. 丁"].join(
         "\n",
       ),
     );
@@ -143,7 +143,7 @@ describe("multipleType.formatCopyText", () => {
       }),
     ).toBe(
       [
-        "选择题：",
+        "多选题：",
         "请选择所有正确项",
         "A. 丙",
         "B. 乙",
@@ -164,7 +164,7 @@ describe("multipleType.formatCopyText", () => {
       }),
     ).toBe(
       [
-        "选择题：",
+        "多选题：",
         "请选择所有正确项",
         "A. 丙",
         "B. 乙",

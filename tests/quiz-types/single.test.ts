@@ -124,7 +124,7 @@ describe("singleType.formatCopyText", () => {
 
   it("未作答时只复制题干和当前选项顺序", () => {
     expect(singleType.formatCopyText(q, baseContext)).toBe(
-      ["选择题：", "请选择正确说法", "A. 丙", "B. 甲", "C. 乙"].join("\n"),
+      ["单选题：", "请选择正确说法", "A. 丙", "B. 甲", "C. 乙"].join("\n"),
     );
   });
 
@@ -137,7 +137,7 @@ describe("singleType.formatCopyText", () => {
         selectedAnswers: [2],
       }),
     ).toBe(
-      ["选择题：", "请选择正确说法", "A. 丙", "B. 甲", "C. 乙", "", "答案：A"].join(
+      ["单选题：", "请选择正确说法", "A. 丙", "B. 甲", "C. 乙", "", "答案：A"].join(
         "\n",
       ),
     );
@@ -152,7 +152,7 @@ describe("singleType.formatCopyText", () => {
       }),
     ).toBe(
       [
-        "选择题：",
+        "单选题：",
         "请选择正确说法",
         "A. 丙",
         "B. 甲",
