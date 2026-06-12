@@ -6,8 +6,9 @@ CLAUDE.md
 .claude
 AGENTS.md
 
-# Quiz data (replace with your own)
-banks/questions.json
+# Quiz data files (except example file)
+banks/*
+!banks/questions.example.json
 
 # Logs
 logs
