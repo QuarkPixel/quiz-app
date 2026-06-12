@@ -405,9 +405,11 @@ describe("复制当前题目", () => {
       deps,
     );
     session.initialize();
+    expect(session.copyQuestionStatus).toBe("idle");
     const result = await session.copyCurrentQuestion();
 
     expect(result).toBe("copied");
+    expect(session.copyQuestionStatus).toBe("copied");
     expect(writeText).toHaveBeenCalledWith("判断题：\nq-only_q");
   });
 
@@ -427,6 +429,7 @@ describe("复制当前题目", () => {
     const result = await session.copyCurrentQuestion({ announce: true });
 
     expect(result).toBe("copied");
+    expect(session.copyQuestionStatus).toBe("copied");
     expect(toast).toHaveBeenCalledWith(
       "题目已复制到剪贴板",
       expect.any(String),
@@ -446,7 +449,27 @@ describe("复制当前题目", () => {
     const result = await session.copyCurrentQuestion();
 
     expect(result).toBe("unavailable");
+    expect(session.copyQuestionStatus).toBe("idle");
     expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("copyCurrentQuestion 失败时更新复制状态", async () => {
+    const { deps } = makeDeps();
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    Object.defineProperty(global.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const session = new QuizSession(
+      makeBank([q("only_q", "judgment", true)]),
+      deps,
+    );
+    session.initialize();
+    const result = await session.copyCurrentQuestion();
+
+    expect(result).toBe("error");
+    expect(session.copyQuestionStatus).toBe("error");
   });
 });
 

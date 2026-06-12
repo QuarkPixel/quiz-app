@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { onDestroy } from "svelte";
     import { Button } from "$lib/components/ui/button";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import { cn } from "$lib/utils";
@@ -19,57 +18,17 @@
         session.treatLastAnswerAsCorrect(),
     );
 
-    type CopyStatus = "idle" | "copied" | "error";
-
-    let copyStatus = $state<CopyStatus>("idle");
-    let copyResetTimer: ReturnType<typeof setTimeout> | null = null;
-    let lastQuestionId: string | null = null;
-
     const copyLabel = $derived(
-        copyStatus === "copied"
+        session.copyQuestionStatus === "copied"
             ? "已复制"
-            : copyStatus === "error"
+            : session.copyQuestionStatus === "error"
               ? "复制失败"
               : "复制题目",
     );
 
-    $effect(() => {
-        const nextQuestionId = session.currentQuestion?.id ?? null;
-        if (nextQuestionId !== lastQuestionId) {
-            lastQuestionId = nextQuestionId;
-            resetCopyStatus();
-        }
-    });
-
-    onDestroy(() => {
-        if (copyResetTimer) clearTimeout(copyResetTimer);
-    });
-
-    function resetCopyStatus(): void {
-        if (copyResetTimer) {
-            clearTimeout(copyResetTimer);
-            copyResetTimer = null;
-        }
-        copyStatus = "idle";
-    }
-
-    function setCopyStatus(status: CopyStatus): void {
-        if (copyResetTimer) clearTimeout(copyResetTimer);
-        copyStatus = status;
-        copyResetTimer = setTimeout(() => {
-            copyStatus = "idle";
-            copyResetTimer = null;
-        }, 1800);
-    }
-
     async function copyCurrentQuestion(event: MouseEvent): Promise<void> {
         event.stopPropagation();
-        const result = await session.copyCurrentQuestion();
-        if (result === "copied") {
-            setCopyStatus("copied");
-        } else if (result === "error") {
-            setCopyStatus("error");
-        }
+        await session.copyCurrentQuestion();
     }
 </script>
 
@@ -93,17 +52,17 @@
                             variant="ghost"
                             size="icon-xs"
                             class={cn(
-                                copyStatus === "copied" &&
+                                session.copyQuestionStatus === "copied" &&
                                     "text-success hover:text-success",
-                                copyStatus === "error" &&
+                                session.copyQuestionStatus === "error" &&
                                     "text-destructive hover:text-destructive",
                             )}
                             aria-label={copyLabel}
                             onclick={copyCurrentQuestion}
                         >
-                            {#if copyStatus === "copied"}
+                            {#if session.copyQuestionStatus === "copied"}
                                 <IconCopyCheck stroke={1.75} />
-                            {:else if copyStatus === "error"}
+                            {:else if session.copyQuestionStatus === "error"}
                                 <IconAlertCircle stroke={1.75} />
                             {:else}
                                 <IconCopy stroke={1.75} />

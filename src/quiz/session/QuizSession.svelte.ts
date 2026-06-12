@@ -54,6 +54,7 @@ import {
 import type { SoundPlayer } from "../../sound/types";
 
 export type ExportStatus = "idle" | "copied" | "error";
+export type CopyQuestionStatus = "idle" | "copied" | "error";
 export type CopyQuestionResult = "copied" | "error" | "unavailable";
 
 export type ToastVariant = "default" | "success" | "destructive";
@@ -102,11 +103,15 @@ export class QuizSession {
   exportStatus: ExportStatus = $state("idle");
   importConfirmText: string | null = $state(null);
 
+  // === 复制当前题目 state ===
+  copyQuestionStatus: CopyQuestionStatus = $state("idle");
+
   /**
    * submit 前的 appState 快照，用于「当作正确」时 rewind。
    * 不是 $state —— 只是临时引用，不参与 reactivity。
    */
   private preSubmitState: RuntimeState | null = null;
+  private copyQuestionResetTimer: ReturnType<typeof setTimeout> | null = null;
 
   // === derived ===
   stats = $derived(getStats(this.questions, this.appState));
@@ -186,6 +191,7 @@ export class QuizSession {
     this.showResult = false;
     this.isCorrect = false;
     this.preSubmitState = null;
+    this.resetCopyQuestionStatus();
     this.focusBlankInputIfNeeded();
   }
 
@@ -349,6 +355,7 @@ export class QuizSession {
         throw new Error("Clipboard API is unavailable.");
       }
       await navigator.clipboard.writeText(text);
+      this.setCopyQuestionStatus("copied");
       if (options.announce) {
         this.deps.toast(
           "题目已复制到剪贴板",
@@ -358,6 +365,7 @@ export class QuizSession {
       }
       return "copied";
     } catch {
+      this.setCopyQuestionStatus("error");
       if (options.announce) {
         this.deps.toast(
           "复制失败",
@@ -472,6 +480,25 @@ export class QuizSession {
 
   private saveSettingsChange(): void {
     this.save({ updateDefaultSettings: true });
+  }
+
+  private resetCopyQuestionStatus(): void {
+    if (this.copyQuestionResetTimer) {
+      clearTimeout(this.copyQuestionResetTimer);
+      this.copyQuestionResetTimer = null;
+    }
+    this.copyQuestionStatus = "idle";
+  }
+
+  private setCopyQuestionStatus(status: CopyQuestionStatus): void {
+    if (this.copyQuestionResetTimer) {
+      clearTimeout(this.copyQuestionResetTimer);
+    }
+    this.copyQuestionStatus = status;
+    this.copyQuestionResetTimer = setTimeout(() => {
+      this.copyQuestionStatus = "idle";
+      this.copyQuestionResetTimer = null;
+    }, 1800);
   }
 
   private markCurrentQuestionAsShown(): void {
