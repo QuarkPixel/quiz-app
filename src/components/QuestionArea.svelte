@@ -202,11 +202,11 @@
                 size="icon-lg"
                 onclick={treatCorrectAction.trigger}
                 title={treatCorrectAction.confirming
-                    ? "再次点击确认当作正确"
-                    : "我打错了，当作正确"}
+                    ? "再次点击确认"
+                    : "视作正确"}
                 aria-label={treatCorrectAction.confirming
-                    ? "再次点击确认当作正确"
-                    : "我打错了，当作正确"}
+                    ? "再次点击确认"
+                    : "视作正确"}
                 class={cn(
                     treatCorrectAction.confirming &&
                         "border-success text-success ring-success/30 ring-2",
