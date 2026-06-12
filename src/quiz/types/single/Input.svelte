@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { QuestionInputProps } from "../types";
+    import { blurPointerActivatedButton } from "../activation";
     import { cn } from "$lib/utils";
 
     let {
@@ -11,9 +12,10 @@
         onAutoSubmit,
     }: QuestionInputProps = $props();
 
-    function handleClick(originalIndex: number): void {
+    function handleClick(event: MouseEvent, originalIndex: number): void {
         if (showResult) return;
         onSelectedAnswersChange?.([originalIndex]);
+        blurPointerActivatedButton(event);
         onAutoSubmit?.();
     }
 </script>
@@ -36,7 +38,7 @@
             isOptionCorrect && "border-success bg-success/8",
             isWrong && "border-destructive bg-destructive/8",
         )}
-        onclick={() => handleClick(opt.originalIndex)}
+        onclick={(event) => handleClick(event, opt.originalIndex)}
         disabled={showResult}
     >
         <span

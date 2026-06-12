@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { QuestionInputProps } from "../types";
+    import { blurPointerActivatedButton } from "../activation";
     import { cn } from "$lib/utils";
     import IconCheck from "@tabler/icons-svelte/icons/check";
     import IconX from "@tabler/icons-svelte/icons/x";
@@ -17,9 +18,10 @@
         { idx: 1, label: "错误", value: false, icon: IconX },
     ];
 
-    function handleClick(idx: number): void {
+    function handleClick(event: MouseEvent, idx: number): void {
         if (showResult) return;
         onSelectedAnswersChange?.([idx]);
+        blurPointerActivatedButton(event);
         onAutoSubmit?.();
     }
 </script>
@@ -40,7 +42,7 @@
                 "border-success bg-success/8 text-success",
             isWrong && "border-destructive bg-destructive/8 text-destructive",
         )}
-        onclick={() => handleClick(opt.idx)}
+        onclick={(event) => handleClick(event, opt.idx)}
         disabled={showResult}
     >
         <OptIcon size={18} stroke={2} />

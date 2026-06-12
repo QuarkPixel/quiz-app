@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { QuestionInputProps } from "../types";
+    import { blurPointerActivatedButton } from "../activation";
     import { cn } from "$lib/utils";
 
     let {
@@ -10,12 +11,13 @@
         onSelectedAnswersChange,
     }: QuestionInputProps = $props();
 
-    function handleClick(originalIndex: number): void {
+    function handleClick(event: MouseEvent, originalIndex: number): void {
         if (showResult) return;
         const next = selectedAnswers.includes(originalIndex)
             ? selectedAnswers.filter((i) => i !== originalIndex)
             : [...selectedAnswers, originalIndex];
         onSelectedAnswersChange?.(next);
+        blurPointerActivatedButton(event);
     }
 </script>
 
@@ -37,7 +39,7 @@
             isOptionCorrect && "border-success bg-success/8",
             isWrong && "border-destructive bg-destructive/8",
         )}
-        onclick={() => handleClick(opt.originalIndex)}
+        onclick={(event) => handleClick(event, opt.originalIndex)}
         disabled={showResult}
     >
         <span
