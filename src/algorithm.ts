@@ -275,8 +275,9 @@ export function getRequiredStreak(
     : state.settings.correctStreakToMaster;
 }
 
-/** 学习中进度条中的一段：颜色 + 占学习中总宽度的百分比 */
+/** 学习中进度条中的一段：level 是稳定身份，width 可为 0 用于平滑过渡 */
 export interface LearningSegment {
+  level: number;
   color: string;
   widthPercent: number;
 }
@@ -318,16 +319,20 @@ export function computeLearningSegments(
 
   const counts = new Map<number, number>();
   for (const item of items) {
-    const level = getRequiredStreak(item, state) - item.consecutiveCorrect;
+    const level = Math.min(
+      maxLevel,
+      Math.max(1, getRequiredStreak(item, state) - item.consecutiveCorrect),
+    );
     counts.set(level, (counts.get(level) ?? 0) + 1);
   }
 
-  const sortedLevels = [...counts.keys()].sort((a, b) => a - b);
   const total = items.length;
 
-  return sortedLevels.map((level) => {
+  return Array.from({ length: maxLevel }, (_, index) => {
+    const level = index + 1;
     const t = maxLevel <= 1 ? 0.5 : (level - 1) / (maxLevel - 1);
     return {
+      level,
       color: mixOklch(t),
       widthPercent: ((counts.get(level) ?? 0) / total) * 100,
     };

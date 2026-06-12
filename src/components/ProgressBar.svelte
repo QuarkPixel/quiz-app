@@ -31,17 +31,17 @@
     );
 
     let masteredDisplayWidth = $derived(
-      calcFocused
+        calcFocused
             ? Math.min(masteredWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
             : masteredWidth,
     );
     let pendingDisplayWidth = $derived(
-      calcFocused
+        calcFocused
             ? Math.min(pendingWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
             : pendingWidth,
     );
     let learningDisplayWidth = $derived(
-      calcFocused
+        calcFocused
             ? Math.max(0, 100 - masteredDisplayWidth - pendingDisplayWidth)
             : learningWidth,
     );
@@ -87,8 +87,7 @@
     </div>
     <div
         class={cn(
-            "progress-bar flex h-[3px] gap-1 transition-all duration-300",
-            "[&_*]:transition-all [&_*]:duration-500 [&_*]:ease-spring",
+            "progress-bar flex h-[3px] gap-1 transition-[height] duration-300",
             calcFocused && "h-[7px]",
         )}
     >
@@ -101,17 +100,21 @@
             style="--w: {masteredDisplayWidth}%; --focused: {calcFocused ? 1 : 0}"
         ></div>
         <div
-            class="flex overflow-hidden rounded-sm"
+            class="learning-track flex overflow-hidden rounded-sm"
             style="width: {learningDisplayWidth}%"
         >
-            {#each learningSegments as seg}
+            {#each learningSegments as seg (seg.level)}
                 <div
-                    style="width: {seg.widthPercent}%; background: {seg.color}"
+                    class="learning-segment"
+                    style="--w: {seg.widthPercent}%; background-color: {seg.color}"
                 ></div>
             {/each}
         </div>
         <div
-            class={cn("bg-foreground/15 rounded-sm", calcFocused && "opacity-55")}
+            class={cn(
+                "pending-segment bg-foreground/15 rounded-sm",
+                calcFocused && "opacity-55",
+            )}
             style="width: {pendingDisplayWidth}%"
         ></div>
     </div>
@@ -130,6 +133,25 @@
         width: var(--w);
         transform-origin: left center;
         will-change: transform, filter;
+        transition:
+            width 500ms var(--ease-spring),
+            opacity 500ms var(--ease-spring),
+            filter 500ms var(--ease-spring);
+    }
+    .learning-track,
+    .pending-segment {
+        transition:
+            width 500ms var(--ease-spring),
+            opacity 500ms var(--ease-spring);
+    }
+    .learning-segment {
+        flex: 0 0 var(--w);
+        width: var(--w);
+        min-width: 0;
+        transition:
+            flex-basis 500ms var(--ease-spring),
+            width 500ms var(--ease-spring),
+            background-color 500ms var(--ease-spring);
     }
     .mastered-segment.celebrate {
         animation: mastered-celebrate 700ms cubic-bezier(0.34, 1.56, 0.64, 1);

@@ -609,7 +609,7 @@ describe("computeLearningSegments", () => {
     expect(computeLearningSegments([], makeState())).toEqual([]);
   });
 
-  it("单一 level → 单段、占 100%", () => {
+  it("单一 level → 保留完整 level 列表，非零段占 100%", () => {
     const questions = [makeQuestion("a"), makeQuestion("b")];
     const state = makeState({
       activePool: [
@@ -622,11 +622,11 @@ describe("computeLearningSegments", () => {
       }),
     });
     const segments = computeLearningSegments(questions, state);
-    expect(segments).toHaveLength(1);
-    expect(segments[0].widthPercent).toBe(100);
+    expect(segments.map((seg) => seg.level)).toEqual([1, 2, 3, 4]);
+    expect(segments.map((seg) => seg.widthPercent)).toEqual([0, 0, 100, 0]);
     // 颜色返回字符串
-    expect(typeof segments[0].color).toBe("string");
-    expect(segments[0].color).toMatch(/^oklch\(/);
+    expect(typeof segments[2].color).toBe("string");
+    expect(segments[2].color).toMatch(/^oklch\(/);
   });
 
   it("多个 level 时按 level 升序排列，各段宽度按数量分配", () => {
@@ -654,6 +654,7 @@ describe("computeLearningSegments", () => {
     });
     const segments = computeLearningSegments(questions, state);
     expect(segments).toHaveLength(3);
+    expect(segments.map((seg) => seg.level)).toEqual([1, 2, 3]);
     // 升序：level 1 (1 题), level 2 (2 题), level 3 (1 题)
     expect(segments[0].widthPercent).toBe(25); // 1/4
     expect(segments[1].widthPercent).toBe(50); // 2/4
@@ -671,8 +672,7 @@ describe("computeLearningSegments", () => {
     });
     const segments = computeLearningSegments(questions, state);
     // 只有 a 计入
-    expect(segments).toHaveLength(1);
-    expect(segments[0].widthPercent).toBe(100);
+    expect(segments.map((seg) => seg.widthPercent)).toEqual([0, 0, 100, 0]);
   });
 
   it("maxLevel=1 时所有题共享中点色", () => {
