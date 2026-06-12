@@ -1,4 +1,5 @@
-import type { RuntimeState } from "../types";
+import { SOUND_ENABLED_BY_DEFAULT } from "../config";
+import type { RuntimeState, UserSettings } from "../types";
 import type { SoundPlayer } from "./types";
 
 export function createSoundPlayer(): SoundPlayer {
@@ -13,18 +14,19 @@ export function maybePlayAnswerSound(): void {}
 
 export function maybePlaySuccessSound(): void {}
 
-export function initializeSoundPreference(): void {}
-
-export function sanitizeSoundSettings(): object {
-  return {};
+export function initializeSoundPreference(state: RuntimeState): void {
+  state.settings.soundEnabled ??= SOUND_ENABLED_BY_DEFAULT;
 }
 
-export function setSoundEnabledPreference(
-  state: RuntimeState,
-  next: boolean,
-  save: () => void,
-): void {
-  if (state.settings.soundEnabled === next) return;
-  state.settings.soundEnabled = next;
-  save();
+export function sanitizeSoundSettings(
+  settings: UserSettings,
+): Pick<UserSettings, "soundEnabled"> {
+  return {
+    soundEnabled:
+      typeof settings.soundEnabled === "boolean"
+        ? settings.soundEnabled
+        : SOUND_ENABLED_BY_DEFAULT,
+  };
 }
+
+export function setSoundEnabledPreference(): void {}

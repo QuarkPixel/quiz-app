@@ -14,10 +14,11 @@
  *     活动池中的题目即使同时出现在 masteredIds 里也按 bit=0 导出
  *   - activePool 每项：[questionIndex, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound, hasBeenShown(0|1)]
  *   - filterTypeCode：all=0, single=1, multiple=2, judgment=3, blank=4
- *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode]
+ *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode, soundEnabled(0|1)]
  */
 
 import BitSet from "bitset";
+import { SOUND_ENABLED_BY_DEFAULT } from "../config";
 import type {
   ActivePoolItem,
   Question,
@@ -46,6 +47,16 @@ const CODE_TO_FILTER: Array<QuestionType | "all"> = [
   "judgment",
   "blank",
 ];
+
+function encodeSoundEnabled(settings: UserSettings): 0 | 1 {
+  return settings.soundEnabled === true ? 1 : 0;
+}
+
+function decodeSoundEnabled(raw: unknown): boolean {
+  if (raw === 1 || raw === true) return true;
+  if (raw === 0 || raw === false) return false;
+  return SOUND_ENABLED_BY_DEFAULT;
+}
 
 // ── 题目索引 / bitmap 编解码 ───────────────────────────────────────────────────
 
@@ -264,6 +275,7 @@ export async function exportProgress(
       state.settings.correctStreakToMaster,
       state.settings.correctStreakAfterMistake,
       state.settings.selectionMode,
+      encodeSoundEnabled(state.settings),
     ],
     [
       state.ui.progressFocused ? 1 : 0,
@@ -372,6 +384,7 @@ export async function importProgress(
     correctStreakToMaster: settingsRaw[2] as number,
     correctStreakAfterMistake: settingsRaw[3] as number,
     selectionMode: settingsRaw[4] === "sequential" ? "sequential" : "random",
+    soundEnabled: decodeSoundEnabled(settingsRaw[5]),
   };
 
   const ui: UiPreferences = {

@@ -71,6 +71,7 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
       correctStreakToMaster: 3,
       correctStreakAfterMistake: 5,
       selectionMode: "sequential",
+      soundEnabled: false,
     },
     ui: {
       progressFocused: false,
@@ -202,6 +203,7 @@ describe("exportProgress / importProgress round-trip", () => {
         correctStreakToMaster: 3,
         correctStreakAfterMistake: 4,
         selectionMode: "random",
+        soundEnabled: false,
       },
       ui: { progressFocused: false, showPool: false },
     };
@@ -233,7 +235,7 @@ describe("bitmap / index 编码", () => {
       ],
       8,
       1,
-      [1, 20, 3, 5, "sequential"],
+      [1, 20, 3, 5, "sequential", 0],
       [0, 0],
     ]);
     expect(JSON.stringify(payload)).not.toContain("single_1");
@@ -321,11 +323,49 @@ describe("filterType / settings / ui round-trip", () => {
         correctStreakToMaster: 2,
         correctStreakAfterMistake: 6,
         selectionMode: "random",
+        soundEnabled: false,
       },
     });
     const encoded = await exportProgress(state, HASH, QUESTIONS);
     const restored = await importProgress(encoded, HASH, QUESTIONS);
     expect(restored.settings).toEqual(state.settings);
+  });
+
+  it("soundEnabled=true 会 round-trip", async () => {
+    const state = makeState({
+      settings: {
+        autoNextOnCorrect: true,
+        activePoolSize: 20,
+        correctStreakToMaster: 3,
+        correctStreakAfterMistake: 5,
+        selectionMode: "sequential",
+        soundEnabled: true,
+      },
+    });
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const payload = await decodePayload(encoded);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect((payload as unknown[])[6]).toEqual([1, 20, 3, 5, "sequential", 1]);
+    expect(restored.settings.soundEnabled).toBe(true);
+  });
+
+  it("旧进度缺少 soundEnabled 时补默认关闭", async () => {
+    const encoded = await encodePayload(
+      compact({ settings: [1, 10, 3, 4, "random"] }),
+    );
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.settings.soundEnabled).toBe(false);
+  });
+
+  it("soundEnabled 字段为空时补默认关闭", async () => {
+    const encoded = await encodePayload(
+      compact({ settings: [1, 10, 3, 4, "random", null] }),
+    );
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.settings.soundEnabled).toBe(false);
   });
 
   it("ui 段 round-trip：progressFocused=true, showPool=true", async () => {
