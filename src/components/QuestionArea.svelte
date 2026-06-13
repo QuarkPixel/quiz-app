@@ -194,7 +194,7 @@
             <span class="text-base">当前筛选条件下没有题目</span>
         {:else if session.stats.mastered === session.stats.total}
             {#if session.allMastered}
-                <IconConfetti size={64} class="text-foreground" />
+                <IconConfetti size={64} class="text-foreground opacity-30" />
                 <span class="text-foreground text-lg font-bold mb-3">
                     所有题目已掌握
                 </span>
@@ -202,7 +202,7 @@
                     重新开始
                 </Button>
             {:else}
-                <IconInputCheck size={64} class="text-foreground" />
+                <IconInputCheck size={64} class="text-foreground opacity-30" />
                 <span class="text-foreground text-lg font-bold mb-3">
                     当前题型筛选下所有题目已掌握
                 </span>
