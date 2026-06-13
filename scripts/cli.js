@@ -35,7 +35,9 @@ function appendNodeOption(env, option) {
 
 const [, , subcommand, ...rest] = process.argv;
 if (!subcommand || !["dev", "build", "preview"].includes(subcommand)) {
-  console.error(`用法: node scripts/cli.js <dev|build|preview> [-- --bundled [path]]`);
+  console.error(
+    `用法: node scripts/cli.js <dev|build|preview> [-- --bundled [path]]`,
+  );
   process.exit(1);
 }
 
@@ -83,5 +85,17 @@ appendNodeOption(env, "--disable-warning=DEP0205");
 const viteArgs = subcommand === "dev" ? [] : [subcommand];
 const viteBin = resolve(projectRoot, "node_modules/.bin/vite");
 
-const child = spawn(viteBin, viteArgs, { env, stdio: "inherit", cwd: projectRoot });
+const child = spawn(viteBin, viteArgs, {
+  env,
+  stdio: "inherit",
+  cwd: projectRoot,
+});
 child.on("exit", (code) => process.exit(code ?? 0));
+
+process.on("SIGINT", () => {
+  child.kill("SIGINT");
+
+  setTimeout(() => {
+    process.exit(0);
+  }, 50);
+});
