@@ -7,6 +7,8 @@
     import IconCopyCheck from "@tabler/icons-svelte/icons/copy-check";
     import IconAlertCircle from "@tabler/icons-svelte/icons/alert-circle";
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
+    import IconConfetti from "@tabler/icons-svelte/icons/confetti";
+    import IconInputCheck from "@tabler/icons-svelte/icons/input-check";
     import StreakIndicator from "./StreakIndicator.svelte";
     import { QUESTION_TYPES } from "../quiz/types/registry";
     import { getCorrectChoiceLetters } from "../features/quiz";
@@ -192,14 +194,16 @@
             <span class="text-base">当前筛选条件下没有题目</span>
         {:else if session.stats.mastered === session.stats.total}
             {#if session.allMastered}
-                <span class="text-foreground text-lg font-bold">
+                <IconConfetti size={64} class="text-foreground" />
+                <span class="text-foreground text-lg font-bold mb-3">
                     所有题目已掌握
                 </span>
                 <Button variant="outline" onclick={() => session.reset()}>
                     重新开始
                 </Button>
             {:else}
-                <span class="text-foreground text-lg font-bold">
+                <IconInputCheck size={64} class="text-foreground" />
+                <span class="text-foreground text-lg font-bold mb-3">
                     当前题型筛选下所有题目已掌握
                 </span>
                 <Button
