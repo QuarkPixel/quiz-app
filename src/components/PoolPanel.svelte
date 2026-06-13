@@ -39,10 +39,7 @@
     };
 
     let revealedAnswerKeys = $state<Record<string, number>>({});
-    const revealAnswerTimers = new Map<
-        string,
-        ReturnType<typeof setTimeout>
-    >();
+    const revealAnswerTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const pointerTapStates = new Map<number, PointerTapState>();
 
     function clearRevealAnswerTimer(id: string): void {
@@ -181,9 +178,7 @@
                     >
                         <span class="font-mono">{entry.item.id}</span>
                         {#if !entry.item.hasBeenShown}
-                            <span
-                                class="font-semibold font-mono text-success"
-                            >
+                            <span class="font-semibold font-mono text-success">
                                 NEW
                             </span>
                         {/if}
@@ -208,7 +203,7 @@
                         <p
                             class={cn(
                                 "pool-answer",
-                                "text-success/90 truncate text-[12px] leading-snug transition-opacity duration-300 ease-spring",
+                                "text-success/90 text-[12px] leading-snug transition-opacity duration-300 ease-spring",
                                 entry.isLatest
                                     ? "opacity-100"
                                     : revealedAnswerKeys[entry.item.id] !==
