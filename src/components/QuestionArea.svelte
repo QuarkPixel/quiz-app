@@ -13,6 +13,11 @@
     import { QUESTION_TYPES } from "../quiz/types/registry";
     import { getCorrectChoiceLetters } from "../features/quiz";
     import { useQuizSession } from "../quiz/session/context";
+    import {
+        IconCircleDashedCheck,
+        IconCircleDashedX,
+        IconDiscountCheck,
+    } from "@tabler/icons-svelte";
 
     const session = useQuizSession();
 
@@ -121,7 +126,7 @@
         {#if session.showResult}
             <div
                 class={cn(
-                    "flex h-full flex-col items-center justify-center gap-1 rounded-lg px-4 text-center",
+                    "flex h-full flex-col items-center justify-center gap-1 rounded-lg px-4 text-center relative overflow-hidden",
                     session.isCorrect
                         ? "bg-success/10 text-success"
                         : "bg-destructive/10 text-destructive",
@@ -152,6 +157,21 @@
                         )}
                     </span>
                 {/if}
+
+                <div
+                    class="absolute -bottom-6 left-[calc(50%+72px)] opacity-20 rotate-10 *:size-24"
+                >
+                    {#if session.isCorrect}
+                        {#if session.currentPoolItem}
+                            <IconCircleDashedCheck />
+                            <!-- 回答正确 -->
+                        {:else}
+                            <IconDiscountCheck /> <!-- 已掌握 -->
+                        {/if}
+                    {:else}
+                        <IconCircleDashedX class="" /> <!-- 回答错误 -->
+                    {/if}
+                </div>
             </div>
         {/if}
     </div>
