@@ -325,13 +325,6 @@ export default defineConfig(async () => ({
   preview: {
     open: mode === "bundled" ? `/${bundledOutputName}` : "/",
   },
-  optimizeDeps: {
-    // vite v8 / rolldown 与 vite-plugin-svelte 的 optimize-svelte 子插件不兼容：
-    // 后者会在 dep scan 阶段对 .svelte.ts 文件直接调用 svelte.compileModule，
-    // 不经过 TS 预处理 → AggregateError。
-    // 关掉自动发现，依然保留 svelte plugin 自动注入的 include 列表，dev 仍可正常工作。
-    noDiscovery: true,
-  },
   test: {
     include: ["tests/**/*.test.ts"],
     environment: "happy-dom",
