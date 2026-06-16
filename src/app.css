@@ -221,36 +221,3 @@
     padding-bottom: env(safe-area-inset-bottom);
     padding-left: env(safe-area-inset-left);
 }
-
-/* FlashContainer 的 flash layer，直接挂在 document.body 下，全局样式 */
-.flash-layer-correct,
-.flash-layer-wrong {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: 1;
-}
-.flash-layer-correct {
-    animation: flashCorrect 6s ease;
-}
-.flash-layer-wrong {
-    animation: flashWrong 6s ease;
-}
-@keyframes flashCorrect {
-    0%,
-    100% {
-        background: transparent;
-    }
-    10% {
-        background: rgba(129, 145, 47, 0.06);
-    }
-}
-@keyframes flashWrong {
-    0%,
-    100% {
-        background: transparent;
-    }
-    10% {
-        background: rgba(224, 63, 79, 0.06);
-    }
-}
