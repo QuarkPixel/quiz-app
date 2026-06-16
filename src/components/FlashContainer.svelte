@@ -14,6 +14,7 @@
 </script>
 
 <div
+    style="--opacity: 0.08"
     class="fixed inset-0 pointer-events-none z-1024
     mix-blend-multiply dark:mix-blend-screen
     *:absolute *:inset-0 *:will-change-[opacity]"
@@ -37,7 +38,7 @@
             background: transparent;
         }
         10% {
-            background: rgba(129, 145, 47, 0.1);
+            background: rgba(129, 145, 47, var(--opacity));
         }
     }
     @keyframes flashWrong {
@@ -46,7 +47,7 @@
             background: transparent;
         }
         10% {
-            background: rgba(224, 63, 79, 0.1);
+            background: rgba(224, 63, 79, var(--opacity));
         }
     }
 </style>
