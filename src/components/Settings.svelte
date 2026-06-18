@@ -26,6 +26,13 @@
 
     const session = useQuizSession();
     const resetAction = createConfirmAction(() => session.reset());
+    const pendingFilterLabel = $derived(
+        session.pendingFilterType === null
+            ? ""
+            : (session.filterOptions.find(
+                  (option) => option.key === session.pendingFilterType,
+              )?.label ?? "新筛选"),
+    );
 
     $effect(() => {
         if (!open && resetAction.confirming) {
@@ -234,5 +241,36 @@
                 {resetAction.confirming ? "再次点击以确认" : "重置所有进度"}
             </Button>
         </div>
+    </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root
+    open={session.pendingFilterType !== null}
+    onOpenChange={(nextOpen) => {
+        if (!nextOpen) session.cancelPendingFilterChange();
+    }}
+>
+    <Dialog.Content class="max-w-sm">
+        <Dialog.Header>
+            <Dialog.Title>处理当前活动题池</Dialog.Title>
+            <Dialog.Description>
+                当前活动题池里有已展示过、但不属于「{pendingFilterLabel}」的题目。未展示题会按新筛选重新入池。
+            </Dialog.Description>
+        </Dialog.Header>
+        <Dialog.Footer>
+            <Button
+                variant="outline"
+                onclick={() => session.confirmPendingFilterChange("keep-shown")}
+            >
+                保留当前题目
+            </Button>
+            <Button
+                variant="destructive"
+                onclick={() =>
+                    session.confirmPendingFilterChange("clear-active-pool")}
+            >
+                清空活动题池
+            </Button>
+        </Dialog.Footer>
     </Dialog.Content>
 </Dialog.Root>

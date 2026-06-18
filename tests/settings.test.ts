@@ -49,7 +49,7 @@ function poolItem(
   id: string,
   patch: Partial<ActivePoolItem> = {},
 ): ActivePoolItem {
-  return { ...createActivePoolItem(id), ...patch };
+  return { ...createActivePoolItem(id), hasBeenShown: true, ...patch };
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +380,40 @@ describe("reconcileAfterSettingsChange / shouldSelectNext", () => {
     });
     const result = reconcileAfterSettingsChange(questions, state);
     expect(result.shouldSelectNext).toBe(false);
+  });
+});
+
+describe("reconcileAfterSettingsChange / 未展示题回流", () => {
+  it("设置变化时移除未展示活动题，并按当前设置重新补池", () => {
+    const questions = [
+      makeQuestion("a"),
+      makeQuestion("b"),
+      makeQuestion("c"),
+      makeQuestion("d"),
+      makeQuestion("e"),
+      makeQuestion("f"),
+    ];
+    const state = makeState({
+      activePool: [
+        poolItem("c", { hasBeenShown: true }),
+        poolItem("d", { hasBeenShown: false }),
+      ],
+      settings: makeSettings({
+        activePoolSize: 5,
+        selectionMode: "sequential",
+      }),
+    });
+
+    const result = reconcileAfterSettingsChange(questions, state, "c");
+
+    expect(result.state.activePool.map((item) => item.id)).toEqual([
+      "c",
+      "a",
+      "b",
+      "d",
+      "e",
+    ]);
+    expect(result.state.pendingIds).toEqual(["f"]);
   });
 });
 

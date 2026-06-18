@@ -18,10 +18,15 @@ export {
   getActivePoolItem,
   getRequiredStreak,
   getStats,
+  hasShownActivePoolOutsideFilter,
   loadRuntimeState,
   rebuildRuntimeState,
+  rebuildRuntimeStateForFilterChange,
   saveState,
   selectNextFromPool,
   shuffle,
 } from "./runtime";
-export type { LearningSegment } from "./runtime";
+export type {
+  FilterChangeActivePoolPolicy,
+  LearningSegment,
+} from "./runtime";

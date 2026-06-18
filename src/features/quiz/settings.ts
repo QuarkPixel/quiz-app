@@ -1,5 +1,5 @@
 import { fillActivePool } from "../../algorithm";
-import { buildRuntimeState } from "../../store";
+import { buildRuntimeState, shouldRequeueActivePoolItem } from "../../store";
 import type {
   ActivePoolItem,
   Question,
@@ -131,9 +131,12 @@ export function reconcileAfterSettingsChange(
   currentQuestionId?: string,
 ): ReconcileSettingsResult {
   const sanitizedSettings = sanitizeUserSettings(runtimeState.settings);
+  const shownActivePool = runtimeState.activePool.filter(
+    (item) => !shouldRequeueActivePoolItem(item),
+  );
 
   const trimmedActivePool = trimActivePool(
-    runtimeState.activePool,
+    shownActivePool,
     sanitizedSettings.activePoolSize,
     currentQuestionId,
   );

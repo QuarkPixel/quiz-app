@@ -106,11 +106,13 @@ export function createActivePoolItem(
   };
 }
 
-export function isUnansweredNewActivePoolItem(
-  item: ActivePoolItem,
-): boolean {
-  if (item.consecutiveCorrect !== 0 || item.hasEverMistaken) return false;
-  return !item.hasBeenShown;
+export function shouldRequeueActivePoolItem(item: ActivePoolItem): boolean {
+  const hasBeenShown = (item as { hasBeenShown?: boolean }).hasBeenShown;
+  if (hasBeenShown !== undefined) return !hasBeenShown;
+
+  // 兼容 hasBeenShown 字段出现前保存的状态：已经带进度的题保留，
+  // 没有任何作答痕迹的新题可以回到 pending 后按当前设置重新入池。
+  return item.consecutiveCorrect === 0 && !item.hasEverMistaken;
 }
 
 /** 创建默认的存储状态 */
@@ -241,11 +243,10 @@ export function buildRuntimeState(
   questions: Question[],
   storedState: StoredState,
 ): RuntimeState {
-  const filtered = filterQuestions(questions, storedState.filterType);
-  const filteredIds = new Set(filtered.map((q) => q.id));
+  const questionIds = new Set(questions.map((q) => q.id));
 
   const cleanedActivePool = storedState.activePool.filter((item) =>
-    filteredIds.has(item.id),
+    questionIds.has(item.id),
   );
 
   const cleanedState: StoredState = {

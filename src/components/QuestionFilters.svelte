@@ -8,7 +8,7 @@
     interface Props {
         options: FilterOption[];
         activeType: QuestionType | "all";
-        onSelect: (type: QuestionType | "all") => void;
+        onSelect: (type: QuestionType | "all") => boolean | void;
     }
 
     let { options, activeType, onSelect }: Props = $props();
@@ -35,7 +35,10 @@
             selected = activeType; // 拒绝取消选择
             return;
         }
-        onSelect(v as QuestionType | "all");
+        const accepted = onSelect(v as QuestionType | "all");
+        if (accepted === false) {
+            selected = activeType;
+        }
     }
 </script>
 

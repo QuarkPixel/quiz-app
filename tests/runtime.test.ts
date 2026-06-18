@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   loadRuntimeState,
   rebuildRuntimeState,
+  rebuildRuntimeStateForFilterChange,
   createResetRuntimeState,
+  hasShownActivePoolOutsideFilter,
 } from "../src/features/quiz/runtime";
 import {
   createActivePoolItem,
@@ -228,47 +230,39 @@ describe("rebuildRuntimeState", () => {
     };
   }
 
-  it("切换 filter 时，'加进 pool 但还没展示过' 的题被清掉", () => {
+  it("只因切换 filter 重建时，活动池题目不会被题型筛掉", () => {
     const questions = [
       makeQuestion("a", "single"),
-      makeQuestion("b", "single"),
-      makeQuestion("c", "judgment"),
+      makeQuestion("b", "judgment"),
     ];
     const state = baseRuntime({
       activePool: [
-        createActivePoolItem("a"),
-        createActivePoolItem("b"),
-        createActivePoolItem("c"),
+        { ...createActivePoolItem("a"), hasBeenShown: true },
+        { ...createActivePoolItem("b"), hasBeenShown: true },
       ],
       filterType: "all",
     });
     const rebuilt = rebuildRuntimeState(questions, state, "single");
-    // 三个都是未展示过的：rebuild 全清掉
-    expect(rebuilt.activePool).toEqual([]);
+    expect(rebuilt.activePool.map((i) => i.id)).toEqual(["a", "b"]);
   });
 
-  it("'已答过' 的题留下", () => {
+  it("题库里不存在的活动池题目会被清掉", () => {
     const questions = [
       makeQuestion("a", "single"),
       makeQuestion("b", "single"),
     ];
-    const shownItem = {
-      ...createActivePoolItem("a"),
-      consecutiveCorrect: 1,
-      lastSelectedRound: 3,
-    };
-    const notShown = createActivePoolItem("b");
     const state = baseRuntime({
-      activePool: [shownItem, notShown],
+      activePool: [
+        { ...createActivePoolItem("a"), hasBeenShown: true },
+        { ...createActivePoolItem("deleted"), hasBeenShown: true },
+      ],
       filterType: "all",
     });
     const rebuilt = rebuildRuntimeState(questions, state, "single");
     expect(rebuilt.activePool.map((i) => i.id)).toEqual(["a"]);
-    // 没展示的 b 不会留下
-    expect(rebuilt.activePool[0].consecutiveCorrect).toBe(1);
   });
 
-  it("切换后的 pendingIds 反映新 filter", () => {
+  it("pendingIds 反映新 filter", () => {
     const questions = [
       makeQuestion("a", "judgment"),
       makeQuestion("b", "single"),
@@ -281,25 +275,6 @@ describe("rebuildRuntimeState", () => {
     const rebuilt = rebuildRuntimeState(questions, state, "single");
     expect(rebuilt.filterType).toBe("single");
     expect(rebuilt.pendingIds).toEqual(["b", "c"]);
-  });
-
-  it("展示过的题不在 filter 范围内 → 也会被 buildRuntimeState 清掉", () => {
-    const questions = [
-      makeQuestion("a", "judgment"),
-      makeQuestion("b", "single"),
-    ];
-    const shownJudgment = {
-      ...createActivePoolItem("a"),
-      consecutiveCorrect: 1,
-      lastSelectedRound: 3,
-    };
-    const state = baseRuntime({
-      activePool: [shownJudgment],
-      filterType: "all",
-    });
-    const rebuilt = rebuildRuntimeState(questions, state, "single");
-    // 即使展示过，但 a 是 judgment 不在 single filter 里，被 buildRuntimeState 清掉
-    expect(rebuilt.activePool).toEqual([]);
   });
 
   it("保留 masteredIds / currentRound / settings", () => {
@@ -320,58 +295,134 @@ describe("rebuildRuntimeState", () => {
     expect(rebuilt.settings.autoNextOnCorrect).toBe(true);
     expect(rebuilt.settings.activePoolSize).toBe(30);
   });
+});
 
-  it("显式 hasBeenShown=false 的未展示题会被清掉", () => {
+describe("hasShownActivePoolOutsideFilter", () => {
+  function baseRuntime(
+    overrides: Partial<RuntimeState> = {},
+  ): RuntimeState {
+    return {
+      masteredIds: [],
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: createDefaultSettings(),
+      pendingIds: [],
+      ...overrides,
+    };
+  }
+
+  it("切到 all 时不需要确认", () => {
+    const questions = [
+      makeQuestion("a", "single"),
+      makeQuestion("b", "blank"),
+    ];
+    const state = baseRuntime({
+      activePool: [{ ...createActivePoolItem("a"), hasBeenShown: true }],
+    });
+
+    expect(hasShownActivePoolOutsideFilter(questions, state, "all")).toBe(false);
+  });
+
+  it("只有未展示的池外题时不需要确认", () => {
+    const questions = [
+      makeQuestion("a", "single"),
+      makeQuestion("b", "blank"),
+    ];
+    const state = baseRuntime({
+      activePool: [createActivePoolItem("a")],
+    });
+
+    expect(hasShownActivePoolOutsideFilter(questions, state, "blank")).toBe(
+      false,
+    );
+  });
+
+  it("已展示题不属于目标 filter 时需要确认", () => {
+    const questions = [
+      makeQuestion("a", "single"),
+      makeQuestion("b", "blank"),
+    ];
+    const state = baseRuntime({
+      activePool: [{ ...createActivePoolItem("a"), hasBeenShown: true }],
+    });
+
+    expect(hasShownActivePoolOutsideFilter(questions, state, "blank")).toBe(
+      true,
+    );
+  });
+});
+
+describe("rebuildRuntimeStateForFilterChange", () => {
+  function baseRuntime(
+    overrides: Partial<RuntimeState> = {},
+  ): RuntimeState {
+    return {
+      masteredIds: [],
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: createDefaultSettings(),
+      pendingIds: [],
+      ...overrides,
+    };
+  }
+
+  it("keep-shown：未展示题回到 pending，已展示题保留", () => {
     const questions = [
       makeQuestion("a", "single"),
       makeQuestion("b", "single"),
+      makeQuestion("c", "judgment"),
     ];
-    const customPoolSize = 10;
-    const settings = {
-      ...createDefaultSettings(),
-      activePoolSize: customPoolSize,
-    };
     const notShown = createActivePoolItem("a");
     const shownItem = {
       ...createActivePoolItem("b"),
-      consecutiveCorrect: 1,
+      hasBeenShown: true,
       lastSelectedRound: 5,
     };
+    const shownOutsideFilter = {
+      ...createActivePoolItem("c"),
+      hasBeenShown: true,
+      lastSelectedRound: 6,
+    };
     const state = baseRuntime({
-      activePool: [notShown, shownItem],
-      settings,
+      activePool: [notShown, shownItem, shownOutsideFilter],
       filterType: "all",
     });
-    const rebuilt = rebuildRuntimeState(questions, state, "single");
-    // notShown (a) 应被清掉，shownItem (b) 保留
-    expect(rebuilt.activePool.map((i) => i.id)).toEqual(["b"]);
+    const rebuilt = rebuildRuntimeStateForFilterChange(
+      questions,
+      state,
+      "single",
+      "keep-shown",
+    );
+
+    expect(rebuilt.activePool.map((i) => i.id)).toEqual(["b", "c"]);
+    expect(rebuilt.pendingIds).toEqual(["a"]);
   });
 
-  it("当前轮次很高时，未展示的新入池题也会被清掉", () => {
+  it("clear-active-pool：活动池清空，目标 filter 内未掌握题重新进入 pending", () => {
     const questions = [
       makeQuestion("a", "single"),
       makeQuestion("b", "single"),
+      makeQuestion("c", "judgment"),
     ];
-    const settings = {
-      ...createDefaultSettings(),
-      activePoolSize: 20,
-    };
     const state = baseRuntime({
-      currentRound: 3241,
       activePool: [
-        createActivePoolItem("a", 3241),
-        {
-          ...createActivePoolItem("b", 3241),
-          consecutiveCorrect: 1,
-        },
+        { ...createActivePoolItem("a"), hasBeenShown: true },
+        { ...createActivePoolItem("c"), hasBeenShown: true },
       ],
-      settings,
       filterType: "all",
     });
 
-    const rebuilt = rebuildRuntimeState(questions, state, "single");
-    expect(rebuilt.activePool.map((i) => i.id)).toEqual(["b"]);
-    expect(rebuilt.activePool[0].lastSelectedRound).toBe(3241);
+    const rebuilt = rebuildRuntimeStateForFilterChange(
+      questions,
+      state,
+      "single",
+      "clear-active-pool",
+    );
+
+    expect(rebuilt.activePool).toEqual([]);
+    expect(rebuilt.pendingIds).toEqual(["a", "b"]);
   });
 });
 

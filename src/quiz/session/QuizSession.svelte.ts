@@ -28,12 +28,15 @@ import {
   getActivePoolItem,
   getRequiredStreak,
   getStats,
+  hasShownActivePoolOutsideFilter,
   loadRuntimeState,
   rebuildRuntimeState,
+  rebuildRuntimeStateForFilterChange,
   reconcileAfterSettingsChange,
   saveState,
   selectNextFromPool,
   shuffle,
+  type FilterChangeActivePoolPolicy,
 } from "../../features/quiz";
 import {
   copyProgressToClipboard,
@@ -105,6 +108,7 @@ export class QuizSession {
 
   // === 复制当前题目 state ===
   copyQuestionStatus: CopyQuestionStatus = $state("idle");
+  pendingFilterType: QuestionType | "all" | null = $state(null);
 
   /**
    * submit 前的 appState 快照，用于「当作正确」时 rewind。
@@ -282,9 +286,40 @@ export class QuizSession {
   // 设置 / 状态变更
   // ────────────────────────────────────────────────────────────────
 
-  setFilter(type: QuestionType | "all"): void {
-    if (this.appState.filterType === type) return;
-    this.appState = rebuildRuntimeState(this.questions, this.appState, type);
+  setFilter(type: QuestionType | "all"): boolean {
+    if (this.appState.filterType === type) return true;
+
+    if (hasShownActivePoolOutsideFilter(this.questions, this.appState, type)) {
+      this.pendingFilterType = type;
+      return false;
+    }
+
+    this.applyFilterChange(type, "keep-shown");
+    return true;
+  }
+
+  cancelPendingFilterChange(): void {
+    this.pendingFilterType = null;
+  }
+
+  confirmPendingFilterChange(
+    activePoolPolicy: FilterChangeActivePoolPolicy,
+  ): void {
+    if (!this.pendingFilterType) return;
+    this.applyFilterChange(this.pendingFilterType, activePoolPolicy);
+  }
+
+  private applyFilterChange(
+    type: QuestionType | "all",
+    activePoolPolicy: FilterChangeActivePoolPolicy,
+  ): void {
+    this.pendingFilterType = null;
+    this.appState = rebuildRuntimeStateForFilterChange(
+      this.questions,
+      this.appState,
+      type,
+      activePoolPolicy,
+    );
     this.appState = fillActivePool(this.appState);
     this.save();
     this.selectNext();
@@ -386,8 +421,9 @@ export class QuizSession {
     );
     this.appState = reconcileResult.state;
     this.saveSettingsChange();
-    // 注：reconcileResult.shouldSelectNext 历史上未被消费（旧 QuizView 行为），
-    // 这里保留原行为。如未来需要"当前题被裁出池时自动 selectNext" 可在这里启用。
+    if (reconcileResult.shouldSelectNext) {
+      this.selectNext();
+    }
   }
 
   /** 非算法偏好变更（如 autoNextOnCorrect）：持久化当前题库与默认设置 */

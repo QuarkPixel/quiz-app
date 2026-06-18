@@ -103,9 +103,27 @@ describe("getStats", () => {
     });
   });
 
-  it("筛选指定题型时排除不匹配的 mastered；activePool 假定已被 buildRuntimeState 清洗", () => {
-    // getStats 不再防御性 filter activePool —— 假定调用方传入的 state 是
-    // buildRuntimeState 的产物，pool 已按 filterType 清洗过。
+  it("筛选指定题型时排除不匹配的 mastered，learning 统计整个活动池", () => {
+    const questions = [
+      makeQuestion("a", "judgment", true),
+      makeQuestion("b", "single", [0]),
+      makeQuestion("c", "single", [1]),
+      makeQuestion("d", "blank", "x"),
+    ];
+    const state = makeState({
+      filterType: "single",
+      masteredIds: ["a", "b"],
+      activePool: [poolItem("c"), poolItem("d")],
+      pendingIds: [],
+    });
+
+    const stats = getStats(questions, state);
+    expect(stats.total).toBe(3); // 2 道 single + 1 道 carry-over blank
+    expect(stats.mastered).toBe(1); // 只有 b 属于当前筛选
+    expect(stats.learning).toBe(2); // c 和 carry-over 的 d 都仍在学习中
+  });
+
+  it("筛选外 mastered 不会变成 carry-over total", () => {
     const questions = [
       makeQuestion("a", "judgment", true),
       makeQuestion("b", "single", [0]),
@@ -113,15 +131,17 @@ describe("getStats", () => {
     ];
     const state = makeState({
       filterType: "single",
-      masteredIds: ["a", "b"], // a 是判断题，mastered 仍按 filterType 过滤
-      activePool: [poolItem("c")], // 假设已被 buildRuntimeState 清洗
+      masteredIds: ["a", "b"],
+      activePool: [poolItem("c")],
       pendingIds: [],
     });
 
     const stats = getStats(questions, state);
-    expect(stats.total).toBe(2); // single 共两道
-    expect(stats.mastered).toBe(1); // 只有 b
-    expect(stats.learning).toBe(1); // 只有 c
+    expect(stats).toMatchObject({
+      total: 2,
+      mastered: 1,
+      learning: 1,
+    });
   });
 
   it("空 pool 和空 mastered 时返回 0", () => {
@@ -661,18 +681,17 @@ describe("computeLearningSegments", () => {
     expect(segments[2].widthPercent).toBe(25); // 1/4
   });
 
-  it("受 filterType 影响：池中存在不匹配题型项时被排除", () => {
+  it("carry-over 活动题即使不属于当前 filter 也计入学习分段", () => {
     const questions = [
       makeQuestion("a", "single", [0]),
       makeQuestion("b", "judgment", true),
     ];
     const state = makeState({
       filterType: "single",
-      activePool: [poolItem("a"), poolItem("b")],
+      activePool: [poolItem("a"), poolItem("b", { consecutiveCorrect: 1 })],
     });
     const segments = computeLearningSegments(questions, state);
-    // 只有 a 计入
-    expect(segments.map((seg) => seg.widthPercent)).toEqual([0, 0, 100, 0]);
+    expect(segments.map((seg) => seg.widthPercent)).toEqual([0, 50, 50, 0]);
   });
 
   it("maxLevel=1 时所有题共享中点色", () => {

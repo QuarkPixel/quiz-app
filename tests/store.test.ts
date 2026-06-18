@@ -10,6 +10,7 @@ import {
   computePendingIds,
   buildRuntimeState,
   getActivePoolItem,
+  shouldRequeueActivePoolItem,
 } from "../src/store";
 import {
   ACTIVE_POOL_SIZE,
@@ -127,6 +128,32 @@ describe("createActivePoolItem", () => {
   it("lastSelectedRound 以当前轮次为基准", () => {
     expect(createActivePoolItem("q1", 42).lastSelectedRound).toBe(42);
     expect(createActivePoolItem("q1", 3241).lastSelectedRound).toBe(3241);
+  });
+});
+
+describe("shouldRequeueActivePoolItem", () => {
+  it("显式 hasBeenShown=false 时需要回流", () => {
+    expect(shouldRequeueActivePoolItem(createActivePoolItem("q1"))).toBe(true);
+  });
+
+  it("显式 hasBeenShown=true 时保留", () => {
+    expect(
+      shouldRequeueActivePoolItem({
+        ...createActivePoolItem("q1"),
+        hasBeenShown: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("兼容旧状态：没有 hasBeenShown 但已有作答痕迹时保留", () => {
+    const item = {
+      id: "q1",
+      consecutiveCorrect: 1,
+      hasEverMistaken: false,
+      lastSelectedRound: 3,
+    } as ActivePoolItem;
+
+    expect(shouldRequeueActivePoolItem(item)).toBe(false);
   });
 });
 
@@ -564,7 +591,7 @@ describe("computePendingIds", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildRuntimeState", () => {
-  it("cleanedActivePool 剔除非 filter 范围内的题", () => {
+  it("activePool 保留当前 filter 外的 carry-over 题", () => {
     const questions = [
       makeQuestion("a", "judgment"),
       makeQuestion("b", "single"),
@@ -573,7 +600,7 @@ describe("buildRuntimeState", () => {
     const state: StoredState = {
       masteredIds: [],
       activePool: [
-        createActivePoolItem("a"), // judgment，不在 single filter 范围内
+        createActivePoolItem("a"),
         createActivePoolItem("b"),
       ],
       currentRound: 0,
@@ -581,7 +608,26 @@ describe("buildRuntimeState", () => {
       settings: createDefaultSettings(),
     };
     const runtime = buildRuntimeState(questions, state);
-    expect(runtime.activePool.map((i) => i.id)).toEqual(["b"]);
+    expect(runtime.activePool.map((i) => i.id)).toEqual(["a", "b"]);
+  });
+
+  it("activePool 剔除题库里不存在的题", () => {
+    const questions = [
+      makeQuestion("a", "judgment"),
+      makeQuestion("b", "single"),
+    ];
+    const state: StoredState = {
+      masteredIds: [],
+      activePool: [
+        createActivePoolItem("a"),
+        createActivePoolItem("deleted"),
+      ],
+      currentRound: 0,
+      filterType: "all",
+      settings: createDefaultSettings(),
+    };
+    const runtime = buildRuntimeState(questions, state);
+    expect(runtime.activePool.map((i) => i.id)).toEqual(["a"]);
   });
 
   it("pendingIds 反映 filter 范围、排除 mastered/active", () => {

@@ -129,13 +129,19 @@ function takePendingIdsForPool(
 export function getStats(questions: Question[], state: RuntimeState): Stats {
   const filtered = filterQuestions(questions, state.filterType);
   const filteredIds = new Set(filtered.map((q) => q.id));
+  const questionIds = new Set(questions.map((q) => q.id));
+  const activeItems = state.activePool.filter((item) =>
+    questionIds.has(item.id),
+  );
 
   // 只统计当前筛选范围内的
   const mastered = state.masteredIds.filter((id) => filteredIds.has(id)).length;
-  // activePool 在 buildRuntimeState 时已经按 filterType 清洗过，这里直接取长度
-  const learning = state.activePool.length;
+  const learning = activeItems.length;
   const pending = state.pendingIds.length;
-  const total = filtered.length;
+  const carriedLearning = activeItems.filter(
+    (item) => !filteredIds.has(item.id),
+  ).length;
+  const total = filtered.length + carriedLearning;
 
   return { mastered, learning, pending, total };
 }
@@ -322,9 +328,8 @@ export function computeLearningSegments(
   questions: Question[],
   state: RuntimeState,
 ): LearningSegment[] {
-  const filtered = filterQuestions(questions, state.filterType);
-  const filteredIds = new Set(filtered.map((q) => q.id));
-  const items = state.activePool.filter((item) => filteredIds.has(item.id));
+  const questionIds = new Set(questions.map((q) => q.id));
+  const items = state.activePool.filter((item) => questionIds.has(item.id));
 
   if (items.length === 0) return [];
 

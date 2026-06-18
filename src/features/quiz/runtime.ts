@@ -9,11 +9,12 @@ import {
 } from "../../algorithm";
 import {
   buildRuntimeState,
+  filterQuestions,
   getActivePoolItem,
-  isUnansweredNewActivePoolItem,
   loadStoredState,
   resetStoredState,
   saveState,
+  shouldRequeueActivePoolItem,
 } from "../../store";
 import type { Question, QuestionType, RuntimeState } from "../../types";
 import { normalizeFilterType } from "./filters";
@@ -22,6 +23,8 @@ import { sanitizeUserSettings } from "./settings";
 export interface RuntimePersistenceOptions {
   usePersistedDefaultSettings?: boolean;
 }
+
+export type FilterChangeActivePoolPolicy = "keep-shown" | "clear-active-pool";
 
 export {
   applyAnswer,
@@ -35,6 +38,23 @@ export {
   shuffle,
 };
 export type { LearningSegment } from "../../algorithm";
+
+export function hasShownActivePoolOutsideFilter(
+  questions: Question[],
+  state: RuntimeState,
+  filterType: QuestionType | "all",
+): boolean {
+  if (filterType === "all") return false;
+
+  const filteredIds = new Set(
+    filterQuestions(questions, filterType).map((question) => question.id),
+  );
+
+  return state.activePool.some(
+    (item) =>
+      !shouldRequeueActivePoolItem(item) && !filteredIds.has(item.id),
+  );
+}
 
 export function loadRuntimeState(
   questions: Question[],
@@ -52,14 +72,30 @@ export function rebuildRuntimeState(
   state: RuntimeState,
   filterType: QuestionType | "all",
 ): RuntimeState {
-  // filter 切换时，剔除"加进 pool 但还没真正展示过"的旧 filter 题，
-  // 避免它们继续占据 pool 导致连续出同类
-  const cleanedActivePool = state.activePool.filter(
-    (item) => !isUnansweredNewActivePoolItem(item),
-  );
   return buildRuntimeState(questions, {
     masteredIds: state.masteredIds,
-    activePool: cleanedActivePool,
+    activePool: state.activePool,
+    currentRound: state.currentRound,
+    settings: state.settings,
+    filterType,
+    ui: state.ui,
+  });
+}
+
+export function rebuildRuntimeStateForFilterChange(
+  questions: Question[],
+  state: RuntimeState,
+  filterType: QuestionType | "all",
+  activePoolPolicy: FilterChangeActivePoolPolicy,
+): RuntimeState {
+  const activePool =
+    activePoolPolicy === "clear-active-pool"
+      ? []
+      : state.activePool.filter((item) => !shouldRequeueActivePoolItem(item));
+
+  return buildRuntimeState(questions, {
+    masteredIds: state.masteredIds,
+    activePool,
     currentRound: state.currentRound,
     settings: state.settings,
     filterType,

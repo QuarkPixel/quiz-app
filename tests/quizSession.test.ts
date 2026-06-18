@@ -6,7 +6,12 @@ import {
 } from "../src/quiz/session/QuizSession.svelte";
 import type { Bank } from "../src/source/types";
 import type { Question, QuestionType } from "../src/types";
-import { saveState, loadStoredState, createDefaultSettings } from "../src/store";
+import {
+  saveState,
+  loadStoredState,
+  createActivePoolItem,
+  createDefaultSettings,
+} from "../src/store";
 import { STORAGE_KEY_DEFAULT_SETTINGS } from "../src/config";
 
 // ---------------------------------------------------------------------------
@@ -270,8 +275,11 @@ describe("setFilter", () => {
   it("filterType 切换后 appState.filterType 更新且 selectNext", () => {
     const { deps } = makeDeps();
     const session = new QuizSession(makeBank(), deps);
-    session.initialize();
-    session.setFilter("single");
+    session.appState.settings.selectionMode = "sequential";
+
+    const accepted = session.setFilter("single");
+
+    expect(accepted).toBe(true);
     expect(session.appState.filterType).toBe("single");
     expect(session.currentQuestion?.type).toBe("single");
   });
@@ -283,6 +291,117 @@ describe("setFilter", () => {
     const before = session.currentQuestion;
     session.setFilter("all");
     expect(session.currentQuestion).toBe(before); // 不变
+  });
+
+  it("切换会排除已展示活动题时，进入待确认且不改 filterType", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+    session.appState = {
+      ...session.appState,
+      filterType: "all",
+      activePool: [
+        { ...createActivePoolItem("single_1"), hasBeenShown: true },
+      ],
+      pendingIds: [],
+    };
+
+    const accepted = session.setFilter("blank");
+
+    expect(accepted).toBe(false);
+    expect(session.pendingFilterType).toBe("blank");
+    expect(session.appState.filterType).toBe("all");
+  });
+
+  it("取消待确认筛选切换时不改变状态", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+    session.appState = {
+      ...session.appState,
+      filterType: "all",
+      activePool: [
+        { ...createActivePoolItem("single_1"), hasBeenShown: true },
+      ],
+      pendingIds: [],
+    };
+
+    session.setFilter("blank");
+    session.cancelPendingFilterChange();
+
+    expect(session.pendingFilterType).toBeNull();
+    expect(session.appState.filterType).toBe("all");
+    expect(session.appState.activePool.map((item) => item.id)).toEqual([
+      "single_1",
+    ]);
+  });
+
+  it("确认保留当前题目：保留已展示题，未展示题按新 filter 重新入池", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(
+      makeBank([
+        q("single_1", "single", [0], [{ text: "A" }]),
+        q("blank_1", "blank", "x"),
+        q("blank_2", "blank", "y"),
+        q("judgment_1", "judgment", true),
+      ]),
+      deps,
+    );
+    session.appState = {
+      ...session.appState,
+      filterType: "all",
+      settings: {
+        ...session.appState.settings,
+        activePoolSize: 5,
+        selectionMode: "sequential",
+      },
+      activePool: [
+        { ...createActivePoolItem("single_1"), hasBeenShown: true },
+        createActivePoolItem("judgment_1"),
+      ],
+      pendingIds: [],
+    };
+
+    session.setFilter("blank");
+    session.confirmPendingFilterChange("keep-shown");
+
+    expect(session.pendingFilterType).toBeNull();
+    expect(session.appState.filterType).toBe("blank");
+    expect(session.appState.activePool.map((item) => item.id)).toEqual([
+      "single_1",
+      "blank_1",
+      "blank_2",
+    ]);
+    expect(
+      session.appState.activePool.some((item) => item.id === "judgment_1"),
+    ).toBe(false);
+  });
+
+  it("确认清空活动题池：只按新 filter 重新补池", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+    session.appState = {
+      ...session.appState,
+      filterType: "all",
+      settings: {
+        ...session.appState.settings,
+        activePoolSize: 5,
+        selectionMode: "sequential",
+      },
+      activePool: [
+        { ...createActivePoolItem("single_1"), hasBeenShown: true },
+        { ...createActivePoolItem("judgment_1"), hasBeenShown: true },
+      ],
+      pendingIds: [],
+    };
+
+    session.setFilter("blank");
+    session.confirmPendingFilterChange("clear-active-pool");
+
+    expect(session.pendingFilterType).toBeNull();
+    expect(session.appState.filterType).toBe("blank");
+    expect(session.appState.activePool.map((item) => item.id)).toEqual([
+      "blank_1",
+    ]);
+    expect(session.currentQuestion?.type).toBe("blank");
   });
 });
 
@@ -297,7 +416,9 @@ describe("reset", () => {
     session.initialize();
     session.markCurrentAsMastered();
     expect(session.appState.masteredIds.length).toBeGreaterThan(0);
-    session.setFilter("single");
+    if (!session.setFilter("single")) {
+      session.confirmPendingFilterChange("clear-active-pool");
+    }
     session.appState.settings.autoNextOnCorrect = true;
     session.handlePreferenceChange(); // 把设置持久化
 
