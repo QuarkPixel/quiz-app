@@ -94,5 +94,11 @@
     "type": "blank",
     "question": "3 × 3 = ___，4 × 4 = ___（数字填空，两空）",
     "answer": ["9", "16"]
+  },
+  {
+    "id": "blank_7",
+    "type": "blank",
+    "question": "联系某人（等号分支：两套完整答案任选其一）",
+    "answer": "contact/call sb = get in touch with sb"
   }
 ]

@@ -158,9 +158,10 @@ pnpm check
 | `(xxx)` | 括号内容可选 | `on (an) average` → 写不写 `an` 都算对 |
 | `A/B` | 斜杠两侧任选其一 | `fall ill/sick` → `fall ill` 或 `fall sick` 均可 |
 | `(A/B)` | 括号内词级替换 | `(be/get) used to` → `be used to` 或 `get used to` |
-| 全角符号 | 自动转半角 | `（an）`、`／` 与半角等价 |
+| `A=B` | 等号两侧任选一套完整答案 | `contact/call sb = get in touch with sb` → `contact sb`、`call sb` 或 `get in touch with sb` 均可 |
+| 全角符号 | 自动转半角 | `（an）`、`／`、`＝` 与半角等价 |
 
-匹配时忽略大小写、空格和标点，保留字母、数字和中文进行比对。斜杠分支支持共享前缀/后缀，例如 `draw/reach/come to a conclusion`，输入 `draw conclusion` 也会被判为正确。
+匹配时忽略大小写、空格和标点，保留字母、数字和中文进行比对。等号优先级高于斜杠，会先把答案拆成多套完整答案；每套内部仍按斜杠和括号规则匹配。斜杠分支支持共享前缀/后缀，例如 `draw/reach/come to a conclusion`，输入 `draw conclusion` 也会被判为正确。
 
 常见占位词（用户可不输入）：`sb`、`sth`、`sb's`、`one's`、`oneself`、`doing`、`to do`。
 ### 完整示例
@@ -204,7 +205,8 @@ pnpm check
   { "id": "blank_3", "type": "blank", "question": "生病（斜杠分支）", "answer": "fall ill/sick" },
   { "id": "blank_4", "type": "blank", "question": "得出结论（多动词可选）", "answer": "draw/reach/come to a conclusion" },
   { "id": "blank_5", "type": "blank", "question": "习惯于……（括号内词级替换）", "answer": "(be/get) used to" },
-  { "id": "blank_6", "type": "blank", "question": "3 × 3 = ___，4 × 4 = ___（数字填空，两空）", "answer": ["9", "16"] }
+  { "id": "blank_6", "type": "blank", "question": "3 × 3 = ___，4 × 4 = ___（数字填空，两空）", "answer": ["9", "16"] },
+  { "id": "blank_7", "type": "blank", "question": "联系某人（等号分支）", "answer": "contact/call sb = get in touch with sb" }
 ]
 ```
 

@@ -5,12 +5,14 @@
  *
  * 支持的答案语法：
  *   - 普通文本          原样匹配（忽略大小写、空格、标点）
+ *   - A=B              等号分支，完整答案级选一即可，优先级高于斜杠
  *   - A/B/C            外层斜杠：整句级分支，选一即可
  *   - (A/B/C)          括号内斜杠：词/短语级分支，选一即可
  *   - (xxx)            括号内容可选（整体可省略）
- *   - 全角括号/斜杠     自动转半角
+ *   - 全角括号/斜杠/等号 自动转半角
  *
  * 匹配语义：
+ *   等号分支 → 每一侧作为完整答案独立匹配，任意一侧正确即可
  *   外层斜杠 → 不回溯已消耗的输入（整句选一）
  *   括号内斜杠 → 回溯到括号起点再试下一选项（词级选一）
  *   括号整体 → 可跳过（相当于隐含一个空分支）
@@ -35,6 +37,7 @@ function normalizeSymbols(s: string): string {
     .replace(/（/g, "(")
     .replace(/）/g, ")")
     .replace(/／/g, "/")
+    .replace(/＝/g, "=")
     .replace(/['‘’]/g, "");
 }
 
@@ -72,13 +75,13 @@ function toLetters(s: string): string {
 }
 
 /**
- * 判断答案是否「无特殊语法」——不含括号 ()、斜杠 /，也不含占位词
+ * 判断答案是否「无特殊语法」——不含括号 ()、斜杠 /、等号 =，也不含占位词
  * (sb / sth / one's …)。这类答案展开后是唯一确定的字符串，适合做逐字符
  * diff 展示。全角符号与 apostrophe 先按 matcher 规则归一，故 （）／ 与 ' 等价处理。
  */
 export function isPlainAnswer(answer: string): boolean {
   const s = normalizeSymbols(answer);
-  if (/[()/]/.test(s)) return false;
+  if (/[()/=]/.test(s)) return false;
   const words = s.toLowerCase().match(LITERAL_WORD) ?? [];
   return !words.some((w) => PLACEHOLDER_WORDS.includes(w));
 }
@@ -371,6 +374,7 @@ function matchBranchPartial(
 export function matchAnswer(answer: string, userInput: string): boolean {
   const input = toLetters(userInput);
   if (input.length === 0) return false;
-  const pattern = parseAnswer(answer);
-  return matchPattern(pattern, input);
+  return normalizeSymbols(answer)
+    .split("=")
+    .some((answerBranch) => matchPattern(parseAnswer(answerBranch), input));
 }

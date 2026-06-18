@@ -75,6 +75,26 @@ describe("外层斜杠 A/B：带前缀共享的分支匹配", () => {
   });
 });
 
+describe("等号 A=B：完整答案级选择", () => {
+  it("等号两侧分别作为完整答案匹配", () => {
+    expect(matchAnswer("aa b / c = cc / d e", "aa b")).toBe(true);
+    expect(matchAnswer("aa b / c = cc / d e", "aa c")).toBe(true);
+    expect(matchAnswer("aa b / c = cc / d e", "cc")).toBe(true);
+    expect(matchAnswer("aa b / c = cc / d e", "d e")).toBe(true);
+    expect(matchAnswer("aa b / c = cc / d e", "cc e")).toBe(true);
+  });
+
+  it("不跨等号共享斜杠分支", () => {
+    expect(matchAnswer("aa b / c = cc / d e", "aa d e")).toBe(false);
+    expect(matchAnswer("aa b / c = cc / d e", "aa cc")).toBe(false);
+  });
+
+  it("全角等号等价处理", () => {
+    expect(matchAnswer("alpha＝beta", "alpha")).toBe(true);
+    expect(matchAnswer("alpha＝beta", "beta")).toBe(true);
+  });
+});
+
 describe("规范化：忽略大小写、空格、标点", () => {
   it("忽略大小写", () => {
     expect(matchAnswer("On (An) Average", "ON AN AVERAGE")).toBe(true);
@@ -186,6 +206,10 @@ describe("isPlainAnswer", () => {
   it("含斜杠 → false（含全角）", () => {
     expect(isPlainAnswer("fall ill/sick")).toBe(false);
     expect(isPlainAnswer("fall ill／sick")).toBe(false);
+  });
+  it("含等号 → false（含全角）", () => {
+    expect(isPlainAnswer("alpha=beta")).toBe(false);
+    expect(isPlainAnswer("alpha＝beta")).toBe(false);
   });
   it("含占位词 sb/sth → false", () => {
     expect(isPlainAnswer("remind sb of sth")).toBe(false);
