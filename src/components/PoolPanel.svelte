@@ -27,6 +27,7 @@
         item: ActivePoolItem;
         question: Question;
         requiredStreak: number;
+        maxLevel: number;
         isLatest: boolean;
         answerText: string;
     };
@@ -136,6 +137,10 @@
                 item,
                 question: q,
                 requiredStreak: getRequiredStreak(item, session.appState),
+                maxLevel: Math.max(
+                    session.appState.settings.correctStreakToMaster,
+                    session.appState.settings.correctStreakAfterMistake,
+                ),
                 isLatest: i === 0,
                 answerText: QUESTION_TYPES[q.type].formatAnswerText(q),
             });
@@ -186,6 +191,7 @@
                             <StreakIndicator
                                 item={entry.item}
                                 requiredStreak={entry.requiredStreak}
+                                maxLevel={entry.maxLevel}
                                 size="compact"
                                 onMaster={() =>
                                     session.markAsMastered(entry.item.id)}

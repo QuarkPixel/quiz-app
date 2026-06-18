@@ -87,6 +87,10 @@
                 <StreakIndicator
                     item={session.currentPoolItem}
                     requiredStreak={session.requiredStreak}
+                    maxLevel={Math.max(
+                        session.appState.settings.correctStreakToMaster,
+                        session.appState.settings.correctStreakAfterMistake,
+                    )}
                     onMaster={() => session.markCurrentAsMastered()}
                 />
             </div>

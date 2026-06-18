@@ -292,6 +292,22 @@ function mixOklch(t: number): string {
   return `oklch(${l.toFixed(4)} ${c.toFixed(4)} ${h.toFixed(2)})`;
 }
 
+export function getLearningLevelColor(level: number, maxLevel: number): string {
+  const normalizedMaxLevel = Math.max(
+    1,
+    Number.isFinite(maxLevel) ? Math.round(maxLevel) : 1,
+  );
+  const normalizedLevel = Math.min(
+    normalizedMaxLevel,
+    Math.max(1, Number.isFinite(level) ? Math.round(level) : 1),
+  );
+  const t =
+    normalizedMaxLevel <= 1
+      ? 0.5
+      : (normalizedLevel - 1) / (normalizedMaxLevel - 1);
+  return mixOklch(t);
+}
+
 /**
  * 计算学习中进度条的颜色分段。
  *

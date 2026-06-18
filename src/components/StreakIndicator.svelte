@@ -1,5 +1,6 @@
 <script lang="ts">
     import type { ActivePoolItem } from "../types";
+    import { getLearningLevelColor } from "../algorithm";
     import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
     import { cn } from "$lib/utils";
     import IconCheck from "@tabler/icons-svelte/icons/check";
@@ -7,6 +8,7 @@
     interface Props {
         item: ActivePoolItem;
         requiredStreak: number;
+        maxLevel: number;
         size?: "default" | "compact";
         /**
          * 双击此 indicator 就把对应题掌握。
@@ -15,7 +17,13 @@
         onMaster: () => void;
     }
 
-    let { item, requiredStreak, size = "default", onMaster }: Props = $props();
+    let {
+        item,
+        requiredStreak,
+        maxLevel,
+        size = "default",
+        onMaster,
+    }: Props = $props();
 
     const masterAction = createConfirmAction(() => onMaster());
 
@@ -40,6 +48,15 @@
         masterAction.confirming
             ? Math.max(naturalWidth, geom.target)
             : naturalWidth,
+    );
+    const remainingCorrect = $derived(
+        Math.max(1, requiredStreak - item.consecutiveCorrect),
+    );
+    const consecutiveCorrect = $derived(
+        Math.min(requiredStreak, Math.max(0, item.consecutiveCorrect)),
+    );
+    const filledDotColor = $derived(
+        getLearningLevelColor(remainingCorrect, maxLevel),
     );
 </script>
 
@@ -70,12 +87,11 @@
                 class={cn(
                     "block rounded-full transition-colors",
                     size === "default" ? "size-1.5" : "size-1",
-                    i < item.consecutiveCorrect
-                        ? item.hasEverMistaken
-                            ? "bg-warning"
-                            : "bg-success"
-                        : "bg-background",
+                    i >= consecutiveCorrect && "bg-background",
                 )}
+                style={i < consecutiveCorrect
+                    ? `background-color: ${filledDotColor}`
+                    : undefined}
             ></span>
         {/each}
     </span>
