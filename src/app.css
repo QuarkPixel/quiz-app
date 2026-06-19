@@ -221,3 +221,36 @@
     padding-bottom: env(safe-area-inset-bottom);
     padding-left: env(safe-area-inset-left);
 }
+
+::-webkit-scrollbar {
+    width: 8px; /* 垂直滚动条宽度 */
+    height: 8px; /* 水平滚动条高度 */
+}
+
+/* 2. 滚动条轨道：保持透明以融入各类背景变量 */
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* 3. 滚动条滑块：默认状态 */
+::-webkit-scrollbar-thumb {
+    /* 使用前景色变量并赋予 20% 的透明度，实现原生 Safari 的半透效果 */
+    background-color: var(--foreground);
+    opacity: 0.2; /* 部分浏览器对伪元素 opacity 支持不佳，下方使用 color 托底 */
+    background-color: oklch(from var(--foreground) l c h / 20%);
+
+    border-radius: var(--radius-xl); /* 复用你配置的圆角变量 */
+    border: 2px solid transparent; /* 配合 padding-box 产生内缩悬浮感 */
+    background-clip: padding-box;
+}
+
+/* 4. 鼠标悬停在滑块上时：颜色加深 */
+::-webkit-scrollbar-thumb:hover {
+    /* 提高透明度至 40% 或直接采用 muted-foreground */
+    background-color: oklch(from var(--foreground) l c h / 40%);
+}
+
+/* 5. 鼠标按下激活时：深度激活色 */
+::-webkit-scrollbar-thumb:active {
+    background-color: oklch(from var(--foreground) l c h / 55%);
+}
