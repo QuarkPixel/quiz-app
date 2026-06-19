@@ -75,6 +75,8 @@
         const hash = session.hash;
         const total = session.questions.length;
         const mastered = masteredQuestions.length;
+        const active = session.appState.activePool.length;
+        const unlearned = Math.max(0, total - mastered - active);
         const mistaken = masteredQuestions.filter(
             (question) => masteredMistakes[question.id] === true,
         ).length;
@@ -83,8 +85,8 @@
             hash,
             total,
             mastered,
-            active: session.appState.activePool.length,
-            unmastered: Math.max(0, total - mastered),
+            active,
+            unlearned,
             correct,
             mistaken,
             accuracy:
@@ -193,7 +195,7 @@
                             class="absolute sm:top-1 sm:-right-3 -top-3 right-0 text-muted-foreground opacity-20 -z-1"
                         />
                         <span class="text-muted-foreground text-xs"
-                            >已掌握 / 活动题池 / 未掌握</span
+                            >已掌握 / 活动题池 / 未学习</span
                         >
                         <span
                             class="*:font-mono text-2xl font-semibold tabular-nums text-foreground/10"
@@ -202,7 +204,7 @@
                             >&thinsp;/&thinsp;<span class="text-warning"
                                 >{overview.active}</span
                             >&thinsp;/&thinsp;<span class="text-foreground/40"
-                                >{overview.unmastered}</span
+                                >{overview.unlearned}</span
                             >
                         </span>
                         <span
