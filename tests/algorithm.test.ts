@@ -50,6 +50,7 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
 function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
   const defaultState: RuntimeState = {
     masteredIds: [],
+    masteredMistakes: {},
     activePool: [],
     pendingIds: [],
     currentRound: 0,
