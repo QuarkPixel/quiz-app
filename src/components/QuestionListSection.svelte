@@ -3,6 +3,7 @@
     import { cn } from "$lib/utils";
     import { QUESTION_TYPES } from "../quiz/types/registry";
     import StreakIndicator from "./StreakIndicator.svelte";
+    import { IconFishBoneFilled } from "@tabler/icons-svelte";
 
     interface ReviewIndicator {
         item: ActivePoolItem;
@@ -261,9 +262,11 @@
     }
 
     // 当前挂载题目中最接近视口中心的那一个：返回其绝对 Y、序号、以及挂载题目的平均高度
-    function centerAnchor():
-        | { absY: number; rank: number; avgH: number }
-        | null {
+    function centerAnchor(): {
+        absY: number;
+        rank: number;
+        avgH: number;
+    } | null {
         if (!listEl) return null;
         const nodes = listEl.querySelectorAll<HTMLElement>(
             "[data-review-question-id]",
@@ -353,7 +356,8 @@
                 if (!anchor || anchor.rank < 0 || targetRank == null) break;
                 const dRank = targetRank - anchor.rank;
                 if (dRank === 0) break;
-                estimate = anchor.absY + dRank * anchor.avgH - viewportHeight / 2;
+                estimate =
+                    anchor.absY + dRank * anchor.avgH - viewportHeight / 2;
             }
         }
 
@@ -364,7 +368,10 @@
         // 本来就近 → 直接平滑滚动（自然短动画）
         const glide = Math.max(240, Math.min(viewportHeight * 0.7, 560));
         if (Math.abs(targetTop - startScroll) < glide) {
-            listEl?.scrollTo({ top: clampScroll(targetTop), behavior: "smooth" });
+            listEl?.scrollTo({
+                top: clampScroll(targetTop),
+                behavior: "smooth",
+            });
             return;
         }
 
@@ -372,7 +379,10 @@
         const goingDown = targetTop > startScroll;
         const launchTop = goingDown ? targetTop - glide : targetTop + glide;
         if (Math.abs((listEl?.scrollTop ?? 0) - targetTop) < glide) {
-            listEl?.scrollTo({ top: clampScroll(launchTop), behavior: "instant" });
+            listEl?.scrollTo({
+                top: clampScroll(launchTop),
+                behavior: "instant",
+            });
             await nextFrame();
         }
         listEl?.scrollTo({ top: clampScroll(targetTop), behavior: "smooth" });
@@ -394,28 +404,26 @@
 </script>
 
 {#if grouped.length === 0}
-    <div
-        class="min-h-48 flex-1 overflow-y-auto rounded-md border bg-muted/10 px-3 py-2"
-    >
-        <div
-            class="text-muted-foreground flex min-h-32 items-center justify-center text-sm"
-        >
-            当前筛选条件下没有题目
-        </div>
+    <div class="min-h-48 flex-1 px-3 py-10 flex items-center flex-col">
+        <IconFishBoneFilled size={64} class="text-muted-foreground" />
+        <span class="ml-2 text-muted-foreground">当前筛选条件下没有题目</span>
     </div>
 {:else}
     <div
         bind:this={listEl}
         bind:clientHeight={viewportHeight}
         onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
-        class="min-h-96 flex-1 overflow-y-auto rounded-md border bg-muted/10 px-3"
+        class="min-h-96 flex-1 overflow-y-auto overflow-x-hidden px-3 relative"
     >
+        <div
+            class="sticky top-0 left-0 w-[calc(100%+1.5rem)] -translate-x-3 -translate-y-1 bg-card h-6 -mb-6 z-10"
+        ></div>
+
         {#each preciseLayouts as section (section.header.id)}
             {@const Icon = QUESTION_TYPES[section.header.questionType].icon}
             {@const range = getVisibleRange(section)}
-
             <div
-                class="sticky top-0 z-10 bg-card border-b flex items-center gap-2 py-1.5 pl-3 -mx-3 mt-3"
+                class="sticky top-1 rounded-full z-10 bg-card border border-foreground/10 flex items-center gap-2 py-1.5 pl-3 -mx-2 mt-3 nth-of-type-2:mt-0"
                 use:measureHeight={section.header.id}
             >
                 <Icon size={14} stroke={1.75} class="text-muted-foreground" />
@@ -488,5 +496,8 @@
                 {/if}
             </div>
         {/each}
+        <div
+            class="sticky bottom-0 left-0 w-[calc(100%+1.5rem)] -translate-x-3 translate-y-1 bg-linear-to-t from-card to-transparent h-16 z-10"
+        ></div>
     </div>
 {/if}
