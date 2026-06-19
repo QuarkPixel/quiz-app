@@ -82,7 +82,8 @@
             unmastered: Math.max(0, total - mastered),
             correct,
             mistaken,
-            accuracy: mastered > 0 ? Math.round((correct / mastered) * 100) : 0,
+            accuracy:
+                mastered > 0 ? Math.round((correct / mastered) * 100) : "--",
         };
     });
 
