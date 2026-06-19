@@ -12,6 +12,7 @@
 
     // @ts-ignore
     import logoRaw from "../assets/icons/logo.svg?raw";
+    import { IconFishBoneFilled } from "@tabler/icons-svelte";
 
     const source = createSource();
 
@@ -43,6 +44,7 @@
     {:else}
         <main class="flex flex-1 flex-col items-center justify-center px-6">
             <div class="flex max-w-md flex-col items-center gap-4 text-center">
+                <IconFishBoneFilled size={64} class="text-muted-foreground" />
                 <p class="text-foreground text-lg font-medium">还没有题库</p>
                 <p class="text-muted-foreground text-sm leading-relaxed">
                     点击左侧栏「题库」分组右上角的导入按钮，从 JSON 文件开始。
