@@ -70,7 +70,6 @@
     const ESTIMATED_HEADER_HEIGHT = 41;
     const ESTIMATED_QUESTION_HEIGHT = 84.75;
     const BUFFER_PX = 400;
-    const OVERSCROLL_PX = 480;
 
     // --- 扁平化数据 ---
     let flatItems = $derived<FlatItem[]>(
@@ -233,59 +232,164 @@
         return null;
     }
 
-    function smoothScrollTo(id: string) {
-        const targetTop = findQuestionTop(id);
-        if (targetTop != null && listEl) {
-            listEl.scrollTo({
-                top: Math.max(0, targetTop),
-                behavior: "smooth",
-            });
+    // 题目全局序号：跳转收敛时用「真实挂载顺序」判断方向，绕开累积估算误差
+    let idToRank = $derived.by<Map<string, number>>(() => {
+        const map = new Map<string, number>();
+        flatItems.forEach((item, i) => map.set(item.id, i));
+        return map;
+    });
+
+    function findMountedNode(id: string): HTMLElement | null {
+        const nodes =
+            listEl?.querySelectorAll<HTMLElement>(
+                "[data-review-question-id]",
+            ) ?? [];
+        for (const node of nodes) {
+            if (node.dataset.reviewQuestionId === id) return node;
         }
+        return null;
     }
 
-    $effect(() => {
-        if (jumpTarget) {
-            requestAnimationFrame(() => {
-                const targetTop = findQuestionTop(jumpTarget);
-                if (targetTop == null) {
-                    onJumpHandled();
-                    return;
-                }
+    function clampScroll(top: number): number {
+        if (!listEl) return 0;
+        const max = listEl.scrollHeight - listEl.clientHeight;
+        return Math.max(0, Math.min(top, max));
+    }
 
-                const currentScroll = listEl?.scrollTop ?? 0;
-                const distance = Math.abs(targetTop - currentScroll);
+    function nextFrame(): Promise<void> {
+        return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    }
 
-                // 已有真实高度（曾被渲染过）或距离在一屏内 → 直接平滑跳转
-                const hasRealHeight = actualHeights[jumpTarget] != null;
-                const isClose = distance < viewportHeight;
-                if (hasRealHeight || isClose) {
-                    smoothScrollTo(jumpTarget);
-                    onJumpHandled();
-                    return;
-                }
+    // 当前挂载题目中最接近视口中心的那一个：返回其绝对 Y、序号、以及挂载题目的平均高度
+    function centerAnchor():
+        | { absY: number; rank: number; avgH: number }
+        | null {
+        if (!listEl) return null;
+        const nodes = listEl.querySelectorAll<HTMLElement>(
+            "[data-review-question-id]",
+        );
+        if (nodes.length === 0) return null;
+        const containerTop = listEl.getBoundingClientRect().top;
+        const currentScroll = listEl.scrollTop;
+        const center = currentScroll + viewportHeight / 2;
 
-                // 远距离 + 无真实高度 → 冲过头两段跳转
-                const goingDown = targetTop > currentScroll;
-                const overshootTop = goingDown
-                    ? Math.max(0, targetTop - OVERSCROLL_PX)
-                    : targetTop + OVERSCROLL_PX;
+        let bestAbsY = 0;
+        let bestRank = -1;
+        let bestDist = Infinity;
+        let totalH = 0;
+        for (const node of nodes) {
+            const rect = node.getBoundingClientRect();
+            const absY = rect.top - containerTop + currentScroll;
+            totalH += rect.height;
+            const dist = Math.abs(absY + rect.height / 2 - center);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestAbsY = absY;
+                bestRank =
+                    idToRank.get(node.dataset.reviewQuestionId ?? "") ?? -1;
+            }
+        }
+        return { absY: bestAbsY, rank: bestRank, avgH: totalH / nodes.length };
+    }
 
-                // Phase 1: 冲过头，触发虚拟滚动渲染目标区域
+    const MAX_CONVERGE = 8;
+
+    // 等目标被 ResizeObserver 测量、且 findQuestionTop 连续两帧不变（布局稳定）后返回精准位置
+    async function waitForStableTop(
+        id: string,
+        isCurrent: () => boolean,
+    ): Promise<number | null> {
+        let lastTop: number | null = null;
+        let stable = 0;
+        for (let i = 0; i < 40; i++) {
+            await nextFrame();
+            if (!isCurrent()) return null;
+            if (!findMountedNode(id) || actualHeights[id] == null) continue;
+            const top = findQuestionTop(id);
+            if (top == null) continue;
+            if (top === lastTop) {
+                if (++stable >= 2) return top;
+            } else {
+                stable = 0;
+                lastTop = top;
+            }
+        }
+        return findQuestionTop(id);
+    }
+
+    async function performJump(
+        id: string,
+        isCurrent: () => boolean,
+    ): Promise<void> {
+        if (!listEl) return;
+        const startScroll = listEl.scrollTop;
+
+        // 已有真实高度（曾被渲染测量过）→ 位置足够精准，整段平滑滚动，保留完整动画
+        if (actualHeights[id] != null) {
+            const top = findQuestionTop(id);
+            if (top != null && isCurrent()) {
+                listEl?.scrollTo({ top: clampScroll(top), behavior: "smooth" });
+            }
+            return;
+        }
+
+        // Phase 1：目标未挂载 → 迭代即时滚动直到它进入渲染窗口
+        if (!findMountedNode(id)) {
+            let estimate = findQuestionTop(id);
+            if (estimate == null) return;
+            for (let i = 0; i < MAX_CONVERGE; i++) {
+                if (!isCurrent()) return;
                 listEl?.scrollTo({
-                    top: overshootTop,
+                    top: clampScroll(estimate),
                     behavior: "instant",
                 });
+                await nextFrame();
+                if (!isCurrent()) return;
+                if (findMountedNode(id)) break;
 
-                // 等 DOM 渲染 + ResizeObserver + Svelte 更新 preciseLayouts
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        // Phase 2: 从冲过头位置平滑滚回精准目标
-                        smoothScrollTo(jumpTarget);
-                        onJumpHandled();
-                    });
-                });
-            });
+                // 用真实挂载顺序修正估算：以视口中心题为锚，按序号差 × 真实平均高度平移
+                const anchor = centerAnchor();
+                const targetRank = idToRank.get(id);
+                if (!anchor || anchor.rank < 0 || targetRank == null) break;
+                const dRank = targetRank - anchor.rank;
+                if (dRank === 0) break;
+                estimate = anchor.absY + dRank * anchor.avgH - viewportHeight / 2;
+            }
         }
+
+        // Phase 2：等测量与布局稳定，拿到精准目标位置
+        const targetTop = await waitForStableTop(id, isCurrent);
+        if (targetTop == null || !isCurrent()) return;
+
+        // 本来就近 → 直接平滑滚动（自然短动画）
+        const glide = Math.max(240, Math.min(viewportHeight * 0.7, 560));
+        if (Math.abs(targetTop - startScroll) < glide) {
+            listEl?.scrollTo({ top: clampScroll(targetTop), behavior: "smooth" });
+            return;
+        }
+
+        // Phase 3：远距离首次访问 → 从行进方向外 glide 处即时定位，再平滑滑入，模拟减速到位
+        const goingDown = targetTop > startScroll;
+        const launchTop = goingDown ? targetTop - glide : targetTop + glide;
+        if (Math.abs((listEl?.scrollTop ?? 0) - targetTop) < glide) {
+            listEl?.scrollTo({ top: clampScroll(launchTop), behavior: "instant" });
+            await nextFrame();
+        }
+        listEl?.scrollTo({ top: clampScroll(targetTop), behavior: "smooth" });
+    }
+
+    // 防快速连点竞态：新跳转取代旧的时，旧的不清 jumpTarget
+    let jumpSeq = 0;
+    $effect(() => {
+        const id = jumpTarget;
+        if (!id) return;
+        const seq = ++jumpSeq;
+        requestAnimationFrame(() => {
+            if (seq !== jumpSeq) return;
+            performJump(id, () => seq === jumpSeq).then(() => {
+                if (seq === jumpSeq) onJumpHandled();
+            });
+        });
     });
 </script>
 
