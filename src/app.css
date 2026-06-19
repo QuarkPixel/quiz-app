@@ -22,8 +22,10 @@
     --destructive-foreground: oklch(0.985 0 0);
     --success: #81912f;
     --success-foreground: oklch(0.985 0 0);
-    --warning: #f8c463;
+    --warning: #e59f41;
     --warning-foreground: oklch(0.145 0 0);
+    --learning-color-low: var(--success);
+    --learning-color-high: var(--warning);
     --border: oklch(0 0 0 / 7.8%);
     --input: oklch(0 0 0 / 7.8%);
     --ring: oklch(0.708 0 0);

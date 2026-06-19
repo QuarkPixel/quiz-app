@@ -1,12 +1,15 @@
 import {
   applyAnswer,
-  computeLearningSegments,
   fillActivePool,
   getRequiredStreak,
   getStats,
   selectNextFromPool,
   shuffle,
 } from "../../algorithm";
+import {
+  computeLearningSegments,
+  type LearningSegment,
+} from "./learningProgress";
 import {
   buildRuntimeState,
   filterQuestions,

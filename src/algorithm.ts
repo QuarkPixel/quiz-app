@@ -4,7 +4,6 @@
 
 import type { Question, RuntimeState, ActivePoolItem, Stats } from "./types";
 import { createActivePoolItem, filterQuestions } from "./store";
-import { LEARNING_COLOR_HIGH, LEARNING_COLOR_LOW } from "./config";
 import { isDebugModeEnabled } from "./debug";
 
 interface WeightedPoolItem {
@@ -277,83 +276,6 @@ export function getRequiredStreak(
   return item.hasEverMistaken
     ? state.settings.correctStreakAfterMistake
     : state.settings.correctStreakToMaster;
-}
-
-/** 学习中进度条中的一段：level 是稳定身份，width 可为 0 用于平滑过渡 */
-export interface LearningSegment {
-  level: number;
-  color: string;
-  widthPercent: number;
-}
-
-function mixOklch(t: number): string {
-  const l =
-    LEARNING_COLOR_LOW.l + (LEARNING_COLOR_HIGH.l - LEARNING_COLOR_LOW.l) * t;
-  const c =
-    LEARNING_COLOR_LOW.c + (LEARNING_COLOR_HIGH.c - LEARNING_COLOR_LOW.c) * t;
-  const h =
-    LEARNING_COLOR_LOW.h + (LEARNING_COLOR_HIGH.h - LEARNING_COLOR_LOW.h) * t;
-  return `oklch(${l.toFixed(4)} ${c.toFixed(4)} ${h.toFixed(2)})`;
-}
-
-export function getLearningLevelColor(level: number, maxLevel: number): string {
-  const normalizedMaxLevel = Math.max(
-    0,
-    Number.isFinite(maxLevel) ? Math.round(maxLevel) : 0,
-  );
-  const normalizedLevel = Math.min(
-    normalizedMaxLevel,
-    Math.max(0, Number.isFinite(level) ? Math.round(level) : 0),
-  );
-  const t =
-    normalizedMaxLevel <= 0 ? 0.5 : normalizedLevel / normalizedMaxLevel;
-  return mixOklch(t);
-}
-
-/**
- * 计算学习中进度条的颜色分段。
- *
- * 每道学习中的题目按"还需答对次数"（level = requiredStreak - consecutiveCorrect）
- * 归类，level 越小越接近掌握。按 level 升序排列，相同 level 合并成一段。
- *
- * 颜色规则：
- *   - maxLevel = 1：所有题目共享两端点中点色
- *   - maxLevel > 1：level 在 [1, maxLevel] 间用 OKLCH 线性插值
- */
-export function computeLearningSegments(
-  questions: Question[],
-  state: RuntimeState,
-): LearningSegment[] {
-  const questionIds = new Set(questions.map((q) => q.id));
-  const items = state.activePool.filter((item) => questionIds.has(item.id));
-
-  if (items.length === 0) return [];
-
-  const maxLevel = Math.max(
-    state.settings.correctStreakToMaster,
-    state.settings.correctStreakAfterMistake,
-  );
-
-  const counts = new Map<number, number>();
-  for (const item of items) {
-    const level = Math.min(
-      maxLevel,
-      Math.max(1, getRequiredStreak(item, state) - item.consecutiveCorrect),
-    );
-    counts.set(level, (counts.get(level) ?? 0) + 1);
-  }
-
-  const total = items.length;
-
-  return Array.from({ length: maxLevel }, (_, index) => {
-    const level = index + 1;
-    const t = maxLevel <= 1 ? 0.5 : (level - 1) / (maxLevel - 1);
-    return {
-      level,
-      color: mixOklch(t),
-      widthPercent: ((counts.get(level) ?? 0) / total) * 100,
-    };
-  });
 }
 
 /**

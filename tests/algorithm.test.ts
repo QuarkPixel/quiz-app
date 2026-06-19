@@ -6,8 +6,8 @@ import {
   processAnswer,
   applyAnswer,
   getRequiredStreak,
-  computeLearningSegments,
 } from "../src/algorithm";
+import { computeLearningSegments } from "../src/features/quiz/learningProgress";
 import {
   debug,
   installDebugConsoleCommands,
@@ -646,7 +646,7 @@ describe("computeLearningSegments", () => {
     expect(segments.map((seg) => seg.widthPercent)).toEqual([0, 0, 100, 0]);
     // 颜色返回字符串
     expect(typeof segments[2].color).toBe("string");
-    expect(segments[2].color).toMatch(/^oklch\(/);
+    expect(segments[2].color).toMatch(/^color-mix\(in oklch,/);
   });
 
   it("多个 level 时按 level 升序排列，各段宽度按数量分配", () => {
@@ -706,6 +706,6 @@ describe("computeLearningSegments", () => {
     const segments = computeLearningSegments(questions, state);
     expect(segments).toHaveLength(1);
     // 不出错即可
-    expect(segments[0].color).toMatch(/^oklch\(/);
+    expect(segments[0].color).toMatch(/^color-mix\(in oklch,/);
   });
 });
