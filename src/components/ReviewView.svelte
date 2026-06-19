@@ -21,7 +21,6 @@
     import IconAlignBoxLeftStretch from "@tabler/icons-svelte/icons/align-box-left-stretch";
     import IconSearch from "@tabler/icons-svelte/icons/search";
     import {
-        IconInnerShadowBottomLeft,
         IconInnerShadowTopLeft,
         IconProgressCheck,
         IconTargetArrow,

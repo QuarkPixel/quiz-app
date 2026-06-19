@@ -9,6 +9,7 @@ import {
 import {
   createActivePoolItem,
   createDefaultSettings,
+  createDefaultUiPreferences,
   saveState,
 } from "../src/store";
 import {
@@ -77,6 +78,7 @@ describe("loadRuntimeState", () => {
       currentRound: 0,
       filterType: "blank",
       settings: createDefaultSettings(),
+      ui: createDefaultUiPreferences(),
     };
     localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(stored));
     const state = loadRuntimeState(questions, HASH);
@@ -94,6 +96,7 @@ describe("loadRuntimeState", () => {
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
+      ui: createDefaultUiPreferences(),
     };
     localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(stored));
     const state = loadRuntimeState(questions, HASH);
@@ -111,6 +114,7 @@ describe("loadRuntimeState", () => {
       currentRound: 0,
       filterType: "single",
       settings: createDefaultSettings(),
+      ui: createDefaultUiPreferences(),
     };
     localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(stored));
     const state = loadRuntimeState(questions, HASH);
@@ -204,6 +208,7 @@ describe("loadRuntimeState", () => {
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
+      ui: createDefaultUiPreferences(),
     };
     localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(stored));
     const state = loadRuntimeState(questions, HASH);
@@ -216,16 +221,16 @@ describe("loadRuntimeState", () => {
 // ---------------------------------------------------------------------------
 
 describe("rebuildRuntimeState", () => {
-  function baseRuntime(
-    overrides: Partial<RuntimeState> = {},
-  ): RuntimeState {
+  function baseRuntime(overrides: Partial<RuntimeState> = {}): RuntimeState {
     return {
       masteredIds: [],
+      masteredMistakes: {},
       activePool: [],
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
       pendingIds: [],
+      ui: createDefaultUiPreferences(),
       ...overrides,
     };
   }
@@ -278,7 +283,10 @@ describe("rebuildRuntimeState", () => {
   });
 
   it("保留 masteredIds / currentRound / settings", () => {
-    const questions = [makeQuestion("a", "single"), makeQuestion("b", "single")];
+    const questions = [
+      makeQuestion("a", "single"),
+      makeQuestion("b", "single"),
+    ];
     const settings = {
       ...createDefaultSettings(),
       autoNextOnCorrect: true,
@@ -298,37 +306,33 @@ describe("rebuildRuntimeState", () => {
 });
 
 describe("hasShownActivePoolOutsideFilter", () => {
-  function baseRuntime(
-    overrides: Partial<RuntimeState> = {},
-  ): RuntimeState {
+  function baseRuntime(overrides: Partial<RuntimeState> = {}): RuntimeState {
     return {
       masteredIds: [],
+      masteredMistakes: {},
       activePool: [],
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
+      ui: createDefaultUiPreferences(),
       pendingIds: [],
       ...overrides,
     };
   }
 
   it("切到 all 时不需要确认", () => {
-    const questions = [
-      makeQuestion("a", "single"),
-      makeQuestion("b", "blank"),
-    ];
+    const questions = [makeQuestion("a", "single"), makeQuestion("b", "blank")];
     const state = baseRuntime({
       activePool: [{ ...createActivePoolItem("a"), hasBeenShown: true }],
     });
 
-    expect(hasShownActivePoolOutsideFilter(questions, state, "all")).toBe(false);
+    expect(hasShownActivePoolOutsideFilter(questions, state, "all")).toBe(
+      false,
+    );
   });
 
   it("只有未展示的池外题时不需要确认", () => {
-    const questions = [
-      makeQuestion("a", "single"),
-      makeQuestion("b", "blank"),
-    ];
+    const questions = [makeQuestion("a", "single"), makeQuestion("b", "blank")];
     const state = baseRuntime({
       activePool: [createActivePoolItem("a")],
     });
@@ -339,10 +343,7 @@ describe("hasShownActivePoolOutsideFilter", () => {
   });
 
   it("已展示题不属于目标 filter 时需要确认", () => {
-    const questions = [
-      makeQuestion("a", "single"),
-      makeQuestion("b", "blank"),
-    ];
+    const questions = [makeQuestion("a", "single"), makeQuestion("b", "blank")];
     const state = baseRuntime({
       activePool: [{ ...createActivePoolItem("a"), hasBeenShown: true }],
     });
@@ -354,15 +355,15 @@ describe("hasShownActivePoolOutsideFilter", () => {
 });
 
 describe("rebuildRuntimeStateForFilterChange", () => {
-  function baseRuntime(
-    overrides: Partial<RuntimeState> = {},
-  ): RuntimeState {
+  function baseRuntime(overrides: Partial<RuntimeState> = {}): RuntimeState {
     return {
       masteredIds: [],
+      masteredMistakes: {},
       activePool: [],
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
+      ui: createDefaultUiPreferences(),
       pendingIds: [],
       ...overrides,
     };
@@ -446,7 +447,9 @@ describe("createResetRuntimeState", () => {
       activePool: [createActivePoolItem("b")],
       currentRound: 9,
       filterType: "single",
+      masteredMistakes: {},
       settings,
+      ui: createDefaultUiPreferences(),
       pendingIds: [],
     });
     const reset = createResetRuntimeState(questions, HASH);
@@ -463,6 +466,8 @@ describe("createResetRuntimeState", () => {
       currentRound: 99,
       filterType: "all",
       settings: createDefaultSettings(),
+      masteredMistakes: {},
+      ui: createDefaultUiPreferences(),
       pendingIds: [],
     });
     const reset = createResetRuntimeState(questions, HASH);
@@ -479,6 +484,8 @@ describe("createResetRuntimeState", () => {
       currentRound: 5,
       filterType: "all",
       settings: createDefaultSettings(),
+      masteredMistakes: {},
+      ui: createDefaultUiPreferences(),
       pendingIds: [],
     });
     expect(localStorage.getItem(STORAGE_PREFIX_STATE + HASH)).not.toBeNull();
@@ -487,11 +494,7 @@ describe("createResetRuntimeState", () => {
   });
 
   it("pendingIds 重置后涵盖所有题（filter=all、无 mastered、无 active）", () => {
-    const questions = [
-      makeQuestion("a"),
-      makeQuestion("b"),
-      makeQuestion("c"),
-    ];
+    const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const reset = createResetRuntimeState(questions, HASH);
     expect(reset.pendingIds).toEqual(["a", "b", "c"]);
   });
@@ -508,6 +511,8 @@ describe("createResetRuntimeState", () => {
       currentRound: 0,
       filterType: "blank",
       settings: createDefaultSettings(),
+      masteredMistakes: {},
+      ui: createDefaultUiPreferences(),
       pendingIds: [],
     });
     const reset = createResetRuntimeState(questions, HASH);
