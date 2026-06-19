@@ -30,6 +30,7 @@
   "dependencies": {
     "@number-flow/svelte": "^0.4.0",
     "@tabler/icons-svelte": "^3.44.0",
+    "@tanstack/svelte-virtual": "^3.13.29",
     "bits-ui": "^2.18.1",
     "bitset": "^5.2.3",
     "clsx": "^2.1.1",

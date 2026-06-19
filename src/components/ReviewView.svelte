@@ -6,7 +6,6 @@
         getLearningLevelColor,
         getMaxLearningLevel,
     } from "../features/quiz/learningProgress";
-    import { cn } from "$lib/utils";
     import * as Card from "$lib/components/ui/card";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Input } from "$lib/components/ui/input";
@@ -17,8 +16,8 @@
         QUESTION_TYPE_ORDER,
     } from "../quiz/types/registry";
     import { useQuizSession } from "../quiz/session/context";
-    import StreakIndicator from "./StreakIndicator.svelte";
     import HeatmapSection from "./HeatmapSection.svelte";
+    import QuestionListSection from "./QuestionListSection.svelte";
     import IconAlignBoxLeftStretch from "@tabler/icons-svelte/icons/align-box-left-stretch";
     import IconSearch from "@tabler/icons-svelte/icons/search";
 
@@ -34,7 +33,7 @@
     let showUnmasteredOnly = $state(false);
     let searchTerm = $state("");
     let selectedQuestionId = $state<string | null>(null);
-    let questionListEl: HTMLDivElement | null = $state(null);
+    let jumpTargetId = $state<string | null>(null);
 
     const masteredSet = $derived(new Set(session.appState.masteredIds));
     const activePoolById = $derived(
@@ -95,10 +94,15 @@
         return byMastered.filter((q) => matchesSearch(q, query));
     });
 
-    let grouped = $derived.by(() => {
+    const grouped = $derived.by(() => {
         return QUESTION_TYPE_ORDER.map((type) => ({
             type,
-            items: filteredQuestions.filter((q: Question) => q.type === type),
+            items: filteredQuestions
+                .filter((q: Question) => q.type === type)
+                .map((q) => ({
+                    question: q,
+                    indicator: getQuestionIndicator(q),
+                })),
         })).filter((g) => g.items.length > 0);
     });
 
@@ -141,30 +145,16 @@
         };
     }
 
-    function findQuestionElement(id: string): HTMLElement | null {
-        if (!questionListEl) return null;
-        const items = questionListEl.querySelectorAll<HTMLElement>(
-            "[data-review-question-id]",
-        );
-        return (
-            Array.from(items).find(
-                (el) => el.dataset.reviewQuestionId === id,
-            ) ?? null
-        );
-    }
-
     async function jumpToQuestion(id: string): Promise<void> {
         searchTerm = "";
         showUnmasteredOnly = false;
         selectedQuestionId = id;
         await tick();
+        jumpTargetId = id;
+    }
 
-        const target = findQuestionElement(id);
-        target?.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-            inline: "nearest",
-        });
+    function onJumpHandled() {
+        jumpTargetId = null;
     }
 </script>
 
@@ -255,7 +245,7 @@
 
             <HeatmapSection onJump={jumpToQuestion} />
 
-            <div class="flex min-h-[14rem] flex-1 flex-col gap-3">
+            <div class="flex min-h-0 flex-1 flex-col gap-3">
                 <div class="flex flex-wrap items-center gap-x-2 gap-y-3">
                     <IconAlignBoxLeftStretch
                         size={16}
@@ -292,89 +282,12 @@
                     </div>
                 </div>
 
-                <div
-                    bind:this={questionListEl}
-                    class="min-h-[12rem] flex-1 overflow-y-auto rounded-md border bg-muted/10 px-3 py-2"
-                >
-                    <div class="flex flex-col gap-5">
-                        {#each grouped as group (group.type)}
-                            {@const Icon = QUESTION_TYPES[group.type].icon}
-                            <div class="flex flex-col gap-2">
-                                <div
-                                    class="bg-card sticky -top-2 z-10 border-b -mx-3 pl-3 flex items-center gap-2 py-1.5"
-                                >
-                                    <Icon
-                                        size={14}
-                                        stroke={1.75}
-                                        class="text-muted-foreground"
-                                    />
-                                    <span
-                                        class="text-xs font-medium tracking-wide"
-                                    >
-                                        {QUESTION_TYPES[group.type].name}
-                                    </span>
-                                    <span
-                                        class="text-muted-foreground text-xs tabular-nums"
-                                    >
-                                        {group.items.length}
-                                    </span>
-                                </div>
-
-                                {#each group.items as question}
-                                    {@const ReviewComponent =
-                                        QUESTION_TYPES[question.type].Review}
-                                    {@const indicator =
-                                        getQuestionIndicator(question)}
-                                    <div
-                                        data-review-question-id={question.id}
-                                        class={cn(
-                                            "border-border/60 bg-muted/40 flex scroll-mt-4 flex-col gap-2 rounded-lg border px-4 py-3 transition-[background-color,border-color,box-shadow] duration-300",
-                                            selectedQuestionId ===
-                                                question.id &&
-                                                "border-foreground/40 bg-muted shadow-sm ring-2 ring-foreground/15",
-                                        )}
-                                    >
-                                        <div class="flex gap-2">
-                                            <span
-                                                class="text-foreground flex-1 text-sm leading-relaxed font-medium whitespace-pre-wrap"
-                                            >
-                                                {question.question}
-                                            </span>
-                                            <div
-                                                class="flex shrink-0 items-center gap-2 pt-0.5"
-                                            >
-                                                {#if indicator}
-                                                    <StreakIndicator
-                                                        item={indicator.item}
-                                                        requiredStreak={indicator.requiredStreak}
-                                                        maxLevel={indicator.maxLevel}
-                                                        size="compact"
-                                                        readonly
-                                                    />
-                                                {/if}
-                                                <span
-                                                    class="text-muted-foreground text-xs font-mono"
-                                                >
-                                                    {question.id}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        <ReviewComponent {question} />
-                                    </div>
-                                {/each}
-                            </div>
-                        {/each}
-
-                        {#if filteredQuestions.length === 0}
-                            <div
-                                class="text-muted-foreground flex min-h-32 items-center justify-center text-sm"
-                            >
-                                当前筛选条件下没有题目
-                            </div>
-                        {/if}
-                    </div>
-                </div>
+                <QuestionListSection
+                    {grouped}
+                    {selectedQuestionId}
+                    jumpTarget={jumpTargetId}
+                    {onJumpHandled}
+                />
             </div>
         </div>
     </Dialog.Content>
