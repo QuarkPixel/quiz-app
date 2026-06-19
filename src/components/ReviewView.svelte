@@ -255,9 +255,7 @@
 
             <HeatmapSection onJump={jumpToQuestion} />
 
-            <div
-                class="flex mmastered > 0mastered > 0mastered > 0in-h-[14rem] flex-1 flex-col gap-3"
-            >
+            <div class="flex min-h-[14rem] flex-1 flex-col gap-3">
                 <div class="flex flex-wrap items-center gap-x-2 gap-y-3">
                     <IconAlignBoxLeftStretch
                         size={16}
