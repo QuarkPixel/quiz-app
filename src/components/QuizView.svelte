@@ -179,7 +179,7 @@
                         {...props}
                         type="button"
                         class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[10deg]"
-                        aria-label="答案预览"
+                        aria-label="总览"
                         onclick={() => (showReview = !showReview)}
                     >
                         <IconBook2 size={22} stroke={1.5} />
@@ -187,7 +187,7 @@
                 {/snippet}
             </Tooltip.Trigger>
             <Tooltip.Content side="top">
-                <span>答案预览</span>
+                <span>总览</span>
                 <KbdGroup>
                     <Kbd>{modKeyLabel}</Kbd>
                     <Kbd>{SHORTCUTS.toggleReview.toUpperCase()}</Kbd>

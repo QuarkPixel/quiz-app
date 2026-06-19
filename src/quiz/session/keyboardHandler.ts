@@ -85,7 +85,7 @@ export function createKeyboardHandler(
 
     if (event.code !== "Space" && event.code !== "Enter") return;
 
-    // L2: 设置 / 答案预览 dialog 内 — Enter 让输入框 blur 触发 onchange
+    // L2: 设置 / 总览 dialog 内 — Enter 让输入框 blur 触发 onchange
     if (inDialog) {
       if (event.code === "Enter" && isEditingTarget(event)) {
         (target as HTMLInputElement).blur();

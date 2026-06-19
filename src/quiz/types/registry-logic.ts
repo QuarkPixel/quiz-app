@@ -25,7 +25,7 @@ export const QUESTION_TYPES_LOGIC: Record<QuestionType, QuestionTypeLogic> = {
   blank: blankLogic,
 };
 
-/** 题型显示顺序（题库筛选器、答案预览分组等都用这个序）。 */
+/** 题型显示顺序（题库筛选器、总览分组等都用这个序）。 */
 export const QUESTION_TYPE_ORDER: QuestionType[] = [
   "judgment",
   "single",

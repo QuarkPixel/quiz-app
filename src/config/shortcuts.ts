@@ -10,7 +10,7 @@ export const SHORTCUTS = {
   sidebar: "b",
   /** 切换活动池 */
   togglePool: "p",
-  /** 切换答案预览 */
+  /** 切换总览 */
   toggleReview: "d",
   /** 复制当前题目 */
   copyQuestion: "c",
