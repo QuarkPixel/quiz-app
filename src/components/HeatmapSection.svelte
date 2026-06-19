@@ -143,20 +143,24 @@
                 onscroll={onGridScroll}
             >
                 {#if expanded}
-                    <div class="heatmap-grid grid gap-1">
+                    <div class="heatmap-grid grid">
                         {#each cells as cell (cell.id)}
                             <button
                                 type="button"
-                                class={cn(
-                                    "block size-3 rounded-[3px] border-0 bg-transparent p-0 transition-transform hover:scale-125 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground",
-                                    cell.className,
-                                )}
-                                style={cell.style}
+                                class="block size-4 border-0 p-0.5 group"
                                 aria-label={`${cell.id}：${cell.status}`}
                                 onclick={() => onJump(cell.id)}
                                 onmouseenter={(e) => onCellEnter(cell.id, e)}
                                 onmouseleave={onCellLeave}
-                            ></button>
+                            >
+                                <div
+                                    style={cell.style}
+                                    class={cn(
+                                      "size-full bg-transparent rounded-[3px] transition-transform group-hover:scale-125 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground",
+                                        cell.className,
+                                    )}
+                                ></div>
+                            </button>
                         {/each}
                     </div>
                 {/if}
@@ -176,7 +180,7 @@
 
 <style>
     .heatmap-grid {
-        grid-template-columns: repeat(auto-fill, 0.75rem);
+        grid-template-columns: repeat(auto-fill, 1rem);
     }
     .heatmap-collapsible {
         display: grid;
