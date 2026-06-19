@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "@internationalized/date": "^3.12.2",
-    "@lucide/svelte": "^1.17.0",
+    "@lucide/svelte": "^1.21.0",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^25.9.2",
