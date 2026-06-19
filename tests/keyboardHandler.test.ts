@@ -29,14 +29,11 @@ function makeSessionStub(showResult = false) {
   };
 }
 
-function makeUiStub(): KeyboardUiActions & {
-  toggleReview: ReturnType<typeof vi.fn>;
-  toggleSettings: ReturnType<typeof vi.fn>;
-} {
+function makeUiStub() {
   return {
     toggleReview: vi.fn(),
     toggleSettings: vi.fn(),
-  };
+  } satisfies KeyboardUiActions;
 }
 
 function mkEvent(

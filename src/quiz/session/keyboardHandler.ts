@@ -14,8 +14,8 @@ import { SHORTCUTS } from "../../config";
 import type { QuizSession } from "./QuizSession.svelte";
 
 export interface KeyboardUiActions {
-  toggleReview(): void;
-  toggleSettings(): void;
+  toggleReview: () => void;
+  toggleSettings: () => void;
 }
 
 export function createKeyboardHandler(
