@@ -3,7 +3,10 @@
     import { cn } from "$lib/utils";
     import { QUESTION_TYPES } from "../quiz/types/registry";
     import StreakIndicator from "./StreakIndicator.svelte";
+    import CopyQuestionButton from "./CopyQuestionButton.svelte";
     import { IconFishBoneFilled } from "@tabler/icons-svelte";
+    import { useQuizSession } from "../quiz/session/context";
+    import type { CopyQuestionStatus } from "../quiz/session/QuizSession.svelte";
 
     interface ReviewIndicator {
         item: ActivePoolItem;
@@ -34,6 +37,39 @@
         jumpTarget = null,
         onJumpHandled,
     }: Props = $props();
+
+    const session = useQuizSession();
+
+    // --- 每道题的复制按钮状态 ---
+    let copyStatuses: Record<string, CopyQuestionStatus> = $state({});
+    let copyTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
+    function getCopyStatus(id: string): CopyQuestionStatus {
+        return copyStatuses[id] ?? "idle";
+    }
+
+    function setCopyStatus(id: string, status: CopyQuestionStatus): void {
+        if (copyTimers[id]) {
+            clearTimeout(copyTimers[id]);
+            delete copyTimers[id];
+        }
+        copyStatuses[id] = status;
+        if (status !== "idle") {
+            copyTimers[id] = setTimeout(() => {
+                copyStatuses[id] = "idle";
+                delete copyTimers[id];
+            }, 1800);
+        }
+    }
+
+    async function copyQuestion(
+        event: MouseEvent,
+        question: Question,
+    ): Promise<void> {
+        event.stopPropagation();
+        const result = await session.copyQuestionText(question);
+        setCopyStatus(question.id, result === "copied" ? "copied" : "error");
+    }
 
     // --- 类型定义 ---
     interface FlatHeader {
@@ -463,11 +499,23 @@
                                     )}
                                 >
                                     <div class="flex gap-2">
-                                        <span
-                                            class="text-foreground flex-1 text-sm leading-relaxed font-medium whitespace-pre-wrap"
-                                        >
-                                            {question.question}
-                                        </span>
+                                        <div class="flex-1 flex items-center">
+                                            <span
+                                                class="text-foreground flex-1 text-sm leading-relaxed font-medium whitespace-pre-wrap"
+                                            >
+                                                {question.question}
+                                            </span>
+                                            <CopyQuestionButton
+                                                status={getCopyStatus(
+                                                    question.id,
+                                                )}
+                                                onclick={(e: MouseEvent) =>
+                                                    copyQuestion(
+                                                        e,
+                                                        question,
+                                                    )}
+                                            />
+                                        </div>
                                         <div
                                             class="flex shrink-0 items-center gap-2 pt-0.5"
                                         >

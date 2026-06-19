@@ -1,11 +1,8 @@
 <script lang="ts">
     import { Button } from "$lib/components/ui/button";
-    import * as Tooltip from "$lib/components/ui/tooltip";
     import { cn } from "$lib/utils";
     import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
-    import IconCopy from "@tabler/icons-svelte/icons/copy";
-    import IconCopyCheck from "@tabler/icons-svelte/icons/copy-check";
-    import IconAlertCircle from "@tabler/icons-svelte/icons/alert-circle";
+    import CopyQuestionButton from "./CopyQuestionButton.svelte";
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
     import IconConfetti from "@tabler/icons-svelte/icons/confetti";
     import IconInputCheck from "@tabler/icons-svelte/icons/input-check";
@@ -26,14 +23,6 @@
         session.treatLastAnswerAsCorrect(),
     );
 
-    const copyLabel = $derived(
-        session.copyQuestionStatus === "copied"
-            ? "已复制"
-            : session.copyQuestionStatus === "error"
-              ? "复制失败"
-              : "复制题目",
-    );
-
     async function copyCurrentQuestion(event: MouseEvent): Promise<void> {
         event.stopPropagation();
         await session.copyCurrentQuestion();
@@ -52,38 +41,10 @@
                 {session.currentQuestion.id}
             </span>
 
-            <Tooltip.Root delayDuration={0}>
-                <Tooltip.Trigger>
-                    {#snippet child({ props })}
-                        <Button
-                            {...props}
-                            variant={session.copyQuestionStatus === "idle"
-                                ? "ghost"
-                                : "secondary"}
-                            size="icon-xs"
-                            class={cn(
-                                session.copyQuestionStatus === "copied" &&
-                                    "text-success hover:text-success",
-                                session.copyQuestionStatus === "error" &&
-                                    "text-destructive hover:text-destructive",
-                            )}
-                            aria-label={copyLabel}
-                            onclick={copyCurrentQuestion}
-                        >
-                            {#if session.copyQuestionStatus === "copied"}
-                                <IconCopyCheck stroke={1.75} />
-                            {:else if session.copyQuestionStatus === "error"}
-                                <IconAlertCircle stroke={1.75} />
-                            {:else}
-                                <IconCopy stroke={1.75} />
-                            {/if}
-                        </Button>
-                    {/snippet}
-                </Tooltip.Trigger>
-                <Tooltip.Content side="bottom" align="end">
-                    <span>{copyLabel}</span>
-                </Tooltip.Content>
-            </Tooltip.Root>
+            <CopyQuestionButton
+                status={session.copyQuestionStatus}
+                onclick={copyCurrentQuestion}
+            />
         </div>
         {#if session.currentPoolItem}
             <div class="ml-auto">

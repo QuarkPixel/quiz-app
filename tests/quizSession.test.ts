@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { flushSync } from "svelte";
 import {
   QuizSession,
-  type QuizSessionDeps,
 } from "../src/quiz/session/QuizSession.svelte";
 import type { Bank } from "../src/source/types";
 import type { Question, QuestionType } from "../src/types";
@@ -47,10 +46,12 @@ function makeBank(questions?: Question[]): Bank {
 function makeDeps() {
   const flash = vi.fn();
   const toast = vi.fn();
+  const sound = { preload: vi.fn(), playAnswer: vi.fn(), playSuccess: vi.fn() };
   return {
-    deps: { flash, toast } as QuizSessionDeps,
+    deps: { flash, toast, sound },
     flash,
     toast,
+    sound,
   };
 }
 
@@ -80,6 +81,7 @@ describe("QuizSession 构造", () => {
   it("constructor 从 localStorage 加载已有 state", () => {
     saveState(HASH, {
       masteredIds: ["judgment_1"],
+      masteredMistakes: {},
       activePool: [],
       currentRound: 7,
       filterType: "single",

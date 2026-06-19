@@ -423,6 +423,50 @@ export class QuizSession {
     }
   }
 
+  /** 复制指定题目文本（用于列表等非当前题场景）。 */
+  async copyQuestionText(
+    question: Question,
+    options: CopyQuestionOptions = {},
+  ): Promise<CopyQuestionResult> {
+    const typeDef = QUESTION_TYPES[question.type];
+    if (!typeDef) return "unavailable";
+
+    const text = typeDef.formatCopyText(question, {
+      showResult: true,
+      isCorrect: true,
+      shuffledOptions: [],
+      selectedAnswers: [],
+      blankAnswerInputs: [],
+    });
+
+    try {
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.clipboard?.writeText
+      ) {
+        throw new Error("Clipboard API is unavailable.");
+      }
+      await navigator.clipboard.writeText(text);
+      if (options.announce) {
+        this.deps.toast(
+          "题目已复制到剪贴板",
+          "可直接粘贴到任意位置。",
+          "success",
+        );
+      }
+      return "copied";
+    } catch {
+      if (options.announce) {
+        this.deps.toast(
+          "复制失败",
+          "当前浏览器不允许写入剪贴板。",
+          "destructive",
+        );
+      }
+      return "error";
+    }
+  }
+
   /** 算法相关设置变更：钳值、重 reconcile 活动池 */
   handleAlgorithmChange(): void {
     const reconcileResult = reconcileAfterSettingsChange(
