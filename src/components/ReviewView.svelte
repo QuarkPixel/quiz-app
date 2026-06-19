@@ -195,7 +195,7 @@
                         <span
                             class="font-mono text-2xl font-semibold tabular-nums"
                             style:color={getLearningLevelColor(
-                                100 - overview.accuracy,
+                                100 - (overview.accuracy as number),
                                 100,
                             )}
                         >
@@ -255,7 +255,9 @@
 
             <HeatmapSection onJump={jumpToQuestion} />
 
-            <div class="flex min-h-[14rem] flex-1 flex-col gap-3">
+            <div
+                class="flex mmastered > 0mastered > 0mastered > 0in-h-[14rem] flex-1 flex-col gap-3"
+            >
                 <div class="flex flex-wrap items-center gap-x-2 gap-y-3">
                     <IconAlignBoxLeftStretch
                         size={16}
