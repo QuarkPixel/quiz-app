@@ -20,6 +20,12 @@
     import QuestionListSection from "./QuestionListSection.svelte";
     import IconAlignBoxLeftStretch from "@tabler/icons-svelte/icons/align-box-left-stretch";
     import IconSearch from "@tabler/icons-svelte/icons/search";
+    import {
+        IconInnerShadowBottomLeft,
+        IconInnerShadowTopLeft,
+        IconProgressCheck,
+        IconTargetArrow,
+    } from "@tabler/icons-svelte";
 
     interface Props {
         open: boolean;
@@ -177,9 +183,42 @@
         <div
             class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4"
         >
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <Card.Root size="sm" class="rounded-md">
-                    <Card.Content class="flex flex-col gap-1">
+            <div
+                class="grid grid-cols-1 gap-3 sm:grid-cols-3 *:rounded-md *:bg-foreground/5"
+            >
+                <Card.Root size="sm">
+                    <Card.Content class="flex flex-col gap-1 relative">
+                        <IconProgressCheck
+                            size={96}
+                            class="absolute sm:top-1 sm:-right-3 -top-3 right-0 text-muted-foreground opacity-20 -z-1"
+                        />
+                        <span class="text-muted-foreground text-xs"
+                            >已掌握 / 活动题池 / 未掌握</span
+                        >
+                        <span
+                            class="*:font-mono text-2xl font-semibold tabular-nums text-foreground/10"
+                        >
+                            <span class="text-success">{overview.mastered}</span
+                            >&thinsp;/&thinsp;<span class="text-warning"
+                                >{overview.active}</span
+                            >&thinsp;/&thinsp;<span class="text-foreground/40"
+                                >{overview.unmastered}</span
+                            >
+                        </span>
+                        <span
+                            class="text-muted-foreground text-xs tabular-nums"
+                        >
+                            当前题库进度
+                        </span>
+                    </Card.Content>
+                </Card.Root>
+
+                <Card.Root size="sm">
+                    <Card.Content class="flex flex-col gap-1 relative">
+                        <IconTargetArrow
+                            size={96}
+                            class="absolute sm:bottom-1 sm:right-0 -bottom-3 right-0 text-muted-foreground opacity-20 -z-1"
+                        />
                         <span class="text-muted-foreground text-xs">正确率</span
                         >
                         <span
@@ -199,33 +238,12 @@
                     </Card.Content>
                 </Card.Root>
 
-                <Card.Root size="sm" class="rounded-md">
-                    <Card.Content class="flex flex-col gap-1">
-                        <span class="text-muted-foreground text-xs"
-                            >已掌握 / 活动题池 / 未掌握</span
-                        >
-                        <span
-                            class="font-mono text-2xl font-semibold tabular-nums text-foreground/10"
-                        >
-                            <span class="text-success">{overview.mastered}</span
-                            >
-                            /
-                            <span class="text-warning">{overview.active}</span>
-                            /
-                            <span class="text-foreground/40"
-                                >{overview.unmastered}</span
-                            >
-                        </span>
-                        <span
-                            class="text-muted-foreground text-xs tabular-nums"
-                        >
-                            当前题库进度
-                        </span>
-                    </Card.Content>
-                </Card.Root>
-
-                <Card.Root size="sm" class="rounded-md">
-                    <Card.Content class="flex flex-col gap-1">
+                <Card.Root size="sm">
+                    <Card.Content class="flex flex-col gap-1 relative">
+                        <IconInnerShadowTopLeft
+                            size={96}
+                            class="absolute sm:-bottom-12 sm:-right-5 -bottom-3 right-0 text-muted-foreground opacity-20 -z-1"
+                        />
                         <span class="text-muted-foreground text-xs"
                             >全部题目</span
                         >
