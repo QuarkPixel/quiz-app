@@ -216,6 +216,7 @@ export function processAnswer(
     currentRound: state.currentRound + 1,
     activePool: [...state.activePool],
     masteredIds: [...state.masteredIds],
+    masteredMistakes: { ...(state.masteredMistakes ?? {}) },
     pendingIds: [...state.pendingIds],
   };
 

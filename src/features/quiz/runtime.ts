@@ -40,7 +40,7 @@ export {
   selectNextFromPool,
   shuffle,
 };
-export type { LearningSegment } from "../../algorithm";
+export type { LearningSegment };
 
 export function hasShownActivePoolOutsideFilter(
   questions: Question[],
