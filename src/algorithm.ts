@@ -164,9 +164,7 @@ export function fillActivePool(state: RuntimeState): RuntimeState {
   );
 
   for (const selectedId of selectedIds) {
-    newActivePool.push(
-      createActivePoolItem(selectedId, state.currentRound),
-    );
+    newActivePool.push(createActivePoolItem(selectedId, state.currentRound));
   }
 
   return {
@@ -300,17 +298,15 @@ function mixOklch(t: number): string {
 
 export function getLearningLevelColor(level: number, maxLevel: number): string {
   const normalizedMaxLevel = Math.max(
-    1,
-    Number.isFinite(maxLevel) ? Math.round(maxLevel) : 1,
+    0,
+    Number.isFinite(maxLevel) ? Math.round(maxLevel) : 0,
   );
   const normalizedLevel = Math.min(
     normalizedMaxLevel,
-    Math.max(1, Number.isFinite(level) ? Math.round(level) : 1),
+    Math.max(0, Number.isFinite(level) ? Math.round(level) : 0),
   );
   const t =
-    normalizedMaxLevel <= 1
-      ? 0.5
-      : (normalizedLevel - 1) / (normalizedMaxLevel - 1);
+    normalizedMaxLevel <= 0 ? 0.5 : normalizedLevel / normalizedMaxLevel;
   return mixOklch(t);
 }
 
