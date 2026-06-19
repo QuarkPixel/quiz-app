@@ -129,7 +129,7 @@ describe("Mod 快捷键派发", () => {
     expect(ui.toggleSettings).toHaveBeenCalledOnce();
   });
 
-  it("Cmd+P on input → 不抢编辑区快捷键", () => {
+  it("Cmd+P on input → 仍触发（Cmd 快捷键在编辑区也生效）", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
     const input = document.createElement("input");
@@ -139,8 +139,8 @@ describe("Mod 快捷键派发", () => {
       target: input,
     });
     createKeyboardHandler(session, ui)(ev);
-    expect(session.togglePool).not.toHaveBeenCalled();
-    expect(ev.preventDefault).not.toHaveBeenCalled();
+    expect(session.togglePool).toHaveBeenCalledOnce();
+    expect(ev.preventDefault).toHaveBeenCalledOnce();
   });
 
   it("Cmd+A → toggleAutoNext", () => {

@@ -38,9 +38,9 @@ export function createKeyboardHandler(
       const key = event.key.toLowerCase();
       // Cmd+B (sidebar) 留给 Sidebar context 处理
       if (key === SHORTCUTS.sidebar) return;
-      if (inDialog || isEditingTarget(event)) return;
+      if (inDialog) return;
       if (key === SHORTCUTS.copyQuestion) {
-        if (hasSelectedText()) return;
+        if (hasSelectedText() || isEditingTarget(event)) return;
         event.preventDefault();
         void session.copyCurrentQuestion({ announce: true });
         return;
