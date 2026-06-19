@@ -11,7 +11,7 @@ export const SHORTCUTS = {
   /** 切换活动池 */
   togglePool: "p",
   /** 切换总览 */
-  toggleReview: "d",
+  toggleReview: "o",
   /** 复制当前题目 */
   copyQuestion: "c",
   /** 切换设置 */
@@ -19,7 +19,7 @@ export const SHORTCUTS = {
   /** 切换"答对自动下一题" */
   toggleAutoNext: "n",
   /** 切换音效 */
-  toggleSound: "u",
+  toggleSound: "s",
   /** 从剪贴板导入进度 */
   importProgress: "w",
   /** 导出进度到剪贴板 */
