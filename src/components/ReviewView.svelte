@@ -84,9 +84,13 @@
         const mastered = masteredQuestions.length;
         const active = session.appState.activePool.length;
         const unlearned = Math.max(0, total - mastered - active);
-        const mistaken = masteredQuestions.filter(
-            (question) => masteredMistakes[question.id] === true,
-        ).length;
+        const mistaken =
+            masteredQuestions.filter(
+                (question) => masteredMistakes[question.id] === true,
+            ).length +
+            session.appState.activePool.filter(
+                (question) => question.hasEverMistaken,
+            ).length;
         const correct = mastered - mistaken;
         return {
             hash,

@@ -8,10 +8,14 @@ export interface LearningSegment {
   widthPercent: number;
 }
 
-function mixLearningColor(t: number): string {
+function mixLearningColor(
+  t: number,
+  from: string = "var(--learning-color-high)",
+  to: string = "var(--learning-color-low)",
+): string {
   const highPercent = Math.max(0, Math.min(100, t * 100));
   const lowPercent = 100 - highPercent;
-  return `color-mix(in oklch, var(--learning-color-low) ${lowPercent.toFixed(2)}%, var(--learning-color-high) ${highPercent.toFixed(2)}%)`;
+  return `color-mix(in oklch, ${to} ${lowPercent.toFixed(2)}%, ${from} ${highPercent.toFixed(2)}%)`;
 }
 
 function toBoundedInteger(
@@ -45,7 +49,11 @@ export function getRemainingCorrectLevel(
   return Math.min(maxLevel, Math.max(1, requiredStreak - consecutiveCorrect));
 }
 
-export function getLearningLevelColor(level: number, maxLevel: number): string {
+export function getLearningLevelColor(
+  level: number,
+  maxLevel: number,
+  mistake: boolean = false,
+): string {
   const normalizedMaxLevel = Math.max(
     0,
     Number.isFinite(maxLevel) ? Math.round(maxLevel) : 0,
@@ -56,7 +64,11 @@ export function getLearningLevelColor(level: number, maxLevel: number): string {
   );
   const t =
     normalizedMaxLevel <= 0 ? 0.5 : normalizedLevel / normalizedMaxLevel;
-  return mixLearningColor(t);
+  return mixLearningColor(
+    t,
+    undefined,
+    mistake ? "var(--destructive)" : undefined,
+  );
 }
 
 /**
@@ -78,10 +90,7 @@ export function computeLearningSegments(
 
   if (items.length === 0) return [];
 
-  const maxLevel = Math.max(
-    1,
-    getMaxLearningLevel(state),
-  );
+  const maxLevel = Math.max(1, getMaxLearningLevel(state));
 
   const counts = new Map<number, number>();
   for (const item of items) {

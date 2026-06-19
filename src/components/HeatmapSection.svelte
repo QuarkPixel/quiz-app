@@ -61,6 +61,7 @@
                     style: `background-color: ${getLearningLevelColor(
                         level,
                         maxLearningLevel,
+                        activeItem?.hasEverMistaken,
                     )}`,
                 };
             }
@@ -156,7 +157,7 @@
                                 <div
                                     style={cell.style}
                                     class={cn(
-                                      "size-full bg-transparent rounded-[3px] transition-transform group-hover:scale-125 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground",
+                                        "size-full bg-transparent rounded-[3px] transition-transform group-hover:scale-125 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground",
                                         cell.className,
                                     )}
                                 ></div>
