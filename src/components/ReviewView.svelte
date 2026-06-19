@@ -41,6 +41,13 @@
     let jumpTargetId = $state<string | null>(null);
     let searchInputRef: HTMLInputElement | null = $state(null);
 
+    $effect(() => {
+        if (!open) {
+            searchTerm = "";
+            showUnmasteredOnly = false;
+        }
+    });
+
     const masteredSet = $derived(new Set(session.appState.masteredIds));
     const activePoolById = $derived(
         new Map(session.appState.activePool.map((item) => [item.id, item])),
