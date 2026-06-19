@@ -501,7 +501,7 @@
                                     <div class="flex gap-2">
                                         <div class="flex-1 flex items-center">
                                             <span
-                                                class="text-foreground flex-1 text-sm leading-relaxed font-medium whitespace-pre-wrap"
+                                                class="text-foreground text-sm leading-relaxed font-medium whitespace-pre-wrap"
                                             >
                                                 {question.question}
                                             </span>
