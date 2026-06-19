@@ -60,6 +60,18 @@ function mergeSettings(
   };
 }
 
+function normalizeMasteredMistakes(value: unknown): Record<string, boolean> {
+  if (!isRecord(value)) return {};
+
+  const result: Record<string, boolean> = {};
+  for (const [id, hasEverMistaken] of Object.entries(value)) {
+    if (typeof hasEverMistaken === "boolean") {
+      result[id] = hasEverMistaken;
+    }
+  }
+  return result;
+}
+
 /** 从 localStorage 加载用户默认设置；不存在时回落到代码默认配置。 */
 export function loadDefaultSettings(): UserSettings {
   const codeDefaults = createDefaultSettings();
@@ -121,6 +133,7 @@ function createDefaultStoredState(
 ): StoredState {
   return {
     masteredIds: [],
+    masteredMistakes: {},
     activePool: [],
     currentRound: 0,
     filterType: "all",
@@ -152,6 +165,9 @@ export function loadStoredState(
       return {
         ...defaultState,
         ...parsedState,
+        masteredMistakes: normalizeMasteredMistakes(
+          parsedState.masteredMistakes,
+        ),
         settings: mergeSettings(defaultState.settings, parsedState.settings),
         ui: {
           ...defaultState.ui,
@@ -176,6 +192,7 @@ export function saveState(
 ): void {
   const toStore: StoredState = {
     masteredIds: state.masteredIds,
+    masteredMistakes: state.masteredMistakes,
     activePool: state.activePool,
     currentRound: state.currentRound,
     filterType: state.filterType,
@@ -248,14 +265,23 @@ export function buildRuntimeState(
   const cleanedActivePool = storedState.activePool.filter((item) =>
     questionIds.has(item.id),
   );
+  const sourceMasteredMistakes = normalizeMasteredMistakes(
+    storedState.masteredMistakes,
+  );
+  const cleanedMasteredMistakes: Record<string, boolean> = {};
+  for (const id of storedState.masteredIds) {
+    cleanedMasteredMistakes[id] = sourceMasteredMistakes[id] === true;
+  }
 
   const cleanedState: StoredState = {
     ...storedState,
+    masteredMistakes: cleanedMasteredMistakes,
     activePool: cleanedActivePool,
   };
 
   return {
     ...cleanedState,
+    masteredMistakes: cleanedMasteredMistakes,
     pendingIds: computePendingIds(questions, cleanedState),
   };
 }

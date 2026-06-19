@@ -77,6 +77,7 @@ export function rebuildRuntimeState(
 ): RuntimeState {
   return buildRuntimeState(questions, {
     masteredIds: state.masteredIds,
+    masteredMistakes: state.masteredMistakes,
     activePool: state.activePool,
     currentRound: state.currentRound,
     settings: state.settings,
@@ -98,6 +99,7 @@ export function rebuildRuntimeStateForFilterChange(
 
   return buildRuntimeState(questions, {
     masteredIds: state.masteredIds,
+    masteredMistakes: state.masteredMistakes,
     activePool,
     currentRound: state.currentRound,
     settings: state.settings,

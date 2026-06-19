@@ -7,11 +7,13 @@
  * 最终格式：{16字符hash}.{Base64url压缩数据}
  *
  * 紧凑格式说明：
- *   [version, questionCount, masteredBitmapHex, activePool[][], currentRound, filterTypeCode, settings[], ui[]]
+ *   [version, questionCount, masteredBitmapHex, activePool[][], currentRound, filterTypeCode, settings[], ui[], masteredMistakesBitmapHex]
  *
  *   - 题目 id 按当前题库顺序映射为 index
  *   - masteredBitmapHex：BitSet 的十六进制字符串，bit=1 表示已掌握；
  *     活动池中的题目即使同时出现在 masteredIds 里也按 bit=0 导出
+ *   - masteredMistakesBitmapHex：以 masteredBitmapHex 解码后的 masteredIds 顺序为 index，
+ *     bit=1 表示该已掌握题目在掌握前曾答错
  *   - activePool 每项：[questionIndex, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound, hasBeenShown(0|1)]
  *   - filterTypeCode：all=0, single=1, multiple=2, judgment=3, blank=4
  *   - settings：[autoNextOnCorrect(0|1), activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode, soundEnabled(0|1)]
@@ -30,7 +32,8 @@ import type {
 
 // ── filterType 编解码 ──────────────────────────────────────────────────────────
 
-const FORMAT_VERSION = 4;
+const FORMAT_VERSION = 5;
+const MIN_SUPPORTED_FORMAT_VERSION = 4;
 
 const FILTER_TO_CODE: Record<string, number> = {
   all: 0,
@@ -87,15 +90,30 @@ function requireQuestionIndex(id: string, idToIndex: Map<string, number>): numbe
   return index;
 }
 
-function encodeMasteredBitmap(
+function getExportedMasteredIds(
   state: StoredState,
+  questionIds: readonly string[],
   idToIndex: Map<string, number>,
-): string {
+): string[] {
   const activeIds = new Set(state.activePool.map((item) => item.id));
-  const bitmap = new BitSet();
+  const masteredSet = new Set<string>();
 
   for (const id of state.masteredIds) {
     if (activeIds.has(id)) continue;
+    requireQuestionIndex(id, idToIndex);
+    masteredSet.add(id);
+  }
+
+  return questionIds.filter((id) => masteredSet.has(id));
+}
+
+function encodeMasteredBitmap(
+  masteredIds: readonly string[],
+  idToIndex: Map<string, number>,
+): string {
+  const bitmap = new BitSet();
+
+  for (const id of masteredIds) {
     bitmap.set(requireQuestionIndex(id, idToIndex), 1);
   }
 
@@ -120,6 +138,42 @@ function decodeMasteredBitmap(
   }
 
   return indexes.map((index) => questionIds[index]);
+}
+
+function encodeMasteredMistakesBitmap(
+  state: StoredState,
+  masteredIds: readonly string[],
+): string {
+  const bitmap = new BitSet();
+
+  masteredIds.forEach((id, index) => {
+    if (state.masteredMistakes?.[id] === true) {
+      bitmap.set(index, 1);
+    }
+  });
+
+  return bitmap.toString(16);
+}
+
+function decodeMasteredMistakesBitmap(
+  raw: unknown,
+  masteredIds: readonly string[],
+): Record<string, boolean> {
+  if (typeof raw !== "string" || !/^[0-9a-f]+$/i.test(raw)) {
+    throw new Error("数据格式无效：已掌握错误位图格式错误。");
+  }
+
+  const bitmap = BitSet.fromHexString(raw);
+  const result: Record<string, boolean> = {};
+
+  for (const index of bitmap.toArray()) {
+    if (!Number.isInteger(index) || index < 0 || index >= masteredIds.length) {
+      throw new Error("数据格式无效：已掌握错误位图索引越界。");
+    }
+    result[masteredIds[index]] = true;
+  }
+
+  return result;
 }
 
 function encodeActivePool(
@@ -261,11 +315,12 @@ export async function exportProgress(
 ): Promise<string> {
   const { ids, idToIndex } = buildQuestionIndex(questions);
   const filterCode = FILTER_TO_CODE[state.filterType] ?? 0;
+  const exportedMasteredIds = getExportedMasteredIds(state, ids, idToIndex);
 
   const compact: unknown[] = [
     FORMAT_VERSION,
     ids.length,
-    encodeMasteredBitmap(state, idToIndex),
+    encodeMasteredBitmap(exportedMasteredIds, idToIndex),
     encodeActivePool(state.activePool, idToIndex),
     state.currentRound,
     filterCode,
@@ -281,6 +336,7 @@ export async function exportProgress(
       state.ui.progressFocused ? 1 : 0,
       state.ui.showPool ? 1 : 0,
     ],
+    encodeMasteredMistakesBitmap(state, exportedMasteredIds),
   ];
 
   const json = JSON.stringify(compact);
@@ -342,7 +398,7 @@ export async function importProgress(
   }
 
   // 结构校验
-  if (!Array.isArray(compact) || compact.length !== 8) {
+  if (!Array.isArray(compact) || ![8, 9].includes(compact.length)) {
     throw new Error("数据格式无效：结构不符合预期。");
   }
 
@@ -355,10 +411,21 @@ export async function importProgress(
     filterCode,
     settingsRaw,
     uiRaw,
+    masteredMistakesRaw,
   ] = compact as unknown[];
 
-  if (version !== FORMAT_VERSION) {
+  if (
+    typeof version !== "number" ||
+    version < MIN_SUPPORTED_FORMAT_VERSION ||
+    version > FORMAT_VERSION
+  ) {
     throw new Error("数据格式无效：进度格式版本不支持。");
+  }
+  if (version === FORMAT_VERSION && compact.length !== 9) {
+    throw new Error("数据格式无效：结构不符合预期。");
+  }
+  if (version === MIN_SUPPORTED_FORMAT_VERSION && compact.length !== 8) {
+    throw new Error("数据格式无效：结构不符合预期。");
   }
   if (questionCount !== ids.length) {
     throw new Error("数据格式无效：题目数量不匹配。");
@@ -373,6 +440,10 @@ export async function importProgress(
   // 还原数据
   const activePoolSize = settingsRaw[1] as number;
   const masteredIds = decodeMasteredBitmap(masteredBitmapRaw, ids);
+  const masteredMistakes =
+    version >= 5
+      ? decodeMasteredMistakesBitmap(masteredMistakesRaw, masteredIds)
+      : {};
   const activePool = decodeActivePool(activeRaw, ids);
 
   const filterType: QuestionType | "all" =
@@ -394,6 +465,7 @@ export async function importProgress(
 
   return {
     masteredIds,
+    masteredMistakes,
     activePool,
     currentRound: currentRound as number,
     filterType,

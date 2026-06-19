@@ -43,6 +43,7 @@ function toBoundedInt(
 function toStoredStateLike(runtimeState: RuntimeState): StoredState {
   return {
     masteredIds: runtimeState.masteredIds,
+    masteredMistakes: runtimeState.masteredMistakes,
     activePool: runtimeState.activePool,
     currentRound: runtimeState.currentRound,
     filterType: runtimeState.filterType,
@@ -74,9 +75,15 @@ function trimActivePool(
 function applyThresholds(
   activePool: ActivePoolItem[],
   masteredIds: string[],
+  masteredMistakes: Record<string, boolean>,
   settings: UserSettings,
-): { activePool: ActivePoolItem[]; masteredIds: string[] } {
+): {
+  activePool: ActivePoolItem[];
+  masteredIds: string[];
+  masteredMistakes: Record<string, boolean>;
+} {
   const masteredSet = new Set(masteredIds);
+  const nextMasteredMistakes = { ...(masteredMistakes ?? {}) };
   const remained: ActivePoolItem[] = [];
 
   for (const item of activePool) {
@@ -86,6 +93,7 @@ function applyThresholds(
 
     if (item.consecutiveCorrect >= requiredStreak) {
       masteredSet.add(item.id);
+      nextMasteredMistakes[item.id] = item.hasEverMistaken;
       continue;
     }
 
@@ -95,6 +103,7 @@ function applyThresholds(
   return {
     activePool: remained,
     masteredIds: [...masteredSet],
+    masteredMistakes: nextMasteredMistakes,
   };
 }
 
@@ -144,6 +153,7 @@ export function reconcileAfterSettingsChange(
   const thresholdApplied = applyThresholds(
     trimmedActivePool,
     runtimeState.masteredIds,
+    runtimeState.masteredMistakes ?? {},
     sanitizedSettings,
   );
 
@@ -152,6 +162,7 @@ export function reconcileAfterSettingsChange(
     settings: sanitizedSettings,
     activePool: thresholdApplied.activePool,
     masteredIds: thresholdApplied.masteredIds,
+    masteredMistakes: thresholdApplied.masteredMistakes,
   });
 
   const filled = fillActivePool(rebuilt);

@@ -259,6 +259,16 @@ export class QuizSession {
    * 如果掌握的就是当前题，自动 selectNext。
    */
   markAsMastered(questionId: string): void {
+    const activeItem = this.appState.activePool.find(
+      (item) => item.id === questionId,
+    );
+    const masteredMistakes = {
+      ...this.appState.masteredMistakes,
+      [questionId]:
+        activeItem?.hasEverMistaken ??
+        this.appState.masteredMistakes[questionId] ??
+        false,
+    };
     const nextState: RuntimeState = {
       ...this.appState,
       activePool: this.appState.activePool.filter(
@@ -267,6 +277,7 @@ export class QuizSession {
       masteredIds: this.appState.masteredIds.includes(questionId)
         ? [...this.appState.masteredIds]
         : [...this.appState.masteredIds, questionId],
+      masteredMistakes,
       pendingIds: this.appState.pendingIds.filter((id) => id !== questionId),
     };
     this.appState = fillActivePool(nextState);
@@ -436,7 +447,11 @@ export class QuizSession {
   // ────────────────────────────────────────────────────────────────
 
   applyImportedState(newState: StoredState): void {
-    const stateWithPending: RuntimeState = { ...newState, pendingIds: [] };
+    const stateWithPending: RuntimeState = {
+      ...newState,
+      masteredMistakes: newState.masteredMistakes ?? {},
+      pendingIds: [],
+    };
     this.appState = rebuildRuntimeState(
       this.questions,
       stateWithPending,

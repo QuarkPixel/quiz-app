@@ -63,6 +63,12 @@ export interface UiPreferences {
 export interface StoredState {
   /** 已掌握的题目 ID */
   masteredIds: string[];
+  /**
+   * 已掌握题目的错误记录。key 为题目 ID，value=true 表示掌握前曾答错。
+   *
+   * 旧版进度没有这个字段；缺失时按 false 处理。
+   */
+  masteredMistakes?: Record<string, boolean>;
   /** 活动题目池 */
   activePool: ActivePoolItem[];
   /** 当前轮次 */
@@ -77,6 +83,7 @@ export interface StoredState {
 
 /** 运行时状态（包含计算出的待学习题目） */
 export interface RuntimeState extends StoredState {
+  masteredMistakes: Record<string, boolean>;
   /** 待学习的题目（运行时计算，不存储） */
   pendingIds: string[];
 }

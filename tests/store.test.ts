@@ -317,6 +317,7 @@ describe("loadStoredState", () => {
     const loaded = loadStoredState(HASH);
     expect(loaded).toEqual({
       masteredIds: [],
+      masteredMistakes: {},
       activePool: [],
       currentRound: 0,
       filterType: "all",

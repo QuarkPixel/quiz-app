@@ -239,6 +239,7 @@ export function processAnswer(
       // 掌握了：从活动池移除，加入已掌握
       newState.activePool.splice(itemIndex, 1);
       newState.masteredIds.push(questionId);
+      newState.masteredMistakes[questionId] = item.hasEverMistaken;
     } else {
       newState.activePool[itemIndex] = item;
     }

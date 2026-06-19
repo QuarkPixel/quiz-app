@@ -46,6 +46,9 @@ const QUESTIONS: Question[] = [
 function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
   return {
     masteredIds: ["single_1", "blank_2"],
+    masteredMistakes: {
+      blank_2: true,
+    },
     activePool: [
       {
         id: "judgment_3",
@@ -163,9 +166,11 @@ function compact(overrides: Partial<{
   filterCode: unknown;
   settings: unknown;
   ui: unknown;
+  masteredMistakes: unknown;
 }> = {}): unknown[] {
-  return [
-    overrides.version ?? 4,
+  const version = overrides.version ?? 4;
+  const base = [
+    version,
     overrides.questionCount ?? QUESTIONS.length,
     overrides.masteredBitmap ?? "0",
     overrides.activePool ?? [],
@@ -174,6 +179,7 @@ function compact(overrides: Partial<{
     overrides.settings ?? [0, 10, 3, 4, "random"],
     overrides.ui ?? [0, 0],
   ];
+  return version === 5 ? [...base, overrides.masteredMistakes ?? "0"] : base;
 }
 
 describe("exportProgress / importProgress round-trip", () => {
@@ -183,6 +189,7 @@ describe("exportProgress / importProgress round-trip", () => {
     const restored = await importProgress(encoded, HASH, QUESTIONS);
 
     expect(restored.masteredIds).toEqual(state.masteredIds);
+    expect(restored.masteredMistakes).toEqual(state.masteredMistakes);
     expect(restored.activePool).toEqual(state.activePool);
     expect(restored.currentRound).toBe(state.currentRound);
     expect(restored.filterType).toBe(state.filterType);
@@ -194,6 +201,7 @@ describe("exportProgress / importProgress round-trip", () => {
   it("空 state round-trip", async () => {
     const state: StoredState = {
       masteredIds: [],
+      masteredMistakes: {},
       activePool: [],
       currentRound: 0,
       filterType: "all",
@@ -226,7 +234,7 @@ describe("bitmap / index 编码", () => {
     const payload = await decodePayload(encoded);
 
     expect(payload).toEqual([
-      4,
+      5,
       QUESTIONS.length,
       "3",
       [
@@ -237,6 +245,7 @@ describe("bitmap / index 编码", () => {
       1,
       [1, 20, 3, 5, "sequential", 0],
       [0, 0],
+      "2",
     ]);
     expect(JSON.stringify(payload)).not.toContain("single_1");
     expect(JSON.stringify(payload)).not.toContain("judgment_3");
@@ -276,12 +285,20 @@ describe("bitmap / index 编码", () => {
   it("masteredIds 按题库顺序恢复", async () => {
     const state = makeState({
       masteredIds: ["judgment_5", "blank_2", "single_3"],
+      masteredMistakes: {
+        judgment_5: true,
+        single_3: true,
+      },
       activePool: [],
     });
     const encoded = await exportProgress(state, HASH, QUESTIONS);
     const restored = await importProgress(encoded, HASH, QUESTIONS);
 
     expect(restored.masteredIds).toEqual(["blank_2", "single_3", "judgment_5"]);
+    expect(restored.masteredMistakes).toEqual({
+      single_3: true,
+      judgment_5: true,
+    });
   });
 
   it("导出时遇到题库外 id 会抛错", async () => {
