@@ -39,6 +39,7 @@
     let searchTerm = $state("");
     let selectedQuestionId = $state<string | null>(null);
     let jumpTargetId = $state<string | null>(null);
+    let searchInputRef: HTMLInputElement | null = $state(null);
 
     const masteredSet = $derived(new Set(session.appState.masteredIds));
     const activePoolById = $derived(
@@ -167,6 +168,10 @@
 
 <Dialog.Root bind:open {onOpenChange}>
     <Dialog.Content
+        onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            searchInputRef?.focus();
+        }}
         class="bg-card flex h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
     >
         <Dialog.Header
@@ -293,6 +298,7 @@
                             class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
                         />
                         <Input
+                            bind:ref={searchInputRef}
                             bind:value={searchTerm}
                             class="pl-8"
                             placeholder="搜索 编号、题干、正确答案"
