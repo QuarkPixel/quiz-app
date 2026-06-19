@@ -67,9 +67,10 @@
     let viewportHeight = $state(400);
     let measuredHeights: Record<string, number> = $state({});
 
-    const ESTIMATED_HEADER_HEIGHT = 29;
-    const ESTIMATED_QUESTION_HEIGHT = 76.75;
+    const ESTIMATED_HEADER_HEIGHT = 41;
+    const ESTIMATED_QUESTION_HEIGHT = 84.75;
     const BUFFER_PX = 400;
+    const OVERSCROLL_PX = 480;
 
     // --- 扁平化数据 ---
     let flatItems = $derived<FlatItem[]>(
@@ -105,39 +106,6 @@
             }
         }
         return result;
-    });
-
-    // --- Section 级布局：计算每个 section 的 y、header 高度、题目偏移 ---
-    let sectionLayouts = $derived.by<SectionLayout[]>(() => {
-        let y = 0;
-        return sections.map((section) => {
-            const headerHeight =
-                measuredHeights[section.header.id] ?? ESTIMATED_HEADER_HEIGHT;
-            const questionHeights = section.questionItems.map(
-                (q) => measuredHeights[q.id] ?? ESTIMATED_QUESTION_HEIGHT,
-            );
-            const questionsTotalHeight = questionHeights.reduce(
-                (a, b) => a + b,
-                0,
-            );
-
-            const questionOffsets: number[] = [];
-            let offset = 0;
-            for (const h of questionHeights) {
-                questionOffsets.push(offset);
-                offset += h;
-            }
-
-            const layout: SectionLayout = {
-                ...section,
-                y,
-                headerHeight,
-                questionsTotalHeight,
-                questionOffsets,
-            };
-            y += headerHeight + questionsTotalHeight;
-            return layout;
-        });
     });
 
     // --- 计算某个 section 内可见的题目范围 ---
@@ -199,38 +167,123 @@
         };
     }
 
-    // --- 跳转逻辑 ---
-    function scrollToQuestion(id: string) {
-        if (!listEl) return;
+    // --- 实际高度缓存：持久化已渲染过的真实高度，切换筛选/搜索后仍可复用 ---
+    let actualHeights = $state<Record<string, number>>({});
 
-        for (const section of sectionLayouts) {
-            const qIdx = section.questionItems.findIndex(
-                (q) => q.id === id,
+    function getHeight(id: string): number {
+        return (
+            actualHeights[id] ??
+            measuredHeights[id] ??
+            ESTIMATED_QUESTION_HEIGHT
+        );
+    }
+
+    // 每当 measureHeight 更新了某 item，就写入 actualHeights 以备布局使用
+    $effect(() => {
+        for (const [id, h] of Object.entries(measuredHeights)) {
+            actualHeights[id] = h;
+        }
+    });
+
+    // --- 精确布局：基于真实高度（或估算值）计算 section 位置 ---
+    let preciseLayouts = $derived.by<SectionLayout[]>(() => {
+        let y = 0;
+        return sections.map((section) => {
+            const headerHeight =
+                measuredHeights[section.header.id] ?? ESTIMATED_HEADER_HEIGHT;
+            const questionHeights = section.questionItems.map((q) =>
+                getHeight(q.id),
             );
+            const questionsTotalHeight = questionHeights.reduce(
+                (a, b) => a + b,
+                0,
+            );
+
+            const questionOffsets: number[] = [];
+            let offset = 0;
+            for (const h of questionHeights) {
+                questionOffsets.push(offset);
+                offset += h;
+            }
+
+            const layout: SectionLayout = {
+                ...section,
+                y,
+                headerHeight,
+                questionsTotalHeight,
+                questionOffsets,
+            };
+            y += headerHeight + questionsTotalHeight;
+            return layout;
+        });
+    });
+
+    function findQuestionTop(id: string): number | null {
+        for (const section of preciseLayouts) {
+            const qIdx = section.questionItems.findIndex((q) => q.id === id);
             if (qIdx === -1) continue;
 
-            const height =
-                measuredHeights[id] ?? ESTIMATED_QUESTION_HEIGHT;
+            const height = getHeight(id);
             const questionY =
                 section.y +
                 section.headerHeight +
                 section.questionOffsets[qIdx];
-            const targetTop =
-                questionY - viewportHeight / 2 + height / 2;
+            return questionY - viewportHeight / 2 + height / 2;
+        }
+        return null;
+    }
 
+    function smoothScrollTo(id: string) {
+        const targetTop = findQuestionTop(id);
+        if (targetTop != null && listEl) {
             listEl.scrollTo({
                 top: Math.max(0, targetTop),
                 behavior: "smooth",
             });
-            return;
         }
     }
 
     $effect(() => {
         if (jumpTarget) {
             requestAnimationFrame(() => {
-                scrollToQuestion(jumpTarget);
-                onJumpHandled();
+                const targetTop = findQuestionTop(jumpTarget);
+                if (targetTop == null) {
+                    onJumpHandled();
+                    return;
+                }
+
+                const currentScroll = listEl?.scrollTop ?? 0;
+                const distance = Math.abs(targetTop - currentScroll);
+
+                // 已有真实高度（曾被渲染过）或距离在一屏内 → 直接平滑跳转
+                const hasRealHeight = actualHeights[jumpTarget] != null;
+                const isClose = distance < viewportHeight;
+                if (hasRealHeight || isClose) {
+                    smoothScrollTo(jumpTarget);
+                    onJumpHandled();
+                    return;
+                }
+
+                // 远距离 + 无真实高度 → 冲过头两段跳转
+                const goingDown = targetTop > currentScroll;
+                const overshootTop = goingDown
+                    ? Math.max(0, targetTop - OVERSCROLL_PX)
+                    : targetTop + OVERSCROLL_PX;
+
+                // Phase 1: 冲过头，触发虚拟滚动渲染目标区域
+                listEl?.scrollTo({
+                    top: overshootTop,
+                    behavior: "instant",
+                });
+
+                // 等 DOM 渲染 + ResizeObserver + Svelte 更新 preciseLayouts
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        // Phase 2: 从冲过头位置平滑滚回精准目标
+                        smoothScrollTo(jumpTarget);
+                        onJumpHandled();
+                    });
+                });
             });
         }
     });
@@ -253,19 +306,15 @@
         onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
         class="min-h-96 flex-1 overflow-y-auto rounded-md border bg-muted/10 px-3"
     >
-        {#each sectionLayouts as section (section.header.id)}
+        {#each preciseLayouts as section (section.header.id)}
             {@const Icon = QUESTION_TYPES[section.header.questionType].icon}
             {@const range = getVisibleRange(section)}
 
             <div
-                class="sticky top-0 z-10 bg-card border-b flex items-center gap-2 py-1.5 pl-3 -mx-3"
+                class="sticky top-0 z-10 bg-card border-b flex items-center gap-2 py-1.5 pl-3 -mx-3 mt-3"
                 use:measureHeight={section.header.id}
             >
-                <Icon
-                    size={14}
-                    stroke={1.75}
-                    class="text-muted-foreground"
-                />
+                <Icon size={14} stroke={1.75} class="text-muted-foreground" />
                 <span class="text-xs font-medium tracking-wide">
                     {QUESTION_TYPES[section.header.questionType].name}
                 </span>
@@ -288,7 +337,8 @@
                             QUESTION_TYPES[question.type].Review}
 
                         <div
-                            style="position: absolute; left: 0; right: 0; top: {section.questionOffsets[idx]}px;"
+                            style="position: absolute; left: 0; right: 0; top: {section
+                                .questionOffsets[idx]}px;"
                             use:measureHeight={qItem.id}
                         >
                             <div class="pt-2">
@@ -296,8 +346,7 @@
                                     data-review-question-id={question.id}
                                     class={cn(
                                         "border-border/60 bg-muted/40 flex flex-col gap-2 rounded-lg border px-4 py-3 transition-[background-color,border-color,box-shadow] duration-300",
-                                        selectedQuestionId ===
-                                            question.id &&
+                                        selectedQuestionId === question.id &&
                                             "border-foreground/40 bg-muted shadow-sm ring-2 ring-foreground/15",
                                     )}
                                 >
@@ -313,8 +362,7 @@
                                             {#if indicator}
                                                 <StreakIndicator
                                                     item={indicator.item}
-                                                    requiredStreak={indicator
-                                                        .requiredStreak}
+                                                    requiredStreak={indicator.requiredStreak}
                                                     maxLevel={indicator.maxLevel}
                                                     size="compact"
                                                     readonly
