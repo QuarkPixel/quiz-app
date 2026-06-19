@@ -14,6 +14,7 @@
     import { getCorrectChoiceLetters } from "../features/quiz";
     import { useQuizSession } from "../quiz/session/context";
     import {
+        IconCircleCheckFilled,
         IconCircleDashedCheck,
         IconCircleDashedX,
         IconDiscountCheck,
@@ -56,7 +57,9 @@
                     {#snippet child({ props })}
                         <Button
                             {...props}
-                            variant="ghost"
+                            variant={session.copyQuestionStatus === "idle"
+                                ? "ghost"
+                                : "secondary"}
                             size="icon-xs"
                             class={cn(
                                 session.copyQuestionStatus === "copied" &&
@@ -197,7 +200,11 @@
                         "border-success text-success ring-success/30 ring-2",
                 )}
             >
-                <IconCircleCheck stroke={1.75} />
+                {#if treatCorrectAction.confirming}
+                    <IconCircleCheckFilled stroke={1.75} />
+                {:else}
+                    <IconCircleCheck stroke={1.75} />
+                {/if}
             </Button>
         {/if}
         {#if !session.showResult}
