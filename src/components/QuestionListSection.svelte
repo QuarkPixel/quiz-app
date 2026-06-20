@@ -105,8 +105,21 @@
     let measuredHeights: Record<string, number> = $state({});
 
     const ESTIMATED_HEADER_HEIGHT = 41;
-    const ESTIMATED_QUESTION_HEIGHT = 84.75;
     const BUFFER_PX = 400;
+
+    // 按题型估算题目高度（未测量时用）。单选/多选按选项数 62 + n*31.25，默认 4 项 = 187px
+    function estimateQuestionHeight(question: Question): number {
+        switch (question.type) {
+            case "single":
+            case "multiple": {
+                const n = question.options?.length ?? 4;
+                return 62 + n * 31.25;
+            }
+            case "judgment":
+            case "blank":
+                return 86;
+        }
+    }
 
     // --- 扁平化数据 ---
     let flatItems = $derived<FlatItem[]>(
@@ -167,10 +180,11 @@
         let endIdx = -1;
 
         for (let i = 0; i < section.questionItems.length; i++) {
+            const qItem = section.questionItems[i];
             const itemTop = qStart + section.questionOffsets[i];
             const itemH =
-                measuredHeights[section.questionItems[i].id] ??
-                ESTIMATED_QUESTION_HEIGHT;
+                measuredHeights[qItem.id] ??
+                estimateQuestionHeight(qItem.question);
             const itemBottom = itemTop + itemH;
 
             if (itemBottom > viewStart && itemTop < viewEnd) {
@@ -206,11 +220,11 @@
     // --- 实际高度缓存：持久化已渲染过的真实高度，切换筛选/搜索后仍可复用 ---
     let actualHeights = $state<Record<string, number>>({});
 
-    function getHeight(id: string): number {
+    function getHeight(id: string, question: Question): number {
         return (
             actualHeights[id] ??
             measuredHeights[id] ??
-            ESTIMATED_QUESTION_HEIGHT
+            estimateQuestionHeight(question)
         );
     }
 
@@ -228,7 +242,7 @@
             const headerHeight =
                 measuredHeights[section.header.id] ?? ESTIMATED_HEADER_HEIGHT;
             const questionHeights = section.questionItems.map((q) =>
-                getHeight(q.id),
+                getHeight(q.id, q.question),
             );
             const questionsTotalHeight = questionHeights.reduce(
                 (a, b) => a + b,
@@ -259,7 +273,7 @@
             const qIdx = section.questionItems.findIndex((q) => q.id === id);
             if (qIdx === -1) continue;
 
-            const height = getHeight(id);
+            const height = getHeight(id, section.questionItems[qIdx].question);
             const questionY =
                 section.y +
                 section.headerHeight +
@@ -495,7 +509,7 @@
                                     class={cn(
                                         "border-border/60 bg-muted/40 flex flex-col gap-2 rounded-lg border px-4 py-3 transition-[background-color,border-color,box-shadow] duration-300",
                                         selectedQuestionId === question.id &&
-                                            "border-foreground/40 bg-muted shadow-sm ring-2 ring-foreground/15",
+                                            "border-foreground/20 bg-background ring-4 ring-foreground/5",
                                     )}
                                 >
                                     <div class="flex gap-2">

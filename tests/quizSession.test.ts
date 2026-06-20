@@ -518,7 +518,7 @@ describe("复制当前题目", () => {
   it("copyCurrentQuestion 写入当前题目文本", async () => {
     const { deps } = makeDeps();
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(global.navigator, "clipboard", {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { writeText },
       configurable: true,
     });
@@ -539,7 +539,7 @@ describe("复制当前题目", () => {
   it("copyCurrentQuestion 快捷键触发时用 toast 反馈", async () => {
     const { deps, toast } = makeDeps();
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(global.navigator, "clipboard", {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { writeText },
       configurable: true,
     });
@@ -563,7 +563,7 @@ describe("复制当前题目", () => {
   it("copyCurrentQuestion 无当前题时不写剪贴板", async () => {
     const { deps } = makeDeps();
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(global.navigator, "clipboard", {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { writeText },
       configurable: true,
     });
@@ -579,7 +579,7 @@ describe("复制当前题目", () => {
   it("copyCurrentQuestion 失败时更新复制状态", async () => {
     const { deps } = makeDeps();
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-    Object.defineProperty(global.navigator, "clipboard", {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { writeText },
       configurable: true,
     });
@@ -604,7 +604,7 @@ describe("导出 / 导入", () => {
   it("exportProgress 成功后 exportStatus → copied，toast 调用", async () => {
     const { deps, toast } = makeDeps();
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(global.navigator, "clipboard", {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { writeText, readText: vi.fn() },
       configurable: true,
     });
@@ -623,7 +623,7 @@ describe("导出 / 导入", () => {
   it("exportProgress 失败 → exportStatus error，toast 报错", async () => {
     const { deps, toast } = makeDeps();
     const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-    Object.defineProperty(global.navigator, "clipboard", {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { writeText, readText: vi.fn() },
       configurable: true,
     });
@@ -640,7 +640,7 @@ describe("导出 / 导入", () => {
 
   it("startImport 失败 → toast 报错，importConfirmText 不变", async () => {
     const { deps, toast } = makeDeps();
-    Object.defineProperty(global.navigator, "clipboard", {
+    Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
       configurable: true,
     });
