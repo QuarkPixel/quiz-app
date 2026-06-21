@@ -25,6 +25,7 @@
         IconProgressCheck,
         IconTargetArrow,
     } from "@tabler/icons-svelte";
+    import { isCoarsePointer } from "$lib/utils";
 
     interface Props {
         open: boolean;
@@ -181,7 +182,7 @@
     <Dialog.Content
         onOpenAutoFocus={(e) => {
             e.preventDefault();
-            searchInputRef?.focus();
+            if (!isCoarsePointer) searchInputRef?.focus();
         }}
         class="bg-card flex h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
     >
