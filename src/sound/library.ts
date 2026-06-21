@@ -1,6 +1,6 @@
-import answerCorrectUrl from "../../assets/sounds/answer-correct.webm";
-import answerWrongUrl from "../../assets/sounds/answer-wrong.webm";
-import successUrl from "../../assets/sounds/success.webm";
+import answerCorrectUrl from "/assets/sounds/answer-correct.webm";
+import answerWrongUrl from "/assets/sounds/answer-wrong.webm";
+import successUrl from "/assets/sounds/success.webm";
 import type { RuntimeState, UserSettings } from "../types";
 import type { SoundPlayer } from "./types";
 import { SOUND_ENABLED_BY_DEFAULT } from "../config";

@@ -16,8 +16,8 @@ import type {
   QuestionType,
   RuntimeState,
   StoredState,
-} from "../../types";
-import type { Bank } from "../../source/types";
+} from "@/types";
+import type { Bank } from "@/source/types";
 import {
   applyAnswer,
   buildFilterOptions,
@@ -38,16 +38,16 @@ import {
   selectNextFromPool,
   shuffle,
   type FilterChangeActivePoolPolicy,
-} from "../../features/quiz";
+} from "@/features/quiz";
 import {
   copyProgressToClipboard,
   parseImportedProgress,
   readProgressFromClipboard,
-} from "../../features/quiz/progressActions";
+} from "@/features/quiz/progressActions";
 import {
   EXPORT_STATUS_ERROR_RESET_MS,
   EXPORT_STATUS_SUCCESS_RESET_MS,
-} from "../../config";
+} from "@/config";
 import { QUESTION_TYPES } from "../types/registry";
 import {
   initializeSoundPreference,
@@ -55,7 +55,7 @@ import {
   maybePlaySuccessSound,
   setSoundEnabledPreference,
 } from "$sound";
-import type { SoundPlayer } from "../../sound/types";
+import type { SoundPlayer } from "@/sound/types";
 
 export type ExportStatus = "idle" | "copied" | "error";
 export type CopyQuestionStatus = "idle" | "copied" | "error";

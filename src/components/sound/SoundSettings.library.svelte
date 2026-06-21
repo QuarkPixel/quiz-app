@@ -1,10 +1,10 @@
 <script lang="ts">
-    import { SHORTCUTS } from "../../config";
+    import { SHORTCUTS } from "@/config";
     import { modKeyLabel } from "$lib/platform";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { Label } from "$lib/components/ui/label";
     import { Switch } from "$lib/components/ui/switch";
-    import { useQuizSession } from "../../quiz/session/context";
+    import { useQuizSession } from "@/quiz/session/context";
 
     const session = useQuizSession();
 </script>

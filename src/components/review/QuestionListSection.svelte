@@ -1,12 +1,12 @@
 <script lang="ts">
-    import type { ActivePoolItem, Question, QuestionType } from "../../types";
+    import type { ActivePoolItem, Question, QuestionType } from "@/types";
     import { cn } from "$lib/utils";
-    import { QUESTION_TYPES } from "../../quiz/types/registry";
+    import { QUESTION_TYPES } from "@/quiz/types/registry";
     import StreakIndicator from "../quiz/StreakIndicator.svelte";
     import CopyQuestionButton from "../quiz/CopyQuestionButton.svelte";
     import { IconFishBoneFilled } from "@tabler/icons-svelte";
-    import { useQuizSession } from "../../quiz/session/context";
-    import type { CopyQuestionStatus } from "../../quiz/session/QuizSession.svelte";
+    import { useQuizSession } from "@/quiz/session/context";
+    import type { CopyQuestionStatus } from "@/quiz/session/QuizSession.svelte";
 
     interface ReviewIndicator {
         item: ActivePoolItem;

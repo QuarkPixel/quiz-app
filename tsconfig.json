@@ -16,6 +16,8 @@
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "paths": {
+      "@": ["./src"],
+      "@/*": ["./src/*"],
       "$lib": ["./src/lib"],
       "$lib/*": ["./src/lib/*"]
     }

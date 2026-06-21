@@ -1,8 +1,8 @@
-import type { Question, QuestionType } from "../../types";
+import type { Question, QuestionType } from "@/types";
 import {
   QUESTION_TYPE_ORDER,
   QUESTION_TYPES_LOGIC,
-} from "../../quiz/types/registry-logic";
+} from "@/quiz/types/registry-logic";
 
 export interface FilterOption {
   key: QuestionType | "all";

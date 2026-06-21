@@ -1,4 +1,4 @@
-import { CONFIRM_TIMEOUT_MS } from "../../config";
+import { CONFIRM_TIMEOUT_MS } from "@/config";
 
 interface ConfirmActionOptions {
   /** 第一次 trigger 后到自动复位的时长（毫秒），默认 CONFIRM_TIMEOUT_MS。 */

@@ -1,17 +1,17 @@
-import { fillActivePool } from "../../algorithm";
-import { buildRuntimeState, shouldRequeueActivePoolItem } from "../../store";
+import { fillActivePool } from "@/algorithm";
+import { buildRuntimeState, shouldRequeueActivePoolItem } from "@/store";
 import type {
   ActivePoolItem,
   Question,
   RuntimeState,
   StoredState,
   UserSettings,
-} from "../../types";
+} from "@/types";
 import {
   ACTIVE_POOL_SIZE,
   CORRECT_STREAK_AFTER_MISTAKE,
   CORRECT_STREAK_TO_MASTER,
-} from "../../config";
+} from "@/config";
 import { sanitizeSoundSettings } from "$sound";
 
 const SETTINGS_BOUNDS = {

@@ -23,8 +23,8 @@
         type LibraryFileMessage,
         type LibraryImportPrompt,
         type OverwriteImportRequest,
-    } from "../../features/libraryFiles";
-    import type { QuizSource } from "../../source/types";
+    } from "@/features/libraryFiles";
+    import type { QuizSource } from "@/source/types";
 
     let { source }: { source: QuizSource } = $props();
 

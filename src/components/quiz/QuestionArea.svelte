@@ -7,9 +7,9 @@
     import IconConfetti from "@tabler/icons-svelte/icons/confetti";
     import IconInputCheck from "@tabler/icons-svelte/icons/input-check";
     import StreakIndicator from "./StreakIndicator.svelte";
-    import { QUESTION_TYPES } from "../../quiz/types/registry";
-    import { getCorrectChoiceLetters } from "../../features/quiz";
-    import { useQuizSession } from "../../quiz/session/context";
+    import { QUESTION_TYPES } from "@/quiz/types/registry";
+    import { getCorrectChoiceLetters } from "@/features/quiz";
+    import { useQuizSession } from "@/quiz/session/context";
     import {
         IconCircleCheckFilled,
         IconCircleDashedCheck,

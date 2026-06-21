@@ -310,6 +310,7 @@ export default defineConfig(async () => ({
   ],
   resolve: {
     alias: {
+      "@": resolve(__dirname, "src"),
       $lib: resolve(__dirname, "src/lib"),
       "$app-root": appRootAlias,
       "$bundled-bank": bundledBankAlias,

@@ -1,6 +1,6 @@
 import { writeText, readText } from "clipboard-polyfill";
 import { exportProgress, importProgress } from "../importExport";
-import type { Question, RuntimeState, StoredState } from "../../types";
+import type { Question, RuntimeState, StoredState } from "@/types";
 
 export type CopyResult = { ok: true } | { ok: false; error: string };
 

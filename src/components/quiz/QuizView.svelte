@@ -17,11 +17,11 @@
     import IconStack2 from "@tabler/icons-svelte/icons/stack-2";
     import IconSettings from "@tabler/icons-svelte/icons/settings";
 
-    import { SHORTCUTS } from "../../config";
-    import type { Bank } from "../../source/types";
-    import { QuizSession } from "../../quiz/session/QuizSession.svelte";
-    import { provideQuizSession } from "../../quiz/session/context";
-    import { createKeyboardHandler } from "../../quiz/session/keyboardHandler";
+    import { SHORTCUTS } from "@/config";
+    import type { Bank } from "@/source/types";
+    import { QuizSession } from "@/quiz/session/QuizSession.svelte";
+    import { provideQuizSession } from "@/quiz/session/context";
+    import { createKeyboardHandler } from "@/quiz/session/keyboardHandler";
     import { createSoundPlayer } from "$sound";
 
     let {

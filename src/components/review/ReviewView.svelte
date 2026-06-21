@@ -1,11 +1,11 @@
 <script lang="ts">
     import { tick } from "svelte";
-    import type { ActivePoolItem, Question } from "../../types";
-    import { getRequiredStreak } from "../../features/quiz";
+    import type { ActivePoolItem, Question } from "@/types";
+    import { getRequiredStreak } from "@/features/quiz";
     import {
         getLearningLevelColor,
         getMaxLearningLevel,
-    } from "../../features/quiz/learningProgress";
+    } from "@/features/quiz/learningProgress";
     import * as Card from "$lib/components/ui/card";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Input } from "$lib/components/ui/input";
@@ -14,8 +14,8 @@
     import {
         QUESTION_TYPES,
         QUESTION_TYPE_ORDER,
-    } from "../../quiz/types/registry";
-    import { useQuizSession } from "../../quiz/session/context";
+    } from "@/quiz/types/registry";
+    import { useQuizSession } from "@/quiz/session/context";
     import HeatmapSection from "./HeatmapSection.svelte";
     import QuestionListSection from "./QuestionListSection.svelte";
     import IconAlignBoxLeftStretch from "@tabler/icons-svelte/icons/align-box-left-stretch";

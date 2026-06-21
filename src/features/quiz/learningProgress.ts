@@ -1,5 +1,5 @@
-import { getRequiredStreak } from "../../algorithm";
-import type { ActivePoolItem, Question, RuntimeState } from "../../types";
+import { getRequiredStreak } from "@/algorithm";
+import type { ActivePoolItem, Question, RuntimeState } from "@/types";
 
 /** 学习中进度条中的一段：level 是稳定身份，width 可为 0 用于平滑过渡 */
 export interface LearningSegment {

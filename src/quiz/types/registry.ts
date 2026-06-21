@@ -1,4 +1,4 @@
-import type { QuestionType } from "../../types";
+import type { QuestionType } from "@/types";
 import type { QuestionTypeDef } from "./types";
 import { judgmentType } from "./judgment";
 import { singleType } from "./single";

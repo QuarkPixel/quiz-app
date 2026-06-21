@@ -9,8 +9,8 @@ import {
   hasSelectedText,
   isEditingTarget,
   isInteractiveTarget,
-} from "../../features/quiz";
-import { SHORTCUTS } from "../../config";
+} from "@/features/quiz";
+import { SHORTCUTS } from "@/config";
 import type { QuizSession } from "./QuizSession.svelte";
 
 export interface KeyboardUiActions {

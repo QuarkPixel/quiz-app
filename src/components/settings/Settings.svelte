@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { SHORTCUTS } from "../../config";
+    import { SHORTCUTS } from "@/config";
     import { modKeyLabel } from "$lib/platform";
     import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
     import * as Dialog from "$lib/components/ui/dialog";
@@ -14,7 +14,7 @@
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
-    import { useQuizSession } from "../../quiz/session/context";
+    import { useQuizSession } from "@/quiz/session/context";
     import QuestionOrder from "./QuestionOrder.svelte";
     import SoundSettings from "$sound-settings";
 

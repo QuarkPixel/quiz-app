@@ -1,6 +1,6 @@
-import type { Question } from "../../types";
-import { QUESTION_TYPES_LOGIC } from "../../quiz/types/registry-logic";
-import type { ShuffledOption } from "../../quiz/types/types";
+import type { Question } from "@/types";
+import { QUESTION_TYPES_LOGIC } from "@/quiz/types/registry-logic";
+import type { ShuffledOption } from "@/quiz/types/types";
 
 /** 全角括号/斜杠转半角 */
 function normalizeSymbols(value: string): string {

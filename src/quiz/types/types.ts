@@ -1,5 +1,5 @@
 import type { Component } from "svelte";
-import type { Question, QuestionType, Option } from "../../types";
+import type { Question, QuestionType, Option } from "@/types";
 
 /** shuffled 后保留原索引的选项，用于 single/multiple 的字母反馈 */
 export interface ShuffledOption extends Option {

@@ -5,7 +5,7 @@ import {
   getStats,
   selectNextFromPool,
   shuffle,
-} from "../../algorithm";
+} from "@/algorithm";
 import {
   computeLearningSegments,
   type LearningSegment,
@@ -18,8 +18,8 @@ import {
   resetStoredState,
   saveState,
   shouldRequeueActivePoolItem,
-} from "../../store";
-import type { Question, QuestionType, RuntimeState } from "../../types";
+} from "@/store";
+import type { Question, QuestionType, RuntimeState } from "@/types";
 import { normalizeFilterType } from "./filters";
 import { sanitizeUserSettings } from "./settings";
 

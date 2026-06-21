@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { QuestionOrder } from "../../types";
+    import type { QuestionOrder } from "@/types";
     import * as ToggleGroup from "$lib/components/ui/toggle-group";
     import IconShuffle from "@tabler/icons-svelte/icons/arrows-shuffle";
     import IconArrowsRight from "@tabler/icons-svelte/icons/arrow-narrow-right";
