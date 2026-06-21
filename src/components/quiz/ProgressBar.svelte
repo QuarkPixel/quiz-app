@@ -51,6 +51,26 @@
     let celebrating = $state(false);
     let celebrateTimer: ReturnType<typeof setTimeout> | null = null;
 
+    let progressStart = $derived(stats.mastered);
+    let progressEnd = $derived(
+        focused ? stats.pending : stats.learning + stats.pending,
+    );
+    let progressPercent = $derived(
+        stats.mastered / stats.total + learningPercentage(),
+    );
+
+    function learningPercentage(): number {
+        let sum = 0;
+        const weight = (n: number): number =>
+            (learningSegments.length - n) / learningSegments.length;
+
+        for (let segment of learningSegments) {
+            sum += weight(segment.level) * segment.widthPercent;
+        }
+
+        return (sum / 100) * (learningWidth / 100);
+    }
+
     $effect(() => {
         const m = stats.mastered;
         if (m > prevMastered) {
@@ -76,13 +96,16 @@
     aria-label={focused ? "显示完整进度" : "聚焦学习中进度"}
 >
     <div
-        class="text-muted-foreground mb-1.5 flex justify-between text-xs tabular-nums"
+        class="text-muted-foreground mb-1.5 flex justify-between items-end text-xs tabular-nums"
     >
-        <NumberFlow plugins={[continuous]} value={stats.mastered} />
+        <NumberFlow plugins={[continuous]} value={progressStart} />
         <NumberFlow
             plugins={[continuous]}
-            value={focused ? stats.pending : stats.learning + stats.pending}
+            value={progressPercent}
+            format={{ style: "percent", maximumFractionDigits: 2 }}
+            class="text-[smaller] font-mono opacity-70"
         />
+        <NumberFlow plugins={[continuous]} value={progressEnd} />
     </div>
     <div
         class={cn(
@@ -96,7 +119,9 @@
                 calcFocused && "opacity-55",
                 celebrating && "celebrate",
             )}
-            style="--w: {masteredDisplayWidth}%; --focused: {calcFocused ? 1 : 0}"
+            style="--w: {masteredDisplayWidth}%; --focused: {calcFocused
+                ? 1
+                : 0}"
         ></div>
         <div
             class="learning-track flex overflow-hidden rounded-sm"
