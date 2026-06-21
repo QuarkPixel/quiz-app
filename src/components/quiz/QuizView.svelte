@@ -68,12 +68,13 @@
 <AlertToast bind:this={toast} />
 
 <main
-    class="flex flex-1 min-h-0 items-center justify-center px-4 sm:px-6 overflow-y-auto"
+    class="flex flex-1 min-h-0 justify-center px-4 sm:px-6 overflow-y-auto"
 >
     <div
         class={cn(
-            "grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
+            "my-auto grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
             "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
+            // my-auto 让 grid 在内容不溢出时垂直居中；溢出时 flex 容器的 stretch 使 my-auto 退化到 0，自动靠上滚动
             // max-lg + pool 展开：max-h-full 让 grid 不超过 main，pool 行用
             // minmax(180px, min(45vh,300px))：宽裕时 ≤300px，挤压时降到 180px，
             // 不够再退化让 main 滚动。content 够装时 grid 仍是内容高度，被 items-center 垂直居中
