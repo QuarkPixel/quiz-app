@@ -17,7 +17,6 @@
 
     let { stats, learningSegments, focused, onToggleFocus }: Props = $props();
 
-    // 修复：进度条在 focused 时，全部题目答完时显示异常
     let calcFocused = $derived(focused && stats.mastered != stats.total);
 
     let masteredWidth = $derived(

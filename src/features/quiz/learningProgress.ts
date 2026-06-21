@@ -102,10 +102,9 @@ export function computeLearningSegments(
 
   return Array.from({ length: maxLevel }, (_, index) => {
     const level = index + 1;
-    const t = maxLevel <= 1 ? 0.5 : (level - 1) / (maxLevel - 1);
     return {
       level,
-      color: mixLearningColor(t),
+      color: getLearningLevelColor(level, maxLevel),
       widthPercent: ((counts.get(level) ?? 0) / total) * 100,
     };
   });
