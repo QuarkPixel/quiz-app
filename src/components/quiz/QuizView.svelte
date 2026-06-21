@@ -199,7 +199,12 @@
 
 <Settings bind:open={showSettings} />
 
-<ReviewView open={showReview} onOpenChange={(o) => (showReview = o)} />
+<ReviewView
+    open={showReview}
+    onOpenChange={(o) => (showReview = o)}
+    onToast={(title, description, variant) =>
+        toast?.show(title, description, variant)}
+/>
 
 <!-- 导入确认 dialog -->
 <Dialog.Root

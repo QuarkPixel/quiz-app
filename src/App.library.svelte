@@ -8,6 +8,7 @@
     import * as SidebarUI from "$lib/components/ui/sidebar";
 
     import { createSource } from "./source";
+    import { provideQuizSource } from "./source/context";
     import type { Bank } from "./source/types";
 
     // @ts-ignore
@@ -15,6 +16,7 @@
     import { IconFishBoneFilled } from "@tabler/icons-svelte";
 
     const source = createSource();
+    provideQuizSource(source);
 
     let activeBank = $state<Bank | null>(source.getActiveBank());
 

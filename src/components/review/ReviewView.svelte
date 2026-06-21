@@ -1,16 +1,24 @@
 <script lang="ts">
     import { tick } from "svelte";
-    import type { ActivePoolItem, Question } from "@/types";
-    import { getRequiredStreak } from "@/features/quiz";
+    import type { Question } from "@/types";
+    import {
+        getRequiredStreak,
+        hasEverMistakenQuestion,
+    } from "@/features/quiz";
     import {
         getLearningLevelColor,
         getMaxLearningLevel,
     } from "@/features/quiz/learningProgress";
+    import {
+        applyReviewFilter,
+        createReviewFilterState,
+        describeFilter,
+        type ReviewFilterState,
+    } from "@/features/quiz/reviewFilters";
+    import { useQuizSource } from "@/source/context";
+    import type { ToastVariant } from "@/quiz/session/QuizSession.svelte";
     import * as Card from "$lib/components/ui/card";
     import * as Dialog from "$lib/components/ui/dialog";
-    import { Input } from "$lib/components/ui/input";
-    import { Switch } from "$lib/components/ui/switch";
-    import { Label } from "$lib/components/ui/label";
     import {
         QUESTION_TYPES,
         QUESTION_TYPE_ORDER,
@@ -18,25 +26,30 @@
     import { useQuizSession } from "@/quiz/session/context";
     import HeatmapSection from "./HeatmapSection.svelte";
     import QuestionListSection from "./QuestionListSection.svelte";
-    import IconAlignBoxLeftStretch from "@tabler/icons-svelte/icons/align-box-left-stretch";
-    import IconSearch from "@tabler/icons-svelte/icons/search";
+    import ReviewFilterBar from "./ReviewFilterBar.svelte";
     import {
         IconInnerShadowTopLeft,
         IconProgressCheck,
         IconTargetArrow,
     } from "@tabler/icons-svelte";
     import { isCoarsePointer } from "$lib/utils";
+    import type {
+        QuestionGroup,
+        ReviewIndicator,
+    } from "./virtualList/types";
 
     interface Props {
         open: boolean;
         onOpenChange: (open: boolean) => void;
+        onToast?: (title: string, description?: string, variant?: ToastVariant) => void;
     }
 
-    let { open, onOpenChange }: Props = $props();
+    let { open, onOpenChange, onToast }: Props = $props();
 
     const session = useQuizSession();
+    const source = useQuizSource();
 
-    let showUnmasteredOnly = $state(false);
+    let filter = $state<ReviewFilterState>(createReviewFilterState());
     let searchTerm = $state("");
     let selectedQuestionId = $state<string | null>(null);
     let jumpTargetId = $state<string | null>(null);
@@ -45,7 +58,7 @@
     $effect(() => {
         if (!open) {
             searchTerm = "";
-            showUnmasteredOnly = false;
+            filter = createReviewFilterState();
         }
     });
 
@@ -56,14 +69,7 @@
     const masteredQuestions = $derived(
         session.questions.filter((q) => masteredSet.has(q.id)),
     );
-    const masteredMistakes = $derived(session.appState.masteredMistakes ?? {});
     const maxLearningLevel = $derived(getMaxLearningLevel(session.appState));
-
-    interface ReviewIndicator {
-        item: ActivePoolItem;
-        requiredStreak: number;
-        maxLevel: number;
-    }
 
     function normalizeSearchText(value: string): string {
         return value.trim().toLocaleLowerCase();
@@ -85,14 +91,12 @@
         const mastered = masteredQuestions.length;
         const active = session.appState.activePool.length;
         const unlearned = Math.max(0, total - mastered - active);
-        const mistaken =
-            masteredQuestions.filter(
-                (question) => masteredMistakes[question.id] === true,
-            ).length +
-            session.appState.activePool.filter(
-                (question) => question.hasEverMistaken,
-            ).length;
-        const correct = mastered - mistaken;
+        const mistaken = session.questions.filter((q) =>
+            hasEverMistakenQuestion(q, session.appState),
+        ).length;
+        const correct = masteredQuestions.filter(
+            (q) => !hasEverMistakenQuestion(q, session.appState),
+        ).length;
         return {
             hash,
             total,
@@ -106,15 +110,17 @@
         };
     });
 
+    // 两层筛选结果（不含搜索）：用于「导出为新题库」，名字仅描述这两层
+    const filteredByState = $derived(
+        applyReviewFilter(session.questions, filter, session.appState),
+    );
+
     let filteredQuestions = $derived.by(() => {
         const query = normalizeSearchText(searchTerm);
-        const byMastered = showUnmasteredOnly
-            ? session.questions.filter((q) => !masteredSet.has(q.id))
-            : session.questions;
-        return byMastered.filter((q) => matchesSearch(q, query));
+        return filteredByState.filter((q) => matchesSearch(q, query));
     });
 
-    const grouped = $derived.by(() => {
+    const grouped = $derived.by<QuestionGroup[]>(() => {
         return QUESTION_TYPE_ORDER.map((type) => ({
             type,
             items: filteredQuestions
@@ -144,7 +150,7 @@
 
         if (!masteredSet.has(question.id)) return null;
 
-        const hasEverMistaken = masteredMistakes[question.id] === true;
+        const hasEverMistaken = session.appState.masteredMistakes[question.id] === true;
         const requiredStreak = toPositiveInteger(
             hasEverMistaken
                 ? session.appState.settings.correctStreakAfterMistake
@@ -167,7 +173,7 @@
 
     async function jumpToQuestion(id: string): Promise<void> {
         searchTerm = "";
-        showUnmasteredOnly = false;
+        filter = createReviewFilterState();
         selectedQuestionId = id;
         await tick();
         jumpTargetId = id;
@@ -175,6 +181,42 @@
 
     function onJumpHandled() {
         jumpTargetId = null;
+    }
+
+    function onFilterChange(next: ReviewFilterState): void {
+        filter = next;
+    }
+
+    const canExport = source.mode === "library";
+
+    async function exportAsNewBank(): Promise<void> {
+        if (!source.importBank) return;
+        const description = describeFilter(filter);
+        const name = description
+            ? `${session.bank.name} ${description}`
+            : session.bank.name;
+        const result = await source.importBank(
+            name,
+            JSON.stringify(filteredByState),
+        );
+        switch (result.kind) {
+            case "ok":
+                onToast?.("已导出为新题库", `已加入题库「${name}」。`, "success");
+                break;
+            case "duplicate":
+                onToast?.(
+                    "题库已存在",
+                    "该筛选结果与现有题库内容相同，未重复导入。",
+                    "default",
+                );
+                break;
+            case "invalid":
+                onToast?.("导出失败", result.errors.join("；"), "destructive");
+                break;
+            case "quota":
+                onToast?.("导出失败", "浏览器存储空间不足。", "destructive");
+                break;
+        }
     }
 </script>
 
@@ -282,42 +324,15 @@
             <HeatmapSection onJump={jumpToQuestion} />
 
             <div class="flex min-h-0 flex-1 flex-col gap-3">
-                <div class="flex flex-wrap items-center gap-x-2 gap-y-3">
-                    <IconAlignBoxLeftStretch
-                        size={16}
-                        stroke={1.75}
-                        class="text-muted-foreground shrink-0"
-                    />
-                    <span class="shrink-0 text-sm font-medium">展示题目</span>
-                    <span
-                        class="dotted-leader text-muted-foreground/40 min-w-8 flex-1"
-                    ></span>
-                    <div class="flex items-center gap-2">
-                        <Switch
-                            id="unmastered-only"
-                            bind:checked={showUnmasteredOnly}
-                            size="sm"
-                        />
-                        <Label
-                            for="unmastered-only"
-                            class="text-muted-foreground text-xs"
-                        >
-                            仅看未掌握
-                        </Label>
-                    </div>
-                    <div class="relative w-full sm:w-72">
-                        <IconSearch
-                            class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-                        />
-                        <Input
-                            bind:ref={searchInputRef}
-                            bind:value={searchTerm}
-                            class="pl-8"
-                            placeholder="搜索 编号、题干、正确答案"
-                            aria-label="搜索题目"
-                        />
-                    </div>
-                </div>
+                <ReviewFilterBar
+                    {filter}
+                    onFilterChange={onFilterChange}
+                    {searchTerm}
+                    onSearchChange={(v) => (searchTerm = v)}
+                    {canExport}
+                    onExport={exportAsNewBank}
+                    bind:inputRef={searchInputRef}
+                />
 
                 <QuestionListSection
                     {grouped}
@@ -329,18 +344,3 @@
         </div>
     </Dialog.Content>
 </Dialog.Root>
-
-<style>
-    .dotted-leader {
-        height: 4px;
-        align-self: center;
-        background-image: radial-gradient(
-            circle,
-            currentColor 1px,
-            transparent 1.4px
-        );
-        background-size: 6px 4px;
-        background-position: center;
-        background-repeat: repeat-x;
-    }
-</style>

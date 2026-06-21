@@ -5,11 +5,14 @@
     import * as Tooltip from "$lib/components/ui/tooltip";
 
     import { createSource } from "./source";
+    import { provideQuizSource } from "./source/context";
 
     // @ts-ignore
     import logoRaw from "/assets/icons/logo.svg?raw";
 
-    const bank = createSource().getActiveBank();
+    const source = createSource();
+    provideQuizSource(source);
+    const bank = source.getActiveBank();
 </script>
 
 <Tooltip.Provider delayDuration={0}>
