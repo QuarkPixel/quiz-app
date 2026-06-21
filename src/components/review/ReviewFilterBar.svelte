@@ -8,12 +8,15 @@
     import IconFilter from "@tabler/icons-svelte/icons/filter-2";
     import IconFilterSpark from "@tabler/icons-svelte/icons/filter-2-spark";
     import IconDatabaseExport from "@tabler/icons-svelte/icons/database-export";
-    import type { LearningStatus } from "@/features/quiz";
+    import type { Correctness, LearningStatus } from "@/features/quiz";
     import {
         isFilterEmpty,
         type ReviewFilterState,
     } from "@/features/quiz/reviewFilters";
     import { cn } from "tailwind-variants";
+    import type { QuestionType } from "@/types";
+    import { QUESTION_TYPES } from "@/quiz/types/registry";
+    import type { QuestionTypeDef } from "@/quiz/types/types";
 
     interface Props {
         filter: ReviewFilterState;
@@ -23,6 +26,7 @@
         canExport: boolean;
         onExport: () => void;
         inputRef?: HTMLInputElement | null;
+        availableTypes: QuestionType[];
     }
 
     let {
@@ -33,6 +37,7 @@
         canExport,
         onExport,
         inputRef = $bindable<HTMLInputElement | null>(null),
+        availableTypes,
     }: Props = $props();
 
     // 筛选栏展开状态（点击筛选按钮切换）
@@ -42,12 +47,9 @@
     let filterApplied = $derived(!isFilterEmpty(filter));
     let showExport = $derived(canExport && filterApplied);
 
-    // ToggleGroup multiple 的 value 是 string[]；用 Set ↔ 数组互转
     let learningValues = $derived<string[]>([...filter.learning]);
-    let correctnessValues = $derived<string[]>([
-        ...(filter.correctness.correct ? ["correct"] : []),
-        ...(filter.correctness.incorrect ? ["incorrect"] : []),
-    ]);
+    let correctnessValues = $derived<string[]>([...filter.correctness]);
+    let typeValues = $derived<string[]>([...filter.types]);
 
     function onLearningChange(values: string[]): void {
         onFilterChange({
@@ -59,12 +61,64 @@
     function onCorrectnessChange(values: string[]): void {
         onFilterChange({
             ...filter,
-            correctness: {
-                correct: values.includes("correct"),
-                incorrect: values.includes("incorrect"),
-            },
+            correctness: new Set(values as Correctness[]),
         });
     }
+
+    function onTypeChange(values: string[]): void {
+        onFilterChange({
+            ...filter,
+            types: new Set(values as QuestionType[]),
+        });
+    }
+
+    type FilterGroup = {
+        label: string;
+        values: string[];
+        handler: (v: string[]) => void;
+        items: { value: string; label: string; name?: string; icon?: any }[];
+    };
+
+    let filterGroups = $derived<FilterGroup[]>([
+        {
+            label: "学习进度",
+            values: learningValues,
+            handler: onLearningChange,
+            items: [
+                { value: "mastered", label: "已掌握" },
+                { value: "learning", label: "学习中" },
+                { value: "unlearned", label: "未学习" },
+            ],
+        },
+        {
+            label: "答题正误",
+            values: correctnessValues,
+            handler: onCorrectnessChange,
+            items: [
+                { value: "correct", label: "正确" },
+                { value: "incorrect", label: "错误" },
+            ],
+        },
+        // 只有当 availableTypes 长度大于 1 时才显示题目类型筛选
+        ...(availableTypes.length > 1
+            ? [
+                  {
+                      label: "题目类型",
+                      values: typeValues,
+                      handler: onTypeChange,
+                      items: availableTypes.map((type) => {
+                          const qt = QUESTION_TYPES[type] as QuestionTypeDef;
+                          return {
+                              value: qt.id,
+                              label: qt.shortName,
+                              name: qt.name,
+                              icon: qt.icon,
+                          };
+                      }),
+                  },
+              ]
+            : []),
+    ]);
 </script>
 
 <div class="flex flex-col gap-1">
@@ -125,78 +179,59 @@
             <div
                 class="flex justify-between gap-1 bg-foreground/3 p-2 rounded-md"
             >
-                <div class="flex flex-wrap items-center gap-4">
-                    <div class="flex flex-col items-start gap-1">
-                        <span class="text-xs opacity-50">学习进度</span>
-                        <ToggleGroup.Root
-                            type="multiple"
-                            value={learningValues}
-                            spacing={1}
-                            onValueChange={(v) =>
-                                onLearningChange((v ?? []) as string[])}
-                            variant="outline"
-                            size="sm"
-                            class="*:data-[state=on]:bg-primary/80 *:data-[state=on]:text-primary-foreground *:data-[state=on]:border-transparent"
-                        >
-                            <ToggleGroup.Item
-                                value="mastered"
-                                aria-label="已掌握"
+                <div class="flex flex-wrap items-center gap-6">
+                    {#each filterGroups as group}
+                        <div class="flex flex-col items-start gap-1">
+                            <span class="text-xs opacity-50">{group.label}</span
                             >
-                                <span class="text-xs">已掌握</span>
-                            </ToggleGroup.Item>
-                            <ToggleGroup.Item
-                                value="learning"
-                                aria-label="学习中"
+                            <ToggleGroup.Root
+                                type="multiple"
+                                value={group.values}
+                                spacing={1}
+                                onValueChange={(v) =>
+                                    group.handler((v ?? []) as string[])}
+                                variant="outline"
+                                size="sm"
+                                class="*:data-[state=on]:bg-primary/80 *:data-[state=on]:text-primary-foreground *:data-[state=on]:border-transparent"
                             >
-                                <span class="text-xs">学习中</span>
-                            </ToggleGroup.Item>
-                            <ToggleGroup.Item
-                                value="unlearned"
-                                aria-label="未学习"
-                            >
-                                <span class="text-xs">未学习</span>
-                            </ToggleGroup.Item>
-                        </ToggleGroup.Root>
-                    </div>
-
-                    <div class="flex flex-col items-start gap-1">
-                        <span class="text-xs opacity-50">答题正误</span>
-                        <ToggleGroup.Root
-                            type="multiple"
-                            value={correctnessValues}
-                            spacing={1}
-                            onValueChange={(v) =>
-                                onCorrectnessChange((v ?? []) as string[])}
-                            variant="outline"
-                            size="sm"
-                            class="*:data-[state=on]:bg-primary/80 *:data-[state=on]:text-primary-foreground *:data-[state=on]:border-transparent"
-                        >
-                            <ToggleGroup.Item
-                                value="correct"
-                                aria-label="正确题目"
-                            >
-                                <span class="text-xs">正确</span>
-                            </ToggleGroup.Item>
-                            <ToggleGroup.Item
-                                value="incorrect"
-                                aria-label="错误题目"
-                            >
-                                <span class="text-xs">错误</span>
-                            </ToggleGroup.Item>
-                        </ToggleGroup.Root>
-                    </div>
+                                {#each group.items as item}
+                                    <ToggleGroup.Item
+                                        value={item.value}
+                                        aria-label={item.name ?? item.label}
+                                    >
+                                        {#if item.icon}
+                                            <item.icon />
+                                        {/if}
+                                        <span class="text-xs">{item.label}</span
+                                        >
+                                    </ToggleGroup.Item>
+                                {/each}
+                            </ToggleGroup.Root>
+                        </div>
+                    {/each}
                 </div>
-                <Button
-                    variant="outline"
-                    size="xs"
-                    onclick={onExport}
-                    class={cn(
-                        "tracking-normal rounded-full",
-                        !showExport && "opacity-0 pointer-events-none",
-                    )}
-                >
-                    <IconDatabaseExport size={16} stroke={1.75} /> 导出为新题库
-                </Button>
+                <Tooltip.Root>
+                    <Tooltip.Trigger>
+                        {#snippet child({ props })}
+                            <Button
+                                {...props}
+                                variant="outline"
+                                size="xs"
+                                onclick={onExport}
+                                class={cn(
+                                    "tracking-normal rounded-full",
+                                    !showExport &&
+                                        "opacity-0 pointer-events-none",
+                                )}
+                            >
+                                <IconDatabaseExport size={16} stroke={1.75} /> 导出为新题库
+                            </Button>
+                        {/snippet}
+                    </Tooltip.Trigger>
+                    <Tooltip.Content side="top">
+                        <span>筛选结果另存为新题库</span>
+                    </Tooltip.Content>
+                </Tooltip.Root>
             </div>
         </div>
     </div>

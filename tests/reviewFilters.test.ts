@@ -4,8 +4,12 @@ import {
   createReviewFilterState,
   describeFilter,
   isFilterEmpty,
+  type ReviewFilterState,
 } from "../src/features/quiz/reviewFilters";
-import type { LearningStatus } from "../src/features/quiz/questionClassification";
+import type {
+  Correctness,
+  LearningStatus,
+} from "../src/features/quiz/questionClassification";
 import {
   createActivePoolItem,
   createDefaultSettings,
@@ -19,10 +23,7 @@ import type {
   UserSettings,
 } from "../src/types";
 
-function makeQuestion(
-  id: string,
-  type: QuestionType = "judgment",
-): Question {
+function makeQuestion(id: string, type: QuestionType = "judgment"): Question {
   return { id, type, question: `q-${id}`, answer: true };
 }
 
@@ -53,20 +54,20 @@ function poolItem(
 }
 
 // 题目布局：
-//   m1 已掌握、曾错 → incorrect
-//   m2 已掌握、未错 → correct
-//   l1 学习中、曾错 → incorrect
-//   l2 学习中、未错 → correct
-//   u1 未学习 → none
-//   u2 未学习 → none
+//   m1 mastered + mistaken → incorrect  (judgment)
+//   m2 mastered + correct → correct    (single)
+//   l1 learning + mistaken → incorrect (multiple)
+//   l2 learning + correct → correct    (judgment)
+//   u1 unlearned → none                (single)
+//   u2 unlearned → none                (blank)
 function fixture(): { questions: Question[]; state: RuntimeState } {
   const questions = [
-    makeQuestion("m1"),
-    makeQuestion("m2"),
-    makeQuestion("l1"),
-    makeQuestion("l2"),
-    makeQuestion("u1"),
-    makeQuestion("u2"),
+    makeQuestion("m1", "judgment"),
+    makeQuestion("m2", "single"),
+    makeQuestion("l1", "multiple"),
+    makeQuestion("l2", "judgment"),
+    makeQuestion("u1", "single"),
+    makeQuestion("u2", "blank"),
   ];
   const state = makeState({
     masteredIds: ["m1", "m2"],
@@ -82,13 +83,17 @@ function fixture(): { questions: Question[]; state: RuntimeState } {
 function filter(
   learning: LearningStatus[] = [],
   correctness: { correct?: boolean; incorrect?: boolean } = {},
-) {
+  types: QuestionType[] = [],
+): ReviewFilterState {
   return {
     learning: new Set(learning),
-    correctness: {
-      correct: correctness.correct ?? false,
-      incorrect: correctness.incorrect ?? false,
-    },
+    correctness: new Set(
+      [
+        correctness.correct && "correct",
+        correctness.incorrect && "incorrect",
+      ].filter(Boolean) as Correctness[],
+    ),
+    types: new Set(types),
   };
 }
 
@@ -97,7 +102,7 @@ function ids(questions: Question[]): string[] {
 }
 
 describe("applyReviewFilter", () => {
-  it("无任何筛选 → 全部题目", () => {
+  it("no filter -> all questions", () => {
     const { questions, state } = fixture();
     expect(ids(applyReviewFilter(questions, filter(), state))).toEqual([
       "m1",
@@ -109,51 +114,51 @@ describe("applyReviewFilter", () => {
     ]);
   });
 
-  it("第一层 {已掌握}", () => {
+  it("learning {mastered}", () => {
     const { questions, state } = fixture();
-    expect(ids(applyReviewFilter(questions, filter(["mastered"]), state))).toEqual([
-      "m1",
-      "m2",
-    ]);
+    expect(
+      ids(applyReviewFilter(questions, filter(["mastered"]), state)),
+    ).toEqual(["m1", "m2"]);
   });
 
-  it("第一层 {学习中}", () => {
+  it("learning {learning}", () => {
     const { questions, state } = fixture();
-    expect(ids(applyReviewFilter(questions, filter(["learning"]), state))).toEqual([
-      "l1",
-      "l2",
-    ]);
+    expect(
+      ids(applyReviewFilter(questions, filter(["learning"]), state)),
+    ).toEqual(["l1", "l2"]);
   });
 
-  it("第一层 {未学习}", () => {
+  it("learning {unlearned}", () => {
     const { questions, state } = fixture();
     expect(
       ids(applyReviewFilter(questions, filter(["unlearned"]), state)),
     ).toEqual(["u1", "u2"]);
   });
 
-  it("第一层 {已掌握, 学习中} 多选", () => {
+  it("learning {mastered, learning}", () => {
     const { questions, state } = fixture();
     expect(
-      ids(applyReviewFilter(questions, filter(["mastered", "learning"]), state)),
+      ids(
+        applyReviewFilter(questions, filter(["mastered", "learning"]), state),
+      ),
     ).toEqual(["m1", "m2", "l1", "l2"]);
   });
 
-  it("第二层 只看正确（第一层空）→ 未学习被排除", () => {
+  it("correctness correct only -> unlearned excluded", () => {
     const { questions, state } = fixture();
     expect(
       ids(applyReviewFilter(questions, filter([], { correct: true }), state)),
     ).toEqual(["m2", "l2"]);
   });
 
-  it("第二层 只看错误（第一层空）→ 未学习被排除", () => {
+  it("correctness incorrect only -> unlearned excluded", () => {
     const { questions, state } = fixture();
     expect(
       ids(applyReviewFilter(questions, filter([], { incorrect: true }), state)),
     ).toEqual(["m1", "l1"]);
   });
 
-  it("第二层 两个都勾选 == 都不勾选", () => {
+  it("correctness both selected == none selected", () => {
     const { questions, state } = fixture();
     const both = applyReviewFilter(
       questions,
@@ -163,8 +168,7 @@ describe("applyReviewFilter", () => {
     expect(ids(both)).toEqual(["m1", "m2", "l1", "l2", "u1", "u2"]);
   });
 
-  // 规范的 4 个特殊逻辑例子（严格 AND，例1 已与用户确认修正）
-  it("例1: {未学习} + 正确 → 仅所有未学习", () => {
+  it("case1: {unlearned} + correct -> all unlearned", () => {
     const { questions, state } = fixture();
     expect(
       ids(
@@ -177,7 +181,7 @@ describe("applyReviewFilter", () => {
     ).toEqual(["u1", "u2"]);
   });
 
-  it("例2: {学习中, 未学习} + 正确 → 学习中答对 + 所有未学习", () => {
+  it("case2: {learning, unlearned} + correct -> learning-correct + all unlearned", () => {
     const { questions, state } = fixture();
     expect(
       ids(
@@ -190,7 +194,7 @@ describe("applyReviewFilter", () => {
     ).toEqual(["l2", "u1", "u2"]);
   });
 
-  it("例3: {已掌握, 未学习} + 错误 → 已掌握错误 + 所有未学习", () => {
+  it("case3: {mastered, unlearned} + incorrect -> mastered-incorrect + all unlearned", () => {
     const { questions, state } = fixture();
     expect(
       ids(
@@ -203,7 +207,7 @@ describe("applyReviewFilter", () => {
     ).toEqual(["m1", "u1", "u2"]);
   });
 
-  it("{已掌握, 未学习} + 正确 → 已掌握未错 + 所有未学习", () => {
+  it("{mastered, unlearned} + correct -> mastered-correct + all unlearned", () => {
     const { questions, state } = fixture();
     expect(
       ids(
@@ -215,26 +219,80 @@ describe("applyReviewFilter", () => {
       ),
     ).toEqual(["m2", "u1", "u2"]);
   });
+
+  // type filter
+  it("types {judgment} -> only judgment", () => {
+    const { questions, state } = fixture();
+    expect(
+      ids(applyReviewFilter(questions, filter([], {}, ["judgment"]), state)),
+    ).toEqual(["m1", "l2"]);
+  });
+
+  it("types {single, blank} -> single + blank", () => {
+    const { questions, state } = fixture();
+    expect(
+      ids(
+        applyReviewFilter(
+          questions,
+          filter([], {}, ["single", "blank"]),
+          state,
+        ),
+      ),
+    ).toEqual(["m2", "u1", "u2"]);
+  });
+
+  it("types {single} + learning {mastered} -> mastered single", () => {
+    const { questions, state } = fixture();
+    expect(
+      ids(
+        applyReviewFilter(
+          questions,
+          filter(["mastered"], {}, ["single"]),
+          state,
+        ),
+      ),
+    ).toEqual(["m2"]);
+  });
+
+  it("types {judgment} + correctness {incorrect} -> judgment + incorrect", () => {
+    const { questions, state } = fixture();
+    expect(
+      ids(
+        applyReviewFilter(
+          questions,
+          filter([], { incorrect: true }, ["judgment"]),
+          state,
+        ),
+      ),
+    ).toEqual(["m1"]);
+  });
+
+  it("types empty set == all types", () => {
+    const { questions, state } = fixture();
+    expect(
+      ids(applyReviewFilter(questions, filter([], {}, []), state)),
+    ).toEqual(["m1", "m2", "l1", "l2", "u1", "u2"]);
+  });
 });
 
 describe("isFilterEmpty / describeFilter", () => {
-  it("初始状态为空", () => {
+  it("initial state is empty", () => {
     expect(isFilterEmpty(createReviewFilterState())).toBe(true);
   });
 
-  it("describeFilter 无筛选返回空串", () => {
+  it("describeFilter no filter returns empty", () => {
     expect(describeFilter(createReviewFilterState())).toBe("");
   });
 
-  it("describeFilter 按固定顺序拼接", () => {
+  it("describeFilter fixed order", () => {
     expect(
       describeFilter(
         filter(["unlearned", "mastered", "learning"], { correct: true }),
       ),
-    ).toBe("已掌握 学习中 未学习 正确");
+    ).toBe("已掌握+学习中+未学习+正确");
   });
 
-  it("describeFilter 仅正误", () => {
+  it("describeFilter only correctness", () => {
     expect(describeFilter(filter([], { incorrect: true }))).toBe("错误");
   });
 });

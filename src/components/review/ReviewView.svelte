@@ -5,6 +5,7 @@
         getRequiredStreak,
         hasEverMistakenQuestion,
     } from "@/features/quiz";
+    import { getAvailableQuestionTypes } from "@/features/quiz/filters";
     import {
         getLearningLevelColor,
         getMaxLearningLevel,
@@ -201,7 +202,7 @@
         );
         switch (result.kind) {
             case "ok":
-                onToast?.("已导出为新题库", `已加入题库「${name}」。`, "success");
+                onToast?.("已另存为新题库", `已加入题库「${name}」，请在侧边栏查看。`, "success");
                 break;
             case "duplicate":
                 onToast?.(
@@ -332,6 +333,7 @@
                     {canExport}
                     onExport={exportAsNewBank}
                     bind:inputRef={searchInputRef}
+                    availableTypes={getAvailableQuestionTypes(session.questions)}
                 />
 
                 <QuestionListSection

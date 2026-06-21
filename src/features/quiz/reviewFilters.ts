@@ -11,24 +11,28 @@ import {
  *
  * - `learning`：第一层（学习进度）多选，空集 = 全部。
  * - `correctness`：第二层（正误）两个独立开关。
+ * - `types`：第三层（题型）多选，空集 = 全部。
  */
 export interface ReviewFilterState {
   learning: Set<LearningStatus>;
-  correctness: { correct: boolean; incorrect: boolean };
+  correctness: Set<Correctness>;
+  types: Set<Question["type"]>;
 }
 
 export function createReviewFilterState(): ReviewFilterState {
   return {
     learning: new Set(),
-    correctness: { correct: false, incorrect: false },
+    correctness: new Set(),
+    types: new Set(),
   };
 }
 
 /** 第二层的有效模式：两个都不选或都选 = 不过滤；只选一个 = 那一个。 */
 function correctnessMode(state: ReviewFilterState): "all" | Correctness {
-  const { correct, incorrect } = state.correctness;
-  if (correct === incorrect) return "all"; // 都 false 或都 true
-  return correct ? "correct" : "incorrect";
+  const hasCorrect = state.correctness.has("correct");
+  const hasIncorrect = state.correctness.has("incorrect");
+  if (hasCorrect === hasIncorrect) return "all"; // 都不选或都选
+  return hasCorrect ? "correct" : "incorrect";
 }
 
 /**
@@ -52,29 +56,32 @@ export function applyReviewFilter(
   const mode = correctnessMode(state);
   const unlearnedSelected = learningFilter.has("unlearned");
 
+  const typeFilter = state.types;
+  const hasTypeFilter = typeFilter.size > 0;
+
   return questions.filter((question) => {
-    const status = getLearningStatus(question, runtime);
+      // 第三层：题型筛选（最先判断，短路掉不匹配的题）
+      if (hasTypeFilter && !typeFilter.has(question.type)) return false;
 
-    // 第一层：非空时按状态硬筛
-    if (hasLearningFilter && !learningFilter.has(status)) return false;
+      const status = getLearningStatus(question, runtime);
 
-    // 第二层：mode === "all" 时不过滤
-    if (mode === "all") return true;
+      // 第一层：非空时按状态硬筛
+      if (hasLearningFilter && !learningFilter.has(status)) return false;
 
-    // 未学习：仅在被显式选中时展示，忽略第二层
-    if (status === "unlearned") return unlearnedSelected;
+      // 第二层：mode === "all" 时不过滤
+      if (mode === "all") return true;
 
-    // 已掌握 / 学习中：按正误匹配
-    return getCorrectness(question, runtime) === mode;
+      // 未学习：仅在被显式选中时展示，忽略第二层
+      if (status === "unlearned") return unlearnedSelected;
+
+      // 已掌握 / 学习中：按正误匹配
+      return getCorrectness(question, runtime) === mode;
   });
 }
 
 /** 筛选是否处于「无任何过滤」的初始状态。 */
 export function isFilterEmpty(state: ReviewFilterState): boolean {
-  const correctness =
-    state.correctness.correct === false &&
-    state.correctness.incorrect === false;
-  return state.learning.size === 0 && correctness;
+  return Object.values(state).every((filter: Set<any>) => filter.size === 0);
 }
 
 /**
@@ -83,19 +90,39 @@ export function isFilterEmpty(state: ReviewFilterState): boolean {
  */
 export function describeFilter(state: ReviewFilterState): string {
   const parts: string[] = [];
-
-  const learningLabels: Record<LearningStatus, string> = {
-    mastered: "已掌握",
-    learning: "学习中",
-    unlearned: "未学习",
-  };
-  const order: LearningStatus[] = ["mastered", "learning", "unlearned"];
-  for (const status of order) {
-    if (state.learning.has(status)) parts.push(learningLabels[status]);
+  {
+    const labelMap: [
+      Set<LearningStatus | Correctness | Question["type"]>,
+      Record<string, string>,
+      string[],
+    ][] = [
+      [
+        state.learning,
+        { mastered: "已掌握", learning: "学习中", unlearned: "未学习" },
+        ["mastered", "learning", "unlearned"],
+      ],
+      [
+        state.correctness,
+        { correct: "正确", incorrect: "错误", none: "" },
+        ["correct", "incorrect", "none"],
+      ],
+      [
+        state.types,
+        {
+          judgment: "判断题",
+          single: "单选题",
+          multiple: "多选题",
+          blank: "填空题",
+        },
+        ["single", "multiple", "judgment", "blank"],
+      ],
+    ];
+    for (const [filterSet, labels, order] of labelMap) {
+      for (const key of order) {
+        if (filterSet.has(key as any)) parts.push(labels[key]);
+      }
+    }
   }
 
-  const { correct, incorrect } = state.correctness;
-  if (correct !== incorrect) parts.push(correct ? "正确" : "错误");
-
-  return parts.join(" ");
+  return parts.join("+");
 }
