@@ -1,18 +1,18 @@
 <script lang="ts">
-    import type { Question, ActivePoolItem } from "../types";
-    import { getRequiredStreak } from "../features/quiz";
-    import { QUESTION_TYPES } from "../quiz/types/registry";
+    import type { Question, ActivePoolItem } from "../../types";
+    import { getRequiredStreak } from "../../features/quiz";
+    import { QUESTION_TYPES } from "../../quiz/types/registry";
     import {
         POOL_ITEM_FLIP_DURATION_MS,
         POOL_ITEM_OUT_DURATION_MS,
-    } from "../config";
+    } from "../../config";
     import { cn } from "$lib/utils";
     import { flip } from "svelte/animate";
     import { fly } from "svelte/transition";
     import { backOut, cubicOut } from "svelte/easing";
     import { onDestroy } from "svelte";
     import StreakIndicator from "./StreakIndicator.svelte";
-    import { useQuizSession } from "../quiz/session/context";
+    import { useQuizSession } from "../../quiz/session/context";
 
     const session = useQuizSession();
 

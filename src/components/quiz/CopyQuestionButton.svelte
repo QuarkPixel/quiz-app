@@ -5,7 +5,7 @@
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconCopyCheck from "@tabler/icons-svelte/icons/copy-check";
     import IconAlertCircle from "@tabler/icons-svelte/icons/alert-circle";
-    import type { CopyQuestionStatus } from "../quiz/session/QuizSession.svelte";
+    import type { CopyQuestionStatus } from "../../quiz/session/QuizSession.svelte";
 
     interface Props {
         status: CopyQuestionStatus;

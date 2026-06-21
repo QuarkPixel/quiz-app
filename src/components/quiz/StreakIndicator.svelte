@@ -1,6 +1,6 @@
 <script lang="ts">
-    import type { ActivePoolItem } from "../types";
-    import { getLearningLevelColor } from "../features/quiz/learningProgress";
+    import type { ActivePoolItem } from "../../types";
+    import { getLearningLevelColor } from "../../features/quiz/learningProgress";
     import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
     import { cn } from "$lib/utils";
     import IconChecks from "@tabler/icons-svelte/icons/checks";

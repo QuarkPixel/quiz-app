@@ -1,10 +1,10 @@
 <script lang="ts">
-    import type { Stats } from "../types";
-    import type { LearningSegment } from "../features/quiz";
+    import type { Stats } from "../../types";
+    import type { LearningSegment } from "../../features/quiz";
     import {
         PROGRESS_SIDE_CAP_PERCENT,
         MASTERED_CELEBRATE_DURATION_MS,
-    } from "../config";
+    } from "../../config";
     import { cn } from "$lib/utils";
     import NumberFlow, { continuous } from "@number-flow/svelte";
 

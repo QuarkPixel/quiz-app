@@ -1,13 +1,13 @@
 <script lang="ts">
     import "./app.css";
 
-    import QuizView from "./components/QuizView.svelte";
+    import QuizView from "./components/quiz/QuizView.svelte";
     import * as Tooltip from "$lib/components/ui/tooltip";
 
     import { createSource } from "./source";
 
     // @ts-ignore
-    import logoRaw from "../assets/icons/logo.svg?raw";
+    import logoRaw from "/assets/icons/logo.svg?raw";
 
     const bank = createSource().getActiveBank();
 </script>

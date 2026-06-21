@@ -6,7 +6,7 @@
     import { Input } from "$lib/components/ui/input";
     import AlertToast from "./AlertToast.svelte";
     import { writeText } from "clipboard-polyfill";
-    import Prompt from "../../assets/prompt.md?raw";
+    import Prompt from "/assets/prompt.md?raw";
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
     import IconAddSquare from "@tabler/icons-svelte/icons/code-variable-plus";
@@ -23,8 +23,8 @@
         type LibraryFileMessage,
         type LibraryImportPrompt,
         type OverwriteImportRequest,
-    } from "../features/libraryFiles";
-    import type { QuizSource } from "../source/types";
+    } from "../../features/libraryFiles";
+    import type { QuizSource } from "../../source/types";
 
     let { source }: { source: QuizSource } = $props();
 

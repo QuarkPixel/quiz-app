@@ -5,7 +5,7 @@
     import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
     import { useSidebar } from "$lib/components/ui/sidebar/context.svelte";
     import { modKeyLabel } from "$lib/platform";
-    import { SHORTCUTS } from "../config";
+    import { SHORTCUTS } from "../../config";
 
     const sidebar = useSidebar();
 </script>

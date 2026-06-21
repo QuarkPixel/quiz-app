@@ -1,9 +1,9 @@
 <script lang="ts">
-    import type { QuestionType } from "../types";
-    import type { FilterOption } from "../features/quiz/filters";
+    import type { QuestionType } from "../../types";
+    import type { FilterOption } from "../../features/quiz/filters";
     import * as ToggleGroup from "$lib/components/ui/toggle-group";
     import IconAsterisk from "@tabler/icons-svelte/icons/asterisk";
-    import { QUESTION_TYPES } from "../quiz/types/registry";
+    import { QUESTION_TYPES } from "../../quiz/types/registry";
 
     interface Props {
         options: FilterOption[];

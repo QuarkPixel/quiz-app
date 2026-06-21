@@ -1,11 +1,11 @@
 <script lang="ts">
-    import FlashContainer from "./FlashContainer.svelte";
-    import ReviewView from "./ReviewView.svelte";
-    import Settings from "./Settings.svelte";
-    import PoolPanel from "./PoolPanel.svelte";
-    import AlertToast from "./AlertToast.svelte";
-    import ProgressBar from "./ProgressBar.svelte";
-    import QuestionArea from "./QuestionArea.svelte";
+    import FlashContainer from "../ui/FlashContainer.svelte";
+    import ReviewView from "../review/ReviewView.svelte";
+    import Settings from "../settings/Settings.svelte";
+    import PoolPanel from "../quiz/PoolPanel.svelte";
+    import AlertToast from "../ui/AlertToast.svelte";
+    import ProgressBar from "../ui/ProgressBar.svelte";
+    import QuestionArea from "../quiz/QuestionArea.svelte";
 
     import { Button } from "$lib/components/ui/button";
     import * as Dialog from "$lib/components/ui/dialog";
@@ -17,11 +17,11 @@
     import IconStack2 from "@tabler/icons-svelte/icons/stack-2";
     import IconSettings from "@tabler/icons-svelte/icons/settings";
 
-    import { SHORTCUTS } from "../config";
-    import type { Bank } from "../source/types";
-    import { QuizSession } from "../quiz/session/QuizSession.svelte";
-    import { provideQuizSession } from "../quiz/session/context";
-    import { createKeyboardHandler } from "../quiz/session/keyboardHandler";
+    import { SHORTCUTS } from "../../config";
+    import type { Bank } from "../../source/types";
+    import { QuizSession } from "../../quiz/session/QuizSession.svelte";
+    import { provideQuizSession } from "../../quiz/session/context";
+    import { createKeyboardHandler } from "../../quiz/session/keyboardHandler";
     import { createSoundPlayer } from "$sound";
 
     let {

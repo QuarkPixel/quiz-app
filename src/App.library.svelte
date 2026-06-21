@@ -2,16 +2,16 @@
     import { onMount } from "svelte";
     import "./app.css";
 
-    import QuizView from "./components/QuizView.svelte";
-    import Sidebar from "./components/Sidebar.svelte";
-    import HeaderSidebarTrigger from "./components/HeaderSidebarTrigger.svelte";
+    import QuizView from "./components/quiz/QuizView.svelte";
+    import Sidebar from "./components/layout/Sidebar.svelte";
+    import HeaderSidebarTrigger from "./components/layout/HeaderSidebarTrigger.svelte";
     import * as SidebarUI from "$lib/components/ui/sidebar";
 
     import { createSource } from "./source";
     import type { Bank } from "./source/types";
 
     // @ts-ignore
-    import logoRaw from "../assets/icons/logo.svg?raw";
+    import logoRaw from "/assets/icons/logo.svg?raw";
     import { IconFishBoneFilled } from "@tabler/icons-svelte";
 
     const source = createSource();

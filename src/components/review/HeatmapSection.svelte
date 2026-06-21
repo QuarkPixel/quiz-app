@@ -1,11 +1,11 @@
 <script lang="ts">
     import { cn } from "$lib/utils";
-    import { useQuizSession } from "../quiz/session/context";
+    import { useQuizSession } from "../../quiz/session/context";
     import {
         getLearningLevelColor,
         getMaxLearningLevel,
         getRemainingCorrectLevel,
-    } from "../features/quiz/learningProgress";
+    } from "../../features/quiz/learningProgress";
     import IconAccessPoint from "@tabler/icons-svelte/icons/access-point";
     import IconChevronDown from "@tabler/icons-svelte/icons/chevron-down";
 
