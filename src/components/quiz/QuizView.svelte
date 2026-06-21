@@ -67,9 +67,7 @@
 <FlashContainer bind:this={flashContainer} />
 <AlertToast bind:this={toast} />
 
-<main
-    class="flex flex-1 min-h-0 justify-center px-4 sm:px-6 overflow-y-auto"
->
+<main class="flex flex-1 min-h-0 justify-center px-4 sm:px-6 overflow-y-auto">
     <div
         class={cn(
             "my-auto grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
@@ -85,7 +83,7 @@
         )}
     >
         <div class="flex w-full min-w-0 flex-col gap-5">
-            <QuestionArea />
+            <QuestionArea onGoToReview={() => (showReview = true)} />
 
             <ProgressBar
                 stats={session.stats}

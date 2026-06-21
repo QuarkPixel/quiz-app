@@ -11,17 +11,27 @@
     import { getCorrectChoiceLetters } from "@/features/quiz";
     import { useQuizSession } from "@/quiz/session/context";
     import {
+        IconCircleArrowUpRightFilled,
         IconCircleCheckFilled,
         IconCircleDashedCheck,
         IconCircleDashedX,
         IconDiscountCheck,
+        IconFilterMinus,
     } from "@tabler/icons-svelte";
+    import IconRefresh from "@tabler/icons-svelte/icons/refresh";
+
+    interface Props {
+        onGoToReview: () => void;
+    }
+
+    let { onGoToReview }: Props = $props();
 
     const session = useQuizSession();
 
     const treatCorrectAction = createConfirmAction(() =>
         session.treatLastAnswerAsCorrect(),
     );
+    const resetAction = createConfirmAction(() => session.reset());
 
     async function copyCurrentQuestion(event: MouseEvent): Promise<void> {
         event.stopPropagation();
@@ -190,18 +200,28 @@
                 <span class="text-foreground text-lg font-bold mb-3">
                     所有题目已掌握
                 </span>
-                <Button variant="outline" onclick={() => session.reset()}>
-                    重新开始
+                <Button onclick={() => onGoToReview()}>
+                    <IconCircleArrowUpRightFilled size={14} stroke={1.75} />
+                    查看总览</Button
+                >
+                <Button
+                    variant="destructive"
+                    size="xs"
+                    class={cn(
+                        resetAction.confirming && "ring-destructive/40 ring-2",
+                    )}
+                    onclick={resetAction.trigger}
+                >
+                    <IconRefresh size={14} stroke={1.75} />
+                    {resetAction.confirming ? "再次点击以清空进度" : "重新开始"}
                 </Button>
             {:else}
                 <IconInputCheck size={64} class="text-foreground opacity-30" />
                 <span class="text-foreground text-lg font-bold mb-3">
                     当前题型筛选下所有题目已掌握
                 </span>
-                <Button
-                    variant="outline"
-                    onclick={() => session.setFilter("all")}
-                >
+                <Button onclick={() => session.setFilter("all")}>
+                    <IconFilterMinus size={14} stroke={1.75} />
                     切换到全部题型
                 </Button>
             {/if}
