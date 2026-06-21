@@ -13,6 +13,7 @@ import {
 export const singleLogic: QuestionTypeLogic = {
   id: "single",
   name: "单选题",
+  shortName: "单选",
 
   validate(item, ctx) {
     return validateChoiceQuestion(item, ctx, /* isSingle */ true);

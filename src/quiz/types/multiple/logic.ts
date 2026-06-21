@@ -13,6 +13,7 @@ import {
 export const multipleLogic: QuestionTypeLogic = {
   id: "multiple",
   name: "多选题",
+  shortName: "多选",
 
   validate(item, ctx) {
     return validateChoiceQuestion(item, ctx, /* isSingle */ false);

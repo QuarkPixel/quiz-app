@@ -87,6 +87,9 @@ export interface QuestionTypeLogic {
   /** 中文显示名 */
   name: string;
 
+  /** 简短显示名 */
+  shortName: string;
+
   /**
    * 校验题目的 type-specific 字段（answer、options 等）。
    * 不需要校验 id、type、question 本身——那些在 validateQuestions.ts 通用层做。
