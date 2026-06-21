@@ -7,6 +7,7 @@
  * 副作用（flash / toast）通过构造时注入的 deps 调用，方便单测 mock。
  */
 
+import { writeText } from "clipboard-polyfill";
 import { tick } from "svelte";
 import type {
   ActivePoolItem,
@@ -394,13 +395,7 @@ export class QuizSession {
     });
 
     try {
-      if (
-        typeof navigator === "undefined" ||
-        !navigator.clipboard?.writeText
-      ) {
-        throw new Error("Clipboard API is unavailable.");
-      }
-      await navigator.clipboard.writeText(text);
+      await writeText(text);
       this.setCopyQuestionStatus("copied");
       if (options.announce) {
         this.deps.toast(
@@ -440,13 +435,7 @@ export class QuizSession {
     });
 
     try {
-      if (
-        typeof navigator === "undefined" ||
-        !navigator.clipboard?.writeText
-      ) {
-        throw new Error("Clipboard API is unavailable.");
-      }
-      await navigator.clipboard.writeText(text);
+      await writeText(text);
       if (options.announce) {
         this.deps.toast(
           "题目已复制到剪贴板",

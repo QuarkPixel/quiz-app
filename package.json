@@ -33,6 +33,7 @@
     "@tanstack/svelte-virtual": "^3.13.29",
     "bits-ui": "^2.18.1",
     "bitset": "^5.2.3",
+    "clipboard-polyfill": "^4.1.1",
     "clsx": "^2.1.1",
     "tailwind-merge": "^3.6.0",
     "tailwind-variants": "^3.2.2"

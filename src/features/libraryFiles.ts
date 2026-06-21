@@ -1,3 +1,4 @@
+import { readText } from "clipboard-polyfill";
 import type { ImportBankResult, QuizSource } from "../source/types";
 
 const CLIPBOARD_DISPLAY_NAME = "剪贴板内容";
@@ -149,12 +150,7 @@ function getBankName(source: QuizSource, hash: string): string {
   return source.listBanks?.().find((b) => b.hash === hash)?.name ?? "该题库";
 }
 
-function getClipboardReader(): (() => Promise<string>) | null {
-  if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
-    return null;
-  }
-  return () => navigator.clipboard.readText();
-}
+
 
 function mapImportResult(
   source: QuizSource,
@@ -242,7 +238,7 @@ async function importLibraryFile(
 
 async function importLibraryClipboard(
   source: QuizSource,
-  readText?: () => Promise<string>,
+  readText_?: () => Promise<string>,
 ): Promise<FileImportStep> {
   if (!source.importBank) {
     return {
@@ -251,18 +247,7 @@ async function importLibraryClipboard(
     };
   }
 
-  const reader = readText ?? getClipboardReader();
-  if (reader === null) {
-    return {
-      kind: "done",
-      outcome: failure(
-        new ClipboardImportFailure(
-          CLIPBOARD_DISPLAY_NAME,
-          "无法访问剪贴板，请检查浏览器权限。",
-        ),
-      ),
-    };
-  }
+  const reader = readText_ ?? readText;
 
   let text: string;
   try {
@@ -418,10 +403,10 @@ export class LibraryImportSession {
 
   static async createFromClipboard(
     source: QuizSource,
-    readText?: () => Promise<string>,
+    readText_?: () => Promise<string>,
   ): Promise<LibraryImportSession> {
     const session = new LibraryImportSession(source, 1);
-    session.collectStep(await importLibraryClipboard(source, readText));
+    session.collectStep(await importLibraryClipboard(source, readText_));
     return session;
   }
 

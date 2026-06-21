@@ -5,6 +5,7 @@
     import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
     import AlertToast from "./AlertToast.svelte";
+    import { writeText } from "clipboard-polyfill";
     import Prompt from "../../assets/prompt.md?raw";
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
@@ -54,10 +55,7 @@
 
     async function copyPrompt(): Promise<void> {
         try {
-            if (!navigator.clipboard?.writeText) {
-                throw new Error("Clipboard API is unavailable.");
-            }
-            await navigator.clipboard.writeText(Prompt);
+            await writeText(Prompt);
             toast?.show(
                 "Prompt 已复制",
                 "已复制到剪贴板。把它粘贴到与 AI 的对话中，再在后面附上原始题目内容，让 AI 按格式生成题库 JSON。",

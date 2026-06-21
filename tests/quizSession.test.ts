@@ -13,6 +13,16 @@ import {
 } from "../src/store";
 import { STORAGE_KEY_DEFAULT_SETTINGS } from "../src/config";
 
+const { writeTextMock, readTextMock } = vi.hoisted(() => ({
+  writeTextMock: vi.fn(),
+  readTextMock: vi.fn(),
+}));
+
+vi.mock("clipboard-polyfill", () => ({
+  writeText: writeTextMock,
+  readText: readTextMock,
+}));
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -515,13 +525,13 @@ describe("UI 偏好 toggle", () => {
 // ---------------------------------------------------------------------------
 
 describe("复制当前题目", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    writeTextMock.mockResolvedValue(undefined);
+  });
+
   it("copyCurrentQuestion 写入当前题目文本", async () => {
     const { deps } = makeDeps();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(globalThis.navigator, "clipboard", {
-      value: { writeText },
-      configurable: true,
-    });
 
     const session = new QuizSession(
       makeBank([q("only_q", "judgment", true)]),
@@ -533,16 +543,11 @@ describe("复制当前题目", () => {
 
     expect(result).toBe("copied");
     expect(session.copyQuestionStatus).toBe("copied");
-    expect(writeText).toHaveBeenCalledWith("判断题：\nq-only_q");
+    expect(writeTextMock).toHaveBeenCalledWith("判断题：\nq-only_q");
   });
 
   it("copyCurrentQuestion 快捷键触发时用 toast 反馈", async () => {
     const { deps, toast } = makeDeps();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(globalThis.navigator, "clipboard", {
-      value: { writeText },
-      configurable: true,
-    });
 
     const session = new QuizSession(
       makeBank([q("only_q", "judgment", true)]),
@@ -562,27 +567,18 @@ describe("复制当前题目", () => {
 
   it("copyCurrentQuestion 无当前题时不写剪贴板", async () => {
     const { deps } = makeDeps();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(globalThis.navigator, "clipboard", {
-      value: { writeText },
-      configurable: true,
-    });
 
     const session = new QuizSession(makeBank(), deps);
     const result = await session.copyCurrentQuestion();
 
     expect(result).toBe("unavailable");
     expect(session.copyQuestionStatus).toBe("idle");
-    expect(writeText).not.toHaveBeenCalled();
+    expect(writeTextMock).not.toHaveBeenCalled();
   });
 
   it("copyCurrentQuestion 失败时更新复制状态", async () => {
     const { deps } = makeDeps();
-    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-    Object.defineProperty(globalThis.navigator, "clipboard", {
-      value: { writeText },
-      configurable: true,
-    });
+    writeTextMock.mockRejectedValue(new Error("denied"));
 
     const session = new QuizSession(
       makeBank([q("only_q", "judgment", true)]),
@@ -601,18 +597,19 @@ describe("复制当前题目", () => {
 // ---------------------------------------------------------------------------
 
 describe("导出 / 导入", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    writeTextMock.mockResolvedValue(undefined);
+    readTextMock.mockResolvedValue("");
+  });
+
   it("exportProgress 成功后 exportStatus → copied，toast 调用", async () => {
     const { deps, toast } = makeDeps();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(globalThis.navigator, "clipboard", {
-      value: { writeText, readText: vi.fn() },
-      configurable: true,
-    });
 
     const session = new QuizSession(makeBank(), deps);
     await session.exportProgress();
     expect(session.exportStatus).toBe("copied");
-    expect(writeText).toHaveBeenCalled();
+    expect(writeTextMock).toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith(
       "进度已复制到剪贴板",
       expect.any(String),
@@ -622,11 +619,7 @@ describe("导出 / 导入", () => {
 
   it("exportProgress 失败 → exportStatus error，toast 报错", async () => {
     const { deps, toast } = makeDeps();
-    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
-    Object.defineProperty(globalThis.navigator, "clipboard", {
-      value: { writeText, readText: vi.fn() },
-      configurable: true,
-    });
+    writeTextMock.mockRejectedValue(new Error("denied"));
 
     const session = new QuizSession(makeBank(), deps);
     await session.exportProgress();
@@ -640,10 +633,8 @@ describe("导出 / 导入", () => {
 
   it("startImport 失败 → toast 报错，importConfirmText 不变", async () => {
     const { deps, toast } = makeDeps();
-    Object.defineProperty(globalThis.navigator, "clipboard", {
-      value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
-      configurable: true,
-    });
+    readTextMock.mockRejectedValue(new Error("denied"));
+
     const session = new QuizSession(makeBank(), deps);
     await session.startImport();
     expect(toast).toHaveBeenCalledWith(

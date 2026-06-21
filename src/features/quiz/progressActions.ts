@@ -1,3 +1,4 @@
+import { writeText, readText } from "clipboard-polyfill";
 import { exportProgress, importProgress } from "../importExport";
 import type { Question, RuntimeState, StoredState } from "../../types";
 
@@ -10,7 +11,7 @@ export async function copyProgressToClipboard(
 ): Promise<CopyResult> {
   try {
     const encoded = await exportProgress(state, hash, questions);
-    await navigator.clipboard.writeText(encoded);
+    await writeText(encoded);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "导出失败" };
@@ -24,7 +25,7 @@ export type ReadClipboardResult =
 export async function readProgressFromClipboard(): Promise<ReadClipboardResult> {
   let text: string;
   try {
-    text = await navigator.clipboard.readText();
+    text = await readText();
   } catch {
     return { ok: false, error: "无法访问剪贴板，请检查浏览器权限。" };
   }
