@@ -18,7 +18,7 @@
     import QuestionOrder from "./QuestionOrder.svelte";
     import SoundSettings from "$sound-settings";
     import { QUESTION_TYPES } from "@/quiz/types/registry";
-    import { IconInfoCircleFilled } from "@tabler/icons-svelte";
+    import { IconInfoCircle } from "@tabler/icons-svelte";
 
     interface Props {
         open?: boolean;
@@ -127,7 +127,7 @@
                                         class="text-muted-foreground hover:text-foreground inline-flex items-center justify-center"
                                         aria-label="关于自动提交"
                                     >
-                                        <IconInfoCircleFilled
+                                        <IconInfoCircle
                                             size={14}
                                             stroke={1.5}
                                         />
