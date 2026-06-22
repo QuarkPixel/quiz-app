@@ -115,3 +115,83 @@ describe("judgmentType.getCorrectChoiceLetters", () => {
     expect(judgmentType.getCorrectChoiceLetters(q, [])).toBe("");
   });
 });
+
+describe("judgmentType.getKeyboardAction", () => {
+  const q: Question = { id: "j1", type: "judgment", question: "?", answer: true };
+  const baseContext = {
+    question: q,
+    showResult: false,
+    autoSubmitOnSelection: true,
+    shuffledOptions: [],
+    selectedAnswers: [],
+    blankAnswerInputs: [],
+  };
+
+  it("A/B 分别映射正确/错误，并默认自动提交", () => {
+    expect(
+      judgmentType.getKeyboardAction(baseContext, {
+        key: "a",
+        code: "KeyA",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [0],
+      autoSubmit: true,
+    });
+
+    expect(
+      judgmentType.getKeyboardAction(baseContext, {
+        key: "b",
+        code: "KeyB",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [1],
+      autoSubmit: true,
+    });
+  });
+
+  it("1/2 也分别映射正确/错误", () => {
+    expect(
+      judgmentType.getKeyboardAction(baseContext, {
+        key: "1",
+        code: "Digit1",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [0],
+      autoSubmit: true,
+    });
+
+    expect(
+      judgmentType.getKeyboardAction(baseContext, {
+        key: "2",
+        code: "Digit2",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [1],
+      autoSubmit: true,
+    });
+  });
+
+  it("结果页 Enter → 下一题", () => {
+    expect(
+      judgmentType.getKeyboardAction(
+        {
+          ...baseContext,
+          showResult: true,
+        },
+        {
+          key: "enter",
+          code: "Enter",
+          scope: "global",
+        },
+      ),
+    ).toEqual({ kind: "next" });
+  });
+});

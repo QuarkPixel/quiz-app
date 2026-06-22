@@ -1,6 +1,7 @@
 import type { Question } from "../../../types";
 import { matchAnswer } from "../../../features/quiz/answerMatcher";
 import type { QuestionTypeLogic } from "../types";
+import { submitOrNextAction } from "../_choice";
 
 /**
  * 填空题的纯逻辑（不含 icon / svelte 组件）。详见 judgment/logic.ts 头注释。
@@ -58,5 +59,10 @@ export const blankLogic: QuestionTypeLogic = {
 
   getCorrectChoiceLetters() {
     return "";
+  },
+
+  getKeyboardAction(context, event) {
+    if (event.scope !== "global" && event.scope !== "blank-input") return null;
+    return submitOrNextAction(context.showResult, event);
   },
 };

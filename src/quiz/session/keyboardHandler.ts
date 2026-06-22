@@ -11,6 +11,7 @@ import {
   isInteractiveTarget,
 } from "@/features/quiz";
 import { SHORTCUTS } from "@/config";
+import { QUESTION_TYPES_LOGIC } from "@/quiz/types/registry-logic";
 import type { QuizSession } from "./QuizSession.svelte";
 
 export interface KeyboardUiActions {
@@ -83,8 +84,6 @@ export function createKeyboardHandler(
       return;
     }
 
-    if (event.code !== "Space" && event.code !== "Enter") return;
-
     // L2: 设置 / 总览 dialog 内 — Enter 让输入框 blur 触发 onchange
     if (inDialog) {
       if (event.code === "Enter" && isEditingTarget(event)) {
@@ -93,23 +92,52 @@ export function createKeyboardHandler(
       return;
     }
 
-    // L1: 填空题输入框 — Enter 提交 / 下一题（Space 不抢，让浏览器打空格）
-    if (inBlankInput) {
-      if (event.code !== "Enter") return;
-      event.preventDefault();
-      if (session.showResult) session.selectNext();
-      else session.submit();
+    if (inBlankInput && event.code === "Space") return;
+
+    if (isEditingTarget(event) && !inBlankInput) return;
+
+    const question = session.currentQuestion;
+    if (!question) return;
+
+    const action = QUESTION_TYPES_LOGIC[question.type].getKeyboardAction(
+      {
+        question,
+        showResult: session.showResult,
+        autoSubmitOnSelection: session.appState.settings.autoSubmitOnSelection,
+        shuffledOptions: session.shuffledOptions,
+        selectedAnswers: session.selectedAnswers,
+        blankAnswerInputs: session.blankAnswerInputs,
+      },
+      {
+        key: event.key.toLowerCase(),
+        code: event.code,
+        scope: inBlankInput ? "blank-input" : "global",
+      },
+    );
+    if (!action) return;
+
+    // Space / Enter 在其他原生 / ARIA 交互目标上保留默认行为。
+    if (
+      action.kind !== "set-selected-answers" &&
+      !inBlankInput &&
+      isInteractiveTarget(event)
+    ) {
       return;
     }
 
-    // 其他原生 / ARIA 交互目标：保留默认键盘行为。
-    if (isInteractiveTarget(event)) return;
-
-    // L3: 全局
     event.preventDefault();
-    if (session.showResult) {
+    if (action.kind === "next") {
       session.selectNext();
-    } else {
+      return;
+    }
+
+    if (action.kind === "submit") {
+      session.submit();
+      return;
+    }
+
+    session.selectedAnswers = action.value;
+    if (action.autoSubmit) {
       session.submit();
     }
   };

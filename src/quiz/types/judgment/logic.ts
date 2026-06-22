@@ -1,5 +1,6 @@
 import type { Question } from "../../../types";
 import type { QuestionTypeLogic } from "../types";
+import { submitOrNextAction } from "../_choice";
 
 /**
  * 判断题的纯逻辑（不含 icon / svelte 组件）。
@@ -52,5 +53,31 @@ export const judgmentLogic: QuestionTypeLogic = {
 
   getCorrectChoiceLetters() {
     return "";
+  },
+
+  getKeyboardAction(context, event) {
+    if (event.scope !== "global") return null;
+
+    const submitAction = submitOrNextAction(context.showResult, event);
+    if (submitAction) return submitAction;
+
+    if (context.showResult) return null;
+
+    if (event.key === "a" || event.key === "1") {
+      return {
+        kind: "set-selected-answers",
+        value: [0],
+        autoSubmit: context.autoSubmitOnSelection,
+      };
+    }
+    if (event.key === "b" || event.key === "2") {
+      return {
+        kind: "set-selected-answers",
+        value: [1],
+        autoSubmit: context.autoSubmitOnSelection,
+      };
+    }
+
+    return null;
   },
 };

@@ -28,6 +28,7 @@ export interface QuestionInputProps {
   question: Question;
   showResult: boolean;
   isCorrect: boolean;
+  autoSubmitOnSelection: boolean;
   shuffledOptions: ShuffledOption[];
   selectedAnswers: number[];
   blankAnswerInputs: string[];
@@ -48,6 +49,40 @@ export interface QuestionReviewProps {
 export interface QuestionCopyContext {
   showResult: boolean;
   isCorrect: boolean;
+  shuffledOptions: ShuffledOption[];
+  selectedAnswers: number[];
+  blankAnswerInputs: string[];
+}
+
+/** 题型层可见的按键信息。故意不直接暴露 DOM KeyboardEvent，保持纯逻辑可测。 */
+export interface QuestionKeyboardEvent {
+  /** `event.key.toLowerCase()` 的结果，例如 `"a"` / `"enter"` / `" "` */
+  key: string;
+  /** `event.code`，用于稳定识别 `Space` / `Enter` */
+  code: string;
+  /**
+   * 按键发生的语义区域。
+   * - `global`：题目区域的常规全局快捷键
+   * - `blank-input`：填空题输入框内
+   */
+  scope: "global" | "blank-input";
+}
+
+/** 题型层识别键盘后返回的结构化动作。 */
+export type QuestionKeyboardAction =
+  | { kind: "submit" }
+  | { kind: "next" }
+  | {
+      kind: "set-selected-answers";
+      value: number[];
+      autoSubmit?: boolean;
+    };
+
+/** 当前答题状态中，题型级键盘逻辑需要知道的最小上下文。 */
+export interface QuestionKeyboardContext {
+  question: Question;
+  showResult: boolean;
+  autoSubmitOnSelection: boolean;
   shuffledOptions: ShuffledOption[];
   selectedAnswers: number[];
   blankAnswerInputs: string[];
@@ -123,4 +158,18 @@ export interface QuestionTypeLogic {
     question: Question,
     shuffledOptions: ShuffledOption[],
   ): string;
+
+  /**
+   * 题型自己的快捷键识别入口。
+   *
+   * 这里只负责把“某个键”解释成“某个纯逻辑动作”，不直接碰 session / DOM。
+   * 例如：
+   * - single: `A` → 选择当前 A 选项并自动提交
+   * - multiple: `B` → 切换当前 B 选项
+   * - blank: 填空输入框内 `Enter` → 提交或下一题
+   */
+  getKeyboardAction(
+    context: QuestionKeyboardContext,
+    event: QuestionKeyboardEvent,
+  ): QuestionKeyboardAction | null;
 }

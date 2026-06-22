@@ -200,3 +200,97 @@ describe("singleType.getCorrectChoiceLetters", () => {
     expect(singleType.getCorrectChoiceLetters(q, shuffled)).toBe("B");
   });
 });
+
+describe("singleType.getKeyboardAction", () => {
+  const q: Question = {
+    id: "s1",
+    type: "single",
+    question: "?",
+    options: [{ text: "甲" }, { text: "乙" }, { text: "丙" }],
+    answer: [1],
+  };
+  const baseContext = {
+    question: q,
+    showResult: false,
+    autoSubmitOnSelection: true,
+    shuffledOptions: [
+      { text: "丙", originalIndex: 2 },
+      { text: "甲", originalIndex: 0 },
+      { text: "乙", originalIndex: 1 },
+    ],
+    selectedAnswers: [],
+    blankAnswerInputs: [],
+  };
+
+  it("A 键按当前打乱顺序选择 A 选项并自动提交", () => {
+    expect(
+      singleType.getKeyboardAction(baseContext, {
+        key: "a",
+        code: "KeyA",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [2],
+      autoSubmit: true,
+    });
+  });
+
+  it("关闭自动提交后只返回选中动作", () => {
+    expect(
+      singleType.getKeyboardAction(
+        {
+          ...baseContext,
+          autoSubmitOnSelection: false,
+        },
+        {
+          key: "b",
+          code: "KeyB",
+          scope: "global",
+        },
+      ),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [0],
+      autoSubmit: false,
+    });
+  });
+
+  it("数字键按当前显示顺序选择选项", () => {
+    expect(
+      singleType.getKeyboardAction(baseContext, {
+        key: "2",
+        code: "Digit2",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [0],
+      autoSubmit: true,
+    });
+  });
+
+  it("Space / Enter 走提交或下一题", () => {
+    expect(
+      singleType.getKeyboardAction(baseContext, {
+        key: " ",
+        code: "Space",
+        scope: "global",
+      }),
+    ).toEqual({ kind: "submit" });
+
+    expect(
+      singleType.getKeyboardAction(
+        {
+          ...baseContext,
+          showResult: true,
+        },
+        {
+          key: "enter",
+          code: "Enter",
+          scope: "global",
+        },
+      ),
+    ).toEqual({ kind: "next" });
+  });
+});

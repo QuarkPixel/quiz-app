@@ -138,3 +138,83 @@ describe("blankType.getCorrectChoiceLetters", () => {
     expect(blankType.getCorrectChoiceLetters(q, [])).toBe("");
   });
 });
+
+describe("blankType.getKeyboardAction", () => {
+  const q: Question = { id: "b1", type: "blank", question: "?", answer: "hello" };
+  const baseContext = {
+    question: q,
+    showResult: false,
+    autoSubmitOnSelection: true,
+    shuffledOptions: [],
+    selectedAnswers: [],
+    blankAnswerInputs: ["hello"],
+  };
+
+  it("未聚焦输入框时，Space / Enter 都可提交", () => {
+    expect(
+      blankType.getKeyboardAction(baseContext, {
+        key: " ",
+        code: "Space",
+        scope: "global",
+      }),
+    ).toEqual({ kind: "submit" });
+
+    expect(
+      blankType.getKeyboardAction(baseContext, {
+        key: "enter",
+        code: "Enter",
+        scope: "global",
+      }),
+    ).toEqual({ kind: "submit" });
+  });
+
+  it("题型层不关心焦点位置，Space / Enter 都视作提交", () => {
+    expect(
+      blankType.getKeyboardAction(baseContext, {
+        key: " ",
+        code: "Space",
+        scope: "blank-input",
+      }),
+    ).toEqual({ kind: "submit" });
+
+    expect(
+      blankType.getKeyboardAction(baseContext, {
+        key: "enter",
+        code: "Enter",
+        scope: "blank-input",
+      }),
+    ).toEqual({ kind: "submit" });
+  });
+
+  it("设置关闭时，填空题仍然由 Enter 提交", () => {
+    expect(
+      blankType.getKeyboardAction(
+        {
+          ...baseContext,
+          autoSubmitOnSelection: false,
+        },
+        {
+          key: "enter",
+          code: "Enter",
+          scope: "blank-input",
+        },
+      ),
+    ).toEqual({ kind: "submit" });
+  });
+
+  it("结果页 Enter → 下一题", () => {
+    expect(
+      blankType.getKeyboardAction(
+        {
+          ...baseContext,
+          showResult: true,
+        },
+        {
+          key: "enter",
+          code: "Enter",
+          scope: "blank-input",
+        },
+      ),
+    ).toEqual({ kind: "next" });
+  });
+});

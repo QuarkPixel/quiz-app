@@ -70,6 +70,7 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
     filterType: "single",
     settings: {
       autoNextOnCorrect: true,
+      autoSubmitOnSelection: true,
       activePoolSize: 20,
       correctStreakToMaster: 3,
       correctStreakAfterMistake: 5,
@@ -179,7 +180,7 @@ function compact(overrides: Partial<{
     overrides.settings ?? [0, 10, 3, 4, "random"],
     overrides.ui ?? [0, 0],
   ];
-  return version === 5 ? [...base, overrides.masteredMistakes ?? "0"] : base;
+  return version >= 5 ? [...base, overrides.masteredMistakes ?? "0"] : base;
 }
 
 describe("exportProgress / importProgress round-trip", () => {
@@ -207,6 +208,7 @@ describe("exportProgress / importProgress round-trip", () => {
       filterType: "all",
       settings: {
         autoNextOnCorrect: false,
+        autoSubmitOnSelection: true,
         activePoolSize: 10,
         correctStreakToMaster: 3,
         correctStreakAfterMistake: 4,
@@ -234,7 +236,7 @@ describe("bitmap / index 编码", () => {
     const payload = await decodePayload(encoded);
 
     expect(payload).toEqual([
-      5,
+      6,
       QUESTIONS.length,
       "3",
       [
@@ -243,7 +245,7 @@ describe("bitmap / index 编码", () => {
       ],
       8,
       1,
-      [1, 20, 3, 5, "sequential", 0],
+      [1, 1, 20, 3, 5, "sequential", 0],
       [0, 0],
       "2",
     ]);
@@ -336,6 +338,7 @@ describe("filterType / settings / ui round-trip", () => {
     const state = makeState({
       settings: {
         autoNextOnCorrect: false,
+        autoSubmitOnSelection: true,
         activePoolSize: 15,
         correctStreakToMaster: 2,
         correctStreakAfterMistake: 6,
@@ -352,6 +355,7 @@ describe("filterType / settings / ui round-trip", () => {
     const state = makeState({
       settings: {
         autoNextOnCorrect: true,
+        autoSubmitOnSelection: true,
         activePoolSize: 20,
         correctStreakToMaster: 3,
         correctStreakAfterMistake: 5,
@@ -363,7 +367,15 @@ describe("filterType / settings / ui round-trip", () => {
     const payload = await decodePayload(encoded);
     const restored = await importProgress(encoded, HASH, QUESTIONS);
 
-    expect((payload as unknown[])[6]).toEqual([1, 20, 3, 5, "sequential", 1]);
+    expect((payload as unknown[])[6]).toEqual([
+      1,
+      1,
+      20,
+      3,
+      5,
+      "sequential",
+      1,
+    ]);
     expect(restored.settings.soundEnabled).toBe(true);
   });
 
@@ -373,6 +385,7 @@ describe("filterType / settings / ui round-trip", () => {
     );
     const restored = await importProgress(encoded, HASH, QUESTIONS);
 
+    expect(restored.settings.autoSubmitOnSelection).toBe(true);
     expect(restored.settings.soundEnabled).toBe(false);
   });
 
@@ -382,7 +395,26 @@ describe("filterType / settings / ui round-trip", () => {
     );
     const restored = await importProgress(encoded, HASH, QUESTIONS);
 
+    expect(restored.settings.autoSubmitOnSelection).toBe(true);
     expect(restored.settings.soundEnabled).toBe(false);
+  });
+
+  it("新格式中的 autoSubmitOnSelection 会 round-trip", async () => {
+    const state = makeState({
+      settings: {
+        autoNextOnCorrect: true,
+        autoSubmitOnSelection: false,
+        activePoolSize: 20,
+        correctStreakToMaster: 3,
+        correctStreakAfterMistake: 5,
+        selectionMode: "sequential",
+        soundEnabled: true,
+      },
+    });
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.settings.autoSubmitOnSelection).toBe(false);
   });
 
   it("ui 段 round-trip：progressFocused=true, showPool=true", async () => {

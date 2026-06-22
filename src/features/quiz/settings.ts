@@ -108,8 +108,18 @@ function applyThresholds(
 }
 
 export function sanitizeUserSettings(settings: UserSettings): UserSettings {
+  const legacyAutoSubmitOnAnswer = (settings as UserSettings & {
+    autoSubmitOnAnswer?: unknown;
+  }).autoSubmitOnAnswer;
+
   return {
     autoNextOnCorrect: !!settings.autoNextOnCorrect,
+    autoSubmitOnSelection:
+      typeof settings.autoSubmitOnSelection === "boolean"
+        ? settings.autoSubmitOnSelection
+        : typeof legacyAutoSubmitOnAnswer === "boolean"
+          ? legacyAutoSubmitOnAnswer
+        : true,
     activePoolSize: toBoundedInt(
       settings.activePoolSize,
       ACTIVE_POOL_SIZE,

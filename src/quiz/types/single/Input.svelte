@@ -6,6 +6,7 @@
     let {
         question,
         showResult,
+        autoSubmitOnSelection,
         shuffledOptions,
         selectedAnswers,
         onSelectedAnswersChange,
@@ -16,7 +17,9 @@
         if (showResult) return;
         onSelectedAnswersChange?.([originalIndex]);
         blurPointerActivatedButton(event);
-        onAutoSubmit?.();
+        if (autoSubmitOnSelection) {
+            onAutoSubmit?.();
+        }
     }
 </script>
 

@@ -39,6 +39,8 @@ export interface ActivePoolItem {
 export interface UserSettings {
   /** 答题正确时自动下一题 */
   autoNextOnCorrect: boolean;
+  /** 单选 / 判断题选择答案后是否自动提交 */
+  autoSubmitOnSelection: boolean;
   /** 活动题目池大小 */
   activePoolSize: number;
   /** 首次掌握所需连续正确次数 */

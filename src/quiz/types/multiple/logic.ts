@@ -4,6 +4,8 @@ import {
   choiceLetters,
   formatChoiceAnswerText,
   formatChoiceCopyText,
+  getChoiceAnswerIndexForKey,
+  submitOrNextAction,
   validateChoiceQuestion,
 } from "../_choice";
 
@@ -38,5 +40,28 @@ export const multipleLogic: QuestionTypeLogic = {
 
   getCorrectChoiceLetters(question: Question, shuffledOptions) {
     return choiceLetters(question, shuffledOptions);
+  },
+
+  getKeyboardAction(context, event) {
+    if (event.scope !== "global") return null;
+
+    const submitAction = submitOrNextAction(context.showResult, event);
+    if (submitAction) return submitAction;
+
+    if (context.showResult) return null;
+
+    const toggled = getChoiceAnswerIndexForKey(
+      context.question,
+      context.shuffledOptions,
+      event.key,
+    );
+    if (toggled === null) return null;
+
+    return {
+      kind: "set-selected-answers",
+      value: context.selectedAnswers.includes(toggled)
+        ? context.selectedAnswers.filter((index) => index !== toggled)
+        : [...context.selectedAnswers, toggled],
+    };
   },
 };

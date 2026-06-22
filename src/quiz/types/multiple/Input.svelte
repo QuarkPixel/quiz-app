@@ -6,6 +6,7 @@
     let {
         question,
         showResult,
+        autoSubmitOnSelection: _autoSubmitOnSelection,
         shuffledOptions,
         selectedAnswers,
         onSelectedAnswersChange,

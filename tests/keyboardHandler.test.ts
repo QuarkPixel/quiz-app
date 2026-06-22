@@ -5,12 +5,59 @@ import {
 } from "../src/quiz/session/keyboardHandler";
 import { SHORTCUTS } from "../src/config";
 import type { QuizSession } from "../src/quiz/session/QuizSession.svelte";
+import type { Question } from "../src/types";
 
 // QuizSession 是 class，但 keyboardHandler 只用其上的几个方法 + showResult 字段。
 // 用最小 stub 模拟，避免引入 svelte 运行时。
-function makeSessionStub(showResult = false) {
+function makeQuestion(type: Question["type"] = "single"): Question {
+  if (type === "blank") {
+    return {
+      id: "b1",
+      type,
+      question: "blank",
+      answer: "hello",
+    };
+  }
+  if (type === "judgment") {
+    return {
+      id: "j1",
+      type,
+      question: "judgment",
+      answer: true,
+    };
+  }
+  return {
+    id: "s1",
+    type,
+    question: "choice",
+    options: [{ text: "A" }, { text: "B" }, { text: "C" }],
+    answer: type === "multiple" ? [0, 2] : [1],
+  };
+}
+
+function makeSessionStub(
+  showResult = false,
+  options: {
+    questionType?: Question["type"];
+    autoSubmitOnSelection?: boolean;
+    selectedAnswers?: number[];
+  } = {},
+) {
   return {
     showResult,
+    currentQuestion: makeQuestion(options.questionType),
+    shuffledOptions: [
+      { text: "A", originalIndex: 0 },
+      { text: "B", originalIndex: 1 },
+      { text: "C", originalIndex: 2 },
+    ],
+    selectedAnswers: options.selectedAnswers ?? [],
+    blankAnswerInputs: [""],
+    appState: {
+      settings: {
+        autoSubmitOnSelection: options.autoSubmitOnSelection ?? true,
+      },
+    },
     submit: vi.fn(),
     selectNext: vi.fn(),
     copyCurrentQuestion: vi.fn(),
@@ -265,6 +312,25 @@ describe("Space / Enter 全局快捷键", () => {
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.selectNext).not.toHaveBeenCalled();
   });
+
+  it("填空题未聚焦输入框时按 Space → submit", () => {
+    const session = makeSessionStub(false, { questionType: "blank" });
+    const ui = makeUiStub();
+    createKeyboardHandler(session, ui)(
+      mkEvent({ code: "Space", key: " " }),
+    );
+    expect(session.submit).toHaveBeenCalledOnce();
+    expect(session.selectNext).not.toHaveBeenCalled();
+  });
+
+  it("填空题上的 Enter → submit", () => {
+    const session = makeSessionStub(false, { questionType: "blank" });
+    const ui = makeUiStub();
+    createKeyboardHandler(session, ui)(
+      mkEvent({ code: "Enter", key: "Enter" }),
+    );
+    expect(session.submit).toHaveBeenCalledOnce();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -289,5 +355,136 @@ describe("Dialog 内 Enter 行为", () => {
     expect(blurSpy).toHaveBeenCalled();
     expect(session.submit).not.toHaveBeenCalled();
     document.body.removeChild(dialog);
+  });
+});
+
+describe("题型级字母快捷键", () => {
+  it("单选题按 A → 选中 A 并提交", () => {
+    const session = makeSessionStub(false, { questionType: "single" });
+    const ui = makeUiStub();
+
+    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyA", key: "a" }));
+
+    expect(session.selectedAnswers).toEqual([0]);
+    expect(session.submit).toHaveBeenCalledOnce();
+  });
+
+  it("单选题关闭自动提交后按 B → 只选中不提交", () => {
+    const session = makeSessionStub(false, {
+      questionType: "single",
+      autoSubmitOnSelection: false,
+    });
+    const ui = makeUiStub();
+
+    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
+
+    expect(session.selectedAnswers).toEqual([1]);
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("多选题按 B → 切换 B 选项", () => {
+    const session = makeSessionStub(false, {
+      questionType: "multiple",
+      selectedAnswers: [0],
+    });
+    const ui = makeUiStub();
+
+    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
+    expect(session.selectedAnswers).toEqual([0, 1]);
+    expect(session.submit).not.toHaveBeenCalled();
+
+    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyA", key: "a" }));
+    expect(session.selectedAnswers).toEqual([1]);
+  });
+
+  it("单选题按 2 → 选中第 2 个选项并提交", () => {
+    const session = makeSessionStub(false, { questionType: "single" });
+    const ui = makeUiStub();
+
+    createKeyboardHandler(session, ui)(mkEvent({ code: "Digit2", key: "2" }));
+
+    expect(session.selectedAnswers).toEqual([1]);
+    expect(session.submit).toHaveBeenCalledOnce();
+  });
+
+  it("多选题按 2 → 切换第 2 个选项", () => {
+    const session = makeSessionStub(false, {
+      questionType: "multiple",
+      selectedAnswers: [0],
+    });
+    const ui = makeUiStub();
+
+    createKeyboardHandler(session, ui)(mkEvent({ code: "Digit2", key: "2" }));
+
+    expect(session.selectedAnswers).toEqual([0, 1]);
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("判断题按 B → 选中错误并提交", () => {
+    const session = makeSessionStub(false, { questionType: "judgment" });
+    const ui = makeUiStub();
+
+    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
+
+    expect(session.selectedAnswers).toEqual([1]);
+    expect(session.submit).toHaveBeenCalledOnce();
+  });
+
+  it("判断题按 1 / 2 → 分别对应正确 / 错误", () => {
+    const session = makeSessionStub(false, { questionType: "judgment" });
+    const ui = makeUiStub();
+    const handler = createKeyboardHandler(session, ui);
+
+    handler(mkEvent({ code: "Digit1", key: "1" }));
+    expect(session.selectedAnswers).toEqual([0]);
+
+    handler(mkEvent({ code: "Digit2", key: "2" }));
+    expect(session.selectedAnswers).toEqual([1]);
+  });
+
+  it("在普通输入框里按 A → 不触发题型快捷键", () => {
+    const session = makeSessionStub(false, { questionType: "single" });
+    const ui = makeUiStub();
+    const input = document.createElement("input");
+
+    createKeyboardHandler(session, ui)(
+      mkEvent({ code: "KeyA", key: "a", target: input }),
+    );
+
+    expect(session.selectedAnswers).toEqual([]);
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("填空输入框里关闭选择自动提交后按 Enter → 仍提交", () => {
+    const session = makeSessionStub(false, {
+      questionType: "blank",
+      autoSubmitOnSelection: false,
+    });
+    const ui = makeUiStub();
+    const input = document.createElement("input");
+    input.classList.add("blank-input");
+
+    createKeyboardHandler(session, ui)(
+      mkEvent({ code: "Enter", key: "Enter", target: input }),
+    );
+
+    expect(session.submit).toHaveBeenCalledOnce();
+    expect(session.selectNext).not.toHaveBeenCalled();
+  });
+
+  it("填空输入框里按 Space → 不提交", () => {
+    const session = makeSessionStub(false, {
+      questionType: "blank",
+    });
+    const ui = makeUiStub();
+    const input = document.createElement("input");
+    input.classList.add("blank-input");
+
+    createKeyboardHandler(session, ui)(
+      mkEvent({ code: "Space", key: " ", target: input }),
+    );
+
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(session.selectNext).not.toHaveBeenCalled();
   });
 });

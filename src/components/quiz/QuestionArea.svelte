@@ -78,6 +78,9 @@
                     question={session.currentQuestion}
                     showResult={session.showResult}
                     isCorrect={session.isCorrect}
+                    autoSubmitOnSelection={
+                        session.appState.settings.autoSubmitOnSelection
+                    }
                     shuffledOptions={session.shuffledOptions}
                     selectedAnswers={session.selectedAnswers}
                     blankAnswerInputs={session.blankAnswerInputs}

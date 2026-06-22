@@ -1,5 +1,10 @@
 import type { Question } from "../../types";
-import type { QuestionCopyContext, ShuffledOption } from "./types";
+import type {
+  QuestionCopyContext,
+  QuestionKeyboardAction,
+  QuestionKeyboardEvent,
+  ShuffledOption,
+} from "./types";
 
 /**
  * 选择题（single / multiple）共享的校验逻辑。
@@ -86,6 +91,39 @@ function displayOptions(
       originalIndex,
     })) ?? []
   );
+}
+
+export function submitOrNextAction(
+  showResult: boolean,
+  event: QuestionKeyboardEvent,
+): QuestionKeyboardAction | null {
+  if (event.code !== "Space" && event.code !== "Enter") {
+    return null;
+  }
+
+  return showResult ? { kind: "next" } : { kind: "submit" };
+}
+
+export function getChoiceAnswerIndexForKey(
+  question: Question,
+  shuffledOptions: ShuffledOption[],
+  key: string,
+): number | null {
+  const normalized = key.trim().toLowerCase();
+  const options = displayOptions(question, shuffledOptions);
+  let position = -1;
+
+  if (/^[a-z]$/.test(normalized)) {
+    position = normalized.charCodeAt(0) - 97;
+  } else if (/^[1-9]$/.test(normalized)) {
+    position = Number(normalized) - 1;
+  } else {
+    return null;
+  }
+
+  if (position < 0 || position >= options.length) return null;
+
+  return options[position]?.originalIndex ?? null;
 }
 
 function copyChoiceLetter(position: number): string {

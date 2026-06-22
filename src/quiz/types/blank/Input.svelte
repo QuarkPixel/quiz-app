@@ -7,6 +7,7 @@
         question,
         showResult,
         isCorrect,
+        autoSubmitOnSelection: _autoSubmitOnSelection,
         blankAnswerInputs,
         onBlankAnswerInputsChange,
     }: QuestionInputProps = $props();

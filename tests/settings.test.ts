@@ -74,6 +74,21 @@ describe("sanitizeUserSettings / autoNextOnCorrect", () => {
   });
 });
 
+describe("sanitizeUserSettings / autoSubmitOnSelection", () => {
+  it("缺失时默认开启，显式 false 时保留 false", () => {
+    expect(
+      sanitizeUserSettings(
+        makeSettings({ autoSubmitOnSelection: undefined as never }),
+      ).autoSubmitOnSelection,
+    ).toBe(true);
+
+    expect(
+      sanitizeUserSettings(makeSettings({ autoSubmitOnSelection: false }))
+        .autoSubmitOnSelection,
+    ).toBe(false);
+  });
+});
+
 describe("sanitizeUserSettings / activePoolSize", () => {
   it("低于下界 → 钳到 5", () => {
     const result = sanitizeUserSettings(makeSettings({ activePoolSize: 2 }));

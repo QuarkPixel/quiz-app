@@ -38,6 +38,7 @@ export interface SaveStateOptions {
 export function createDefaultSettings(): UserSettings {
   return {
     autoNextOnCorrect: false,
+    autoSubmitOnSelection: true,
     activePoolSize: ACTIVE_POOL_SIZE,
     correctStreakToMaster: CORRECT_STREAK_TO_MASTER,
     correctStreakAfterMistake: CORRECT_STREAK_AFTER_MISTAKE,

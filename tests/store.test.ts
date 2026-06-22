@@ -57,6 +57,7 @@ describe("createDefaultSettings", () => {
     expect(s.correctStreakToMaster).toBe(CORRECT_STREAK_TO_MASTER);
     expect(s.correctStreakAfterMistake).toBe(CORRECT_STREAK_AFTER_MISTAKE);
     expect(s.autoNextOnCorrect).toBe(false);
+    expect(s.autoSubmitOnSelection).toBe(true);
     expect(s.selectionMode).toBe("random");
   });
 
@@ -90,6 +91,7 @@ describe("loadDefaultSettings", () => {
     const settings = loadDefaultSettings();
 
     expect(settings.autoNextOnCorrect).toBe(true);
+    expect(settings.autoSubmitOnSelection).toBe(true);
     expect(settings.soundEnabled).toBe(true);
     expect(settings.activePoolSize).toBe(ACTIVE_POOL_SIZE);
     expect(settings.correctStreakToMaster).toBe(CORRECT_STREAK_TO_MASTER);
@@ -191,6 +193,7 @@ describe("loadStoredState", () => {
 
     expect(state.settings).toEqual({
       autoNextOnCorrect: true,
+      autoSubmitOnSelection: true,
       activePoolSize: 42,
       correctStreakToMaster: 5,
       correctStreakAfterMistake: 8,

@@ -215,3 +215,86 @@ describe("multipleType.getCorrectChoiceLetters", () => {
     expect(multipleType.getCorrectChoiceLetters(q, shuffled)).toBe("AC");
   });
 });
+
+describe("multipleType.getKeyboardAction", () => {
+  const q: Question = {
+    id: "m1",
+    type: "multiple",
+    question: "?",
+    options: [{ text: "甲" }, { text: "乙" }, { text: "丙" }],
+    answer: [0, 2],
+  };
+  const baseContext = {
+    question: q,
+    showResult: false,
+    autoSubmitOnSelection: true,
+    shuffledOptions: [
+      { text: "乙", originalIndex: 1 },
+      { text: "甲", originalIndex: 0 },
+      { text: "丙", originalIndex: 2 },
+    ],
+    selectedAnswers: [1],
+    blankAnswerInputs: [],
+  };
+
+  it("字母键切换当前顺序对应的选项", () => {
+    expect(
+      multipleType.getKeyboardAction(baseContext, {
+        key: "a",
+        code: "KeyA",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [],
+    });
+
+    expect(
+      multipleType.getKeyboardAction(baseContext, {
+        key: "b",
+        code: "KeyB",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [1, 0],
+    });
+  });
+
+  it("数字键按当前显示顺序切换选项", () => {
+    expect(
+      multipleType.getKeyboardAction(baseContext, {
+        key: "3",
+        code: "Digit3",
+        scope: "global",
+      }),
+    ).toEqual({
+      kind: "set-selected-answers",
+      value: [1, 2],
+    });
+  });
+
+  it("Space / Enter 仍走提交或下一题", () => {
+    expect(
+      multipleType.getKeyboardAction(baseContext, {
+        key: " ",
+        code: "Space",
+        scope: "global",
+      }),
+    ).toEqual({ kind: "submit" });
+
+    expect(
+      multipleType.getKeyboardAction(
+        {
+          ...baseContext,
+          showResult: true,
+        },
+        {
+          key: "enter",
+          code: "Enter",
+          scope: "global",
+        },
+      ),
+    ).toEqual({ kind: "next" });
+  });
+});

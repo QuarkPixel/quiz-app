@@ -13,9 +13,12 @@
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
+    import * as Tooltip from "$lib/components/ui/tooltip";
     import { useQuizSession } from "@/quiz/session/context";
     import QuestionOrder from "./QuestionOrder.svelte";
     import SoundSettings from "$sound-settings";
+    import { QUESTION_TYPES } from "@/quiz/types/registry";
+    import { IconInfoCircleFilled } from "@tabler/icons-svelte";
 
     interface Props {
         open?: boolean;
@@ -104,6 +107,49 @@
                         id="auto-next"
                         bind:checked={
                             session.appState.settings.autoNextOnCorrect
+                        }
+                        onCheckedChange={() => session.handlePreferenceChange()}
+                        size="sm"
+                    />
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                    <Label
+                        for="auto-submit-answer"
+                        class="text-sm font-normal flex items-center gap-1"
+                    >
+                        选中答案自动提交
+                        <Tooltip.Root>
+                            <Tooltip.Trigger>
+                                {#snippet child({ props })}
+                                    <button
+                                        {...props}
+                                        type="button"
+                                        class="text-muted-foreground hover:text-foreground inline-flex items-center justify-center"
+                                        aria-label="关于自动提交"
+                                    >
+                                        <IconInfoCircleFilled
+                                            size={14}
+                                            stroke={1.5}
+                                        />
+                                    </button>
+                                {/snippet}
+                            </Tooltip.Trigger>
+                            <Tooltip.Content side="top" align="center">
+                                <span class="flex items-center"
+                                    ><QUESTION_TYPES.single.icon
+                                        size={12}
+                                    />单选&thinsp;/&thinsp;
+                                    <QUESTION_TYPES.judgment.icon
+                                        size={12}
+                                    />判断&ensp;题选中时，自动提交答案。
+                                </span>
+                            </Tooltip.Content>
+                        </Tooltip.Root>
+                    </Label>
+                    <Switch
+                        id="auto-submit-answer"
+                        bind:checked={
+                            session.appState.settings.autoSubmitOnSelection
                         }
                         onCheckedChange={() => session.handlePreferenceChange()}
                         size="sm"

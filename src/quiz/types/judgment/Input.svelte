@@ -8,6 +8,7 @@
     let {
         question,
         showResult,
+        autoSubmitOnSelection,
         selectedAnswers,
         onSelectedAnswersChange,
         onAutoSubmit,
@@ -22,7 +23,9 @@
         if (showResult) return;
         onSelectedAnswersChange?.([idx]);
         blurPointerActivatedButton(event);
-        onAutoSubmit?.();
+        if (autoSubmitOnSelection) {
+            onAutoSubmit?.();
+        }
     }
 </script>
 
