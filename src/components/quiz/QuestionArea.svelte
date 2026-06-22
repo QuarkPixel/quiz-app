@@ -1,7 +1,7 @@
 <script lang="ts">
     import { Button } from "$lib/components/ui/button";
+    import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import { cn } from "$lib/utils";
-    import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
     import CopyQuestionButton from "./CopyQuestionButton.svelte";
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
     import IconConfetti from "@tabler/icons-svelte/icons/confetti";
@@ -10,6 +10,7 @@
     import { QUESTION_TYPES } from "@/quiz/types/registry";
     import { getCorrectChoiceLetters } from "@/features/quiz";
     import { useQuizSession } from "@/quiz/session/context";
+    import { useQuizUiActions } from "@/quiz/session/uiContext";
     import {
         IconCircleArrowUpRightFilled,
         IconCircleCheckFilled,
@@ -20,18 +21,8 @@
     } from "@tabler/icons-svelte";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
 
-    interface Props {
-        onGoToReview: () => void;
-    }
-
-    let { onGoToReview }: Props = $props();
-
     const session = useQuizSession();
-
-    const treatCorrectAction = createConfirmAction(() =>
-        session.treatLastAnswerAsCorrect(),
-    );
-    const resetAction = createConfirmAction(() => session.reset());
+    const uiActions = useQuizUiActions();
 
     async function copyCurrentQuestion(event: MouseEvent): Promise<void> {
         event.stopPropagation();
@@ -156,27 +147,24 @@
 
     <div class="flex h-9 items-center justify-end gap-2 pt-2">
         {#if session.showResult && !session.isCorrect}
-            <Button
+            <ConfirmActionButton
                 variant="outline"
                 size="icon-lg"
-                onclick={treatCorrectAction.trigger}
-                title={treatCorrectAction.confirming
-                    ? "再次点击确认"
-                    : "视作正确"}
-                aria-label={treatCorrectAction.confirming
-                    ? "再次点击确认"
-                    : "视作正确"}
-                class={cn(
-                    treatCorrectAction.confirming &&
-                        "border-success text-success ring-success/30 ring-2",
-                )}
+                onConfirm={() => session.treatLastAnswerAsCorrect()}
+                idleTitle="视作正确"
+                confirmTitle="再次点击确认"
+                idleAriaLabel="视作正确"
+                confirmAriaLabel="再次点击确认"
+                confirmClass="border-success text-success ring-success/30 ring-2"
             >
-                {#if treatCorrectAction.confirming}
-                    <IconCircleCheckFilled stroke={1.75} />
-                {:else}
-                    <IconCircleCheck stroke={1.75} />
-                {/if}
-            </Button>
+                {#snippet children({ confirming })}
+                    {#if confirming}
+                        <IconCircleCheckFilled stroke={1.75} />
+                    {:else}
+                        <IconCircleCheck stroke={1.75} />
+                    {/if}
+                {/snippet}
+            </ConfirmActionButton>
         {/if}
         {#if !session.showResult}
             <Button size="lg" class="px-8" onclick={() => session.submit()}>
@@ -200,21 +188,21 @@
                 <span class="text-foreground text-lg font-bold mb-3">
                     所有题目已掌握
                 </span>
-                <Button onclick={() => onGoToReview()}>
+                <Button onclick={uiActions.openReview}>
                     <IconCircleArrowUpRightFilled size={14} stroke={1.75} />
                     查看总览</Button
                 >
-                <Button
+                <ConfirmActionButton
                     variant="destructive"
                     size="xs"
-                    class={cn(
-                        resetAction.confirming && "ring-destructive/40 ring-2",
-                    )}
-                    onclick={resetAction.trigger}
+                    onConfirm={() => session.reset()}
+                    confirmClass="ring-destructive/40 ring-2"
                 >
-                    <IconRefresh size={14} stroke={1.75} />
-                    {resetAction.confirming ? "再次点击以清空进度" : "重新开始"}
-                </Button>
+                    {#snippet children({ confirming })}
+                        <IconRefresh size={14} stroke={1.75} />
+                        {confirming ? "再次点击以清空进度" : "重新开始"}
+                    {/snippet}
+                </ConfirmActionButton>
             {:else}
                 <IconInputCheck size={64} class="text-foreground opacity-30" />
                 <span class="text-foreground text-lg font-bold mb-3">

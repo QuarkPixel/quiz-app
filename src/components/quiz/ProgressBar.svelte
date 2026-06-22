@@ -17,59 +17,81 @@
 
     let { stats, learningSegments, focused, onToggleFocus }: Props = $props();
 
-    let calcFocused = $derived(focused && stats.mastered != stats.total);
+    type SegmentWidths = {
+        mastered: number;
+        learning: number;
+        pending: number;
+    };
 
-    let masteredWidth = $derived(
-        stats.total > 0 ? (stats.mastered / stats.total) * 100 : 0,
-    );
-    let learningWidth = $derived(
-        stats.total > 0 ? (stats.learning / stats.total) * 100 : 0,
-    );
-    let pendingWidth = $derived(
-        stats.total > 0 ? (stats.pending / stats.total) * 100 : 0,
-    );
+    function getSegmentWidths(): SegmentWidths {
+        if (stats.total <= 0) {
+            return { mastered: 0, learning: 0, pending: 0 };
+        }
 
-    let masteredDisplayWidth = $derived(
-        calcFocused
-            ? Math.min(masteredWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
-            : masteredWidth,
-    );
-    let pendingDisplayWidth = $derived(
-        calcFocused
-            ? Math.min(pendingWidth * 16, PROGRESS_SIDE_CAP_PERCENT)
-            : pendingWidth,
-    );
-    let learningDisplayWidth = $derived(
-        calcFocused
-            ? Math.max(0, 100 - masteredDisplayWidth - pendingDisplayWidth)
-            : learningWidth,
-    );
+        const unit = 100 / stats.total;
+        return {
+            mastered: stats.mastered * unit,
+            learning: stats.learning * unit,
+            pending: stats.pending * unit,
+        };
+    }
 
-    // 已掌握数增加时短暂高亮 + 微微伸长（calcFocused 状态下才伸长）
+    function getDisplayWidths(
+        widths: SegmentWidths,
+        isFocused: boolean,
+    ): SegmentWidths {
+        if (!isFocused) return widths;
+
+        const mastered = Math.min(
+            widths.mastered * 16,
+            PROGRESS_SIDE_CAP_PERCENT,
+        );
+        const pending = Math.min(
+            widths.pending * 16,
+            PROGRESS_SIDE_CAP_PERCENT,
+        );
+
+        return {
+            mastered,
+            pending,
+            learning: Math.max(0, 100 - mastered - pending),
+        };
+    }
+
+    function getLearningProgress(learningWidth: number): number {
+        if (learningSegments.length === 0 || learningWidth <= 0) return 0;
+
+        let weightedPercent = 0;
+        for (const segment of learningSegments) {
+            const weight =
+                (learningSegments.length - segment.level) /
+                learningSegments.length;
+            weightedPercent += weight * segment.widthPercent;
+        }
+
+        return (weightedPercent / 100) * (learningWidth / 100);
+    }
+
+    let barFocused = $derived(focused && stats.mastered !== stats.total);
+    let segmentWidths = $derived(getSegmentWidths());
+    let displayWidths = $derived(getDisplayWidths(segmentWidths, barFocused));
+
+    // 已掌握数增加时短暂高亮 + 微微伸长（仅聚焦视图下才伸长）
     // svelte-ignore state_referenced_locally
     let prevMastered = stats.mastered;
     let celebrating = $state(false);
     let celebrateTimer: ReturnType<typeof setTimeout> | null = null;
 
-    let progressStart = $derived(stats.mastered);
-    let progressEnd = $derived(
-        focused ? stats.pending : stats.learning + stats.pending,
+    let progressRangeStart = $derived(stats.mastered);
+    let progressRangeEnd = $derived(
+        barFocused ? stats.pending : stats.learning + stats.pending,
     );
     let progressPercent = $derived(
-        stats.mastered / stats.total + learningPercentage(),
+        stats.total > 0
+            ? segmentWidths.mastered / 100 +
+                  getLearningProgress(segmentWidths.learning)
+            : 0,
     );
-
-    function learningPercentage(): number {
-        let sum = 0;
-        const weight = (n: number): number =>
-            (learningSegments.length - n) / learningSegments.length;
-
-        for (let segment of learningSegments) {
-            sum += weight(segment.level) * segment.widthPercent;
-        }
-
-        return (sum / 100) * (learningWidth / 100);
-    }
 
     $effect(() => {
         const m = stats.mastered;
@@ -89,43 +111,47 @@
     type="button"
     class={cn(
         "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
-        calcFocused && "focused",
+        barFocused && "focused",
     )}
     onclick={onToggleFocus}
     disabled={stats.learning === 0}
-    aria-label={focused ? "显示完整进度" : "聚焦学习中进度"}
+    aria-label={barFocused ? "显示完整进度" : "聚焦学习中进度"}
 >
     <div
-        class="text-muted-foreground mb-1.5 flex justify-between items-end text-xs tabular-nums"
+        class="text-muted-foreground mb-1.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end text-xs tabular-nums"
     >
-        <NumberFlow plugins={[continuous]} value={progressStart} />
+        <div class="justify-self-start">
+            <NumberFlow plugins={[continuous]} value={progressRangeStart} />
+        </div>
         <NumberFlow
             plugins={[continuous]}
             value={progressPercent}
             format={{ style: "percent", maximumFractionDigits: 2 }}
-            class="text-[smaller] font-mono opacity-70"
+            class="justify-self-center text-[smaller] font-mono opacity-70"
         />
-        <NumberFlow plugins={[continuous]} value={progressEnd} />
+        <div class="justify-self-end">
+            <NumberFlow plugins={[continuous]} value={progressRangeEnd} />
+        </div>
     </div>
     <div
         class={cn(
             "progress-bar flex h-[3px] gap-1 transition-[height] duration-300",
-            calcFocused && "h-[7px]",
+            barFocused && "h-[7px]",
         )}
     >
         <div
             class={cn(
                 "mastered-segment bg-success rounded-sm",
-                calcFocused && "opacity-55",
+                barFocused && "opacity-55",
                 celebrating && "celebrate",
             )}
-            style="--w: {masteredDisplayWidth}%; --focused: {calcFocused
+            style="--w: {displayWidths.mastered}%; --focused: {barFocused
                 ? 1
                 : 0}"
         ></div>
         <div
             class="learning-track flex overflow-hidden rounded-sm"
-            style="width: {learningDisplayWidth}%"
+            style="width: {displayWidths.learning}%"
         >
             {#each learningSegments as seg (seg.level)}
                 <div
@@ -137,9 +163,9 @@
         <div
             class={cn(
                 "pending-segment bg-foreground/15 rounded-sm",
-                calcFocused && "opacity-55",
+                barFocused && "opacity-55",
             )}
-            style="width: {pendingDisplayWidth}%"
+            style="width: {displayWidths.pending}%"
         ></div>
     </div>
 </button>

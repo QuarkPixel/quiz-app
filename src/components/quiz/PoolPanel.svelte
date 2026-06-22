@@ -149,7 +149,10 @@
     });
 </script>
 
-<div class="pool-mask flex-1 min-h-0 overflow-y-auto" aria-label="活动题目池">
+<div
+    class="pool-mask min-h-0 overflow-visible lg:flex-1 lg:overflow-y-auto"
+    aria-label="活动题目池"
+>
     {#if entries.length === 0}
         <p class="text-muted-foreground/60 px-3 py-12 text-center text-xs">
             池中暂无其它题目
@@ -228,23 +231,6 @@
 </div>
 
 <style>
-    /* 上下 20px 渐变蒙版 */
-    .pool-mask {
-        --mask: linear-gradient(
-            to bottom,
-            transparent 0,
-            black 20px,
-            black calc(100% - 20px),
-            transparent 100%
-        );
-        -webkit-mask-image: var(--mask);
-        mask-image: var(--mask);
-        scrollbar-width: none;
-    }
-    .pool-mask::-webkit-scrollbar {
-        display: none;
-    }
-
     .pool-answer.pointer-reveal {
         animation: pool-answer-fade-out 3000ms linear forwards;
     }
@@ -261,6 +247,25 @@
     @media (hover: hover) and (pointer: fine) {
         .pool-item:hover .pool-answer {
             opacity: 1;
+        }
+    }
+
+    @media (min-width: 64rem) {
+        /* 仅大屏侧栏模式下使用内部滚动和上下 20px 渐变蒙版。 */
+        .pool-mask {
+            --mask: linear-gradient(
+                to bottom,
+                transparent 0,
+                black 20px,
+                black calc(100% - 20px),
+                transparent 100%
+            );
+            -webkit-mask-image: var(--mask);
+            mask-image: var(--mask);
+            scrollbar-width: none;
+        }
+        .pool-mask::-webkit-scrollbar {
+            display: none;
         }
     }
 

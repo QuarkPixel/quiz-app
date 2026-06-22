@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onMount } from "svelte";
     import FlashContainer from "./FlashContainer.svelte";
     import ReviewView from "../review/ReviewView.svelte";
     import Settings from "../settings/Settings.svelte";
@@ -21,8 +22,10 @@
     import type { Bank } from "@/source/types";
     import { QuizSession } from "@/quiz/session/QuizSession.svelte";
     import { provideQuizSession } from "@/quiz/session/context";
+    import { provideQuizUiActions } from "@/quiz/session/uiContext";
     import { createKeyboardHandler } from "@/quiz/session/keyboardHandler";
     import { createSoundPlayer } from "$sound";
+    import { IconArrowBigUpLines } from "@tabler/icons-svelte";
 
     let {
         bank,
@@ -53,13 +56,116 @@
     // dialog 开关：纯 UI flag，留在容器局部
     let showReview = $state(false);
     let showSettings = $state(false);
+    let scrollViewport: HTMLDivElement | null = null;
+    let layoutContent: HTMLDivElement | null = null;
+    let compactPoolContent = $state<HTMLDivElement | null>(null);
+    let isScrollable = $state(false);
+    let isCompactLayout = $state(false);
+    let compactPoolHeight = $state(0);
+    let scrollTop = $state(0);
+    let scrollTopAble = $state(false);
+    let scrolling = $state(false);
+
+    const uiActions = {
+        openReview: () => {
+            showReview = true;
+        },
+        toggleReview: () => {
+            showReview = !showReview;
+        },
+        toggleSettings: () => {
+            showSettings = !showSettings;
+        },
+    };
+
+    provideQuizUiActions(uiActions);
 
     const handleKeydown = createKeyboardHandler(session, {
-        toggleReview: () => (showReview = !showReview),
-        toggleSettings: () => (showSettings = !showSettings),
+        toggleReview: uiActions.toggleReview,
+        toggleSettings: uiActions.toggleSettings,
     });
 
     session.initialize();
+
+    onMount(() => {
+        const mediaQuery = window.matchMedia("(max-width: 63.99rem)");
+        const updateLayoutMode = (): void => {
+            isCompactLayout = mediaQuery.matches;
+        };
+
+        updateLayoutMode();
+        mediaQuery.addEventListener("change", updateLayoutMode);
+
+        return () => mediaQuery.removeEventListener("change", updateLayoutMode);
+    });
+
+    $effect(() => {
+        if (!scrollViewport || !layoutContent) return;
+
+        const viewport = scrollViewport;
+        const content = layoutContent;
+
+        const updateViewportState = (): void => {
+            scrollTop = viewport.scrollTop;
+            isScrollable = viewport.scrollHeight > viewport.clientHeight + 1;
+
+            scrollTopAble = scrollTop > 256 && !scrolling;
+
+            if (scrollTop === 0) {
+                scrolling = false;
+            }
+        };
+
+        updateViewportState();
+
+        const resizeObserver = new ResizeObserver(updateViewportState);
+        resizeObserver.observe(viewport);
+        resizeObserver.observe(content);
+        viewport.addEventListener("scroll", updateViewportState, {
+            passive: true,
+        });
+
+        return () => {
+            viewport.removeEventListener("scroll", updateViewportState);
+            resizeObserver.disconnect();
+        };
+    });
+
+    $effect(() => {
+        if (!compactPoolContent) return;
+
+        const content = compactPoolContent;
+        const updateCompactPoolHeight = (): void => {
+            compactPoolHeight = content.scrollHeight;
+        };
+
+        updateCompactPoolHeight();
+
+        const resizeObserver = new ResizeObserver(updateCompactPoolHeight);
+        resizeObserver.observe(content);
+
+        return () => resizeObserver.disconnect();
+    });
+
+    function scrollToTop(): void {
+        scrolling = true;
+        scrollViewport?.scrollTo({
+            top: 0,
+            behavior: "smooth",
+        });
+    }
+
+    function forwardWheelToScrollViewport(event: WheelEvent): void {
+        if (!scrollViewport) return;
+        if (event.deltaX === 0 && event.deltaY === 0) return;
+
+        scrollViewport.scrollBy({
+            left: event.deltaX,
+            top: event.deltaY,
+            behavior: "auto",
+        });
+        event.preventDefault();
+    }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -67,77 +173,7 @@
 <FlashContainer bind:this={flashContainer} />
 <AlertToast bind:this={toast} />
 
-<main class="flex flex-1 min-h-0 justify-center px-4 sm:px-6 overflow-y-auto">
-    <div
-        class={cn(
-            "my-auto grid w-full max-w-5xl items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
-            "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
-            // my-auto 让 grid 在内容不溢出时垂直居中；溢出时 flex 容器的 stretch 使 my-auto 退化到 0，自动靠上滚动
-            // max-lg + pool 展开：max-h-full 让 grid 不超过 main，pool 行用
-            // minmax(180px, min(45vh,300px))：宽裕时 ≤300px，挤压时降到 180px，
-            // 不够再退化让 main 滚动。content 够装时 grid 仍是内容高度，被 items-center 垂直居中
-            session.appState.ui.showPool &&
-                "max-lg:max-h-full max-lg:grid-rows-[auto_minmax(180px,min(45vh,300px))] max-lg:gap-y-6",
-            session.appState.ui.showPool &&
-                "lg:grid-cols-[minmax(0,42rem)_280px]",
-        )}
-    >
-        <div class="flex w-full min-w-0 flex-col gap-5">
-            <QuestionArea onGoToReview={() => (showReview = true)} />
-
-            <ProgressBar
-                stats={session.stats}
-                learningSegments={session.learningSegments}
-                focused={session.appState.ui.progressFocused}
-                onToggleFocus={() => session.toggleProgressFocus()}
-            />
-        </div>
-
-        <aside
-            class={cn(
-                "pool-edge-mask min-w-0 overflow-hidden",
-                "row-start-2 col-start-1",
-                "lg:row-start-1 lg:col-start-2 lg:flex lg:justify-end",
-            )}
-            aria-hidden={!session.appState.ui.showPool}
-        >
-            <div
-                class={cn(
-                    "flex h-full w-full flex-col",
-                    "lg:h-[min(70vh,520px)] lg:w-[280px] lg:shrink-0 lg:pl-8",
-                )}
-            >
-                <PoolPanel />
-            </div>
-        </aside>
-    </div>
-</main>
-
-<footer class="flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5">
-    <Tooltip.Root>
-        <Tooltip.Trigger>
-            {#snippet child({ props })}
-                <button
-                    {...props}
-                    type="button"
-                    class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[30deg] aria-expanded:text-foreground"
-                    aria-expanded={showSettings}
-                    aria-label="当前题库设置"
-                    onclick={() => (showSettings = !showSettings)}
-                >
-                    <IconSettings size={22} stroke={1.5} />
-                </button>
-            {/snippet}
-        </Tooltip.Trigger>
-        <Tooltip.Content side="top">
-            <span>设置</span>
-            <KbdGroup>
-                <Kbd>{modKeyLabel}</Kbd>
-                <Kbd>{SHORTCUTS.toggleSettings.toUpperCase()}</Kbd>
-            </KbdGroup>
-        </Tooltip.Content>
-    </Tooltip.Root>
-
+{#snippet leftControls()}
     <div class="flex items-center gap-1">
         <Tooltip.Root>
             <Tooltip.Trigger>
@@ -145,28 +181,20 @@
                     <button
                         {...props}
                         type="button"
-                        class={cn(
-                            "text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:-rotate-[8deg]",
-                            session.appState.ui.showPool &&
-                                "text-foreground bg-foreground/8",
-                        )}
-                        aria-pressed={session.appState.ui.showPool}
-                        aria-label="查看活动池"
-                        onclick={() => session.togglePool()}
+                        class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[30deg] aria-expanded:text-foreground"
+                        aria-expanded={showSettings}
+                        aria-label="当前题库设置"
+                        onclick={uiActions.toggleSettings}
                     >
-                        <IconStack2 size={22} stroke={1.5} />
+                        <IconSettings size={22} stroke={1.5} />
                     </button>
                 {/snippet}
             </Tooltip.Trigger>
             <Tooltip.Content side="top">
-                <span
-                    >{session.appState.ui.showPool
-                        ? "收起"
-                        : "展开"}活动池</span
-                >
+                <span>设置</span>
                 <KbdGroup>
                     <Kbd>{modKeyLabel}</Kbd>
-                    <Kbd>{SHORTCUTS.togglePool.toUpperCase()}</Kbd>
+                    <Kbd>{SHORTCUTS.toggleSettings.toUpperCase()}</Kbd>
                 </KbdGroup>
             </Tooltip.Content>
         </Tooltip.Root>
@@ -178,8 +206,9 @@
                         {...props}
                         type="button"
                         class="text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:rotate-[10deg]"
+                        aria-expanded={showReview}
                         aria-label="总览"
-                        onclick={() => (showReview = !showReview)}
+                        onclick={uiActions.toggleReview}
                     >
                         <IconBook2 size={22} stroke={1.5} />
                     </button>
@@ -194,7 +223,196 @@
             </Tooltip.Content>
         </Tooltip.Root>
     </div>
-</footer>
+{/snippet}
+
+{#snippet rightControls()}
+    <Tooltip.Root>
+        <Tooltip.Trigger>
+            {#snippet child({ props })}
+                <button
+                    {...props}
+                    type="button"
+                    class={cn(
+                        "text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200 hover:-rotate-[8deg]",
+                        session.appState.ui.showPool &&
+                            "text-foreground bg-foreground/8",
+                    )}
+                    aria-pressed={session.appState.ui.showPool}
+                    aria-label="查看活动池"
+                    onclick={() => session.togglePool()}
+                >
+                    <IconStack2 size={22} stroke={1.5} />
+                </button>
+            {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content side="top">
+            <span>{session.appState.ui.showPool ? "收起" : "展开"}活动池</span>
+            <KbdGroup>
+                <Kbd>{modKeyLabel}</Kbd>
+                <Kbd>{SHORTCUTS.togglePool.toUpperCase()}</Kbd>
+            </KbdGroup>
+        </Tooltip.Content>
+    </Tooltip.Root>
+{/snippet}
+
+{#snippet scrollTopControl()}
+    <Button
+        variant="outline"
+        class={cn(
+            "transition-all duration-300 min-w-26 rounded-full",
+            scrollTopAble
+                ? "translate-y-0 opacity-100"
+                : "translate-y-4 opacity-0 pointer-events-none",
+            scrolling &&
+                "scale-120 ease-[cubic-bezier(0.13,-0.54,0.71,-0.84)] duration-500",
+        )}
+        aria-label="回到顶部"
+        onclick={scrollToTop}
+    >
+        <IconArrowBigUpLines />
+    </Button>
+{/snippet}
+
+{#snippet footerBar(showScrollTop: boolean)}
+    <div
+        class="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
+    >
+        <div class="justify-self-start">
+            {@render leftControls()}
+        </div>
+
+        <div class="justify-self-center">
+            {#if showScrollTop}
+                {@render scrollTopControl()}
+            {/if}
+        </div>
+
+        <div class="justify-self-end">
+            {@render rightControls()}
+        </div>
+    </div>
+{/snippet}
+
+<div
+    class="relative flex min-h-0 flex-1 flex-col"
+    data-shell-scrollable={isScrollable ? "true" : "false"}
+>
+    <div
+        bind:this={scrollViewport}
+        class={cn(
+            "min-h-0 flex-1 overflow-y-auto px-4 sm:px-6",
+            "scroll-pt-[calc(env(safe-area-inset-top)+6rem)] scrollbar-none",
+            isScrollable
+                ? "pb-[calc(5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-(--app-shell-content-top)"
+                : "pb-4 sm:pb-5",
+        )}
+    >
+        <div
+            bind:this={layoutContent}
+            class="mx-auto flex min-h-full w-full max-w-5xl items-center justify-center py-2 sm:py-4"
+        >
+            {#if isCompactLayout}
+                <div class="my-auto flex w-full flex-col gap-6">
+                    <div class="flex min-w-0 flex-col gap-5">
+                        <QuestionArea />
+
+                        <ProgressBar
+                            stats={session.stats}
+                            learningSegments={session.learningSegments}
+                            focused={session.appState.ui.progressFocused}
+                            onToggleFocus={() => session.toggleProgressFocus()}
+                        />
+                    </div>
+
+                    <aside
+                        class={cn(
+                            "overflow-hidden transition-[max-height,opacity,margin,transform] duration-300 ease-emphasized",
+                            session.appState.ui.showPool
+                                ? "mt-0 opacity-100 translate-y-0"
+                                : "-mt-2 opacity-0 -translate-y-2 pointer-events-none",
+                        )}
+                        style={`max-height: ${
+                            session.appState.ui.showPool ? compactPoolHeight : 0
+                        }px;`}
+                        aria-hidden={!session.appState.ui.showPool}
+                    >
+                        <div
+                            bind:this={compactPoolContent}
+                            class="flex w-full flex-col"
+                        >
+                            <PoolPanel />
+                        </div>
+                    </aside>
+                </div>
+            {:else}
+                <div
+                    class={cn(
+                        "my-auto grid w-full items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
+                        "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
+                        session.appState.ui.showPool &&
+                            "grid-cols-[minmax(0,42rem)_280px]",
+                    )}
+                >
+                    <div class="flex w-full min-w-0 flex-col gap-5">
+                        <QuestionArea />
+
+                        <ProgressBar
+                            stats={session.stats}
+                            learningSegments={session.learningSegments}
+                            focused={session.appState.ui.progressFocused}
+                            onToggleFocus={() => session.toggleProgressFocus()}
+                        />
+                    </div>
+
+                    <aside
+                        class={cn(
+                            "pool-edge-mask min-w-0 overflow-hidden",
+                            "row-start-1 col-start-2 flex justify-end",
+                        )}
+                        aria-hidden={!session.appState.ui.showPool}
+                    >
+                        <div
+                            class={cn(
+                                "flex h-full w-full flex-col",
+                                "h-[min(70vh,520px)] w-[280px] shrink-0 pl-8",
+                            )}
+                        >
+                            <PoolPanel />
+                        </div>
+                    </aside>
+                </div>
+            {/if}
+        </div>
+    </div>
+
+    {#if !isScrollable}
+        <footer
+            class="shrink-0 flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5"
+            onwheel={forwardWheelToScrollViewport}
+        >
+            {@render footerBar(false)}
+        </footer>
+    {/if}
+
+    {#if isScrollable}
+        <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
+            <div
+                aria-hidden="true"
+                class={cn(
+                    "pointer-events-none absolute inset-x-0 bottom-0 h-28 transition-opacity duration-200",
+                    "opacity-100 bg-gradient-to-t from-background via-background/96 to-background/0",
+                )}
+            ></div>
+
+            <footer
+                class="pointer-events-auto relative px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-6 sm:px-8 sm:pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:pt-7"
+                onwheel={forwardWheelToScrollViewport}
+            >
+                {@render footerBar(true)}
+            </footer>
+        </div>
+    {/if}
+</div>
 
 <Settings bind:open={showSettings} />
 

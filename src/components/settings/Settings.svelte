@@ -1,15 +1,14 @@
 <script lang="ts">
     import { SHORTCUTS } from "@/config";
     import { modKeyLabel } from "$lib/platform";
-    import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Button } from "$lib/components/ui/button";
+    import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import { Switch } from "$lib/components/ui/switch";
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Separator } from "$lib/components/ui/separator";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
-    import { cn } from "$lib/utils";
     import QuestionFilters from "./QuestionFilters.svelte";
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
@@ -25,7 +24,7 @@
     let { open = $bindable(false) }: Props = $props();
 
     const session = useQuizSession();
-    const resetAction = createConfirmAction(() => session.reset());
+    let resetButton: ConfirmActionButton;
     const pendingFilterLabel = $derived(
         session.pendingFilterType === null
             ? ""
@@ -35,8 +34,8 @@
     );
 
     $effect(() => {
-        if (!open && resetAction.confirming) {
-            resetAction.reset();
+        if (!open) {
+            resetButton?.reset();
         }
     });
 </script>
@@ -228,18 +227,19 @@
 
             <Separator />
 
-            <Button
+            <ConfirmActionButton
+                bind:this={resetButton}
                 variant="destructive"
                 size="sm"
-                class={cn(
-                    "w-full",
-                    resetAction.confirming && "ring-destructive/40 ring-2",
-                )}
-                onclick={resetAction.trigger}
+                class="w-full"
+                confirmClass="ring-destructive/40 ring-2"
+                onConfirm={() => session.reset()}
             >
-                <IconRefresh size={14} stroke={1.75} />
-                {resetAction.confirming ? "再次点击以确认" : "重置所有进度"}
-            </Button>
+                {#snippet children({ confirming })}
+                    <IconRefresh size={14} stroke={1.75} />
+                    {confirming ? "再次点击以确认" : "重置所有进度"}
+                {/snippet}
+            </ConfirmActionButton>
         </div>
     </Dialog.Content>
 </Dialog.Root>

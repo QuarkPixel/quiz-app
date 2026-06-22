@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { ActivePoolItem } from "@/types";
     import { getLearningLevelColor } from "@/features/quiz/learningProgress";
-    import { createConfirmAction } from "$lib/hooks/createConfirmAction.svelte";
+    import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import { cn } from "$lib/utils";
     import IconChecks from "@tabler/icons-svelte/icons/checks";
 
@@ -26,8 +26,6 @@
         readonly = false,
         onMaster,
     }: Props = $props();
-
-    const masterAction = createConfirmAction(() => onMaster?.());
 
     function toBoundedInteger(
         value: unknown,
@@ -59,11 +57,9 @@
             Math.max(0, safeRequiredStreak - 1) * geom.gap +
             2 * geom.pad,
     );
-    /** confirming 时撑开到至少 target，否则 natural */
-    const buttonWidth = $derived(
-        masterAction.confirming
-            ? Math.max(naturalWidth, geom.target)
-            : naturalWidth,
+    const naturalWidthStyle = $derived(`width: ${naturalWidth}px;`);
+    const confirmWidthStyle = $derived(
+        `width: ${Math.max(naturalWidth, geom.target)}px;`,
     );
     const remainingCorrect = $derived(
         Math.min(
@@ -90,33 +86,37 @@
             "relative inline-flex items-center justify-center rounded-full",
             "transition-[width,background-color] duration-200",
             size === "default" ? "p-1" : "p-[3px]",
-            !masterAction.confirming &&
-                !readonly &&
-                "bg-foreground/10 hover:bg-foreground/15",
-            !masterAction.confirming && readonly && "bg-foreground/10",
-            masterAction.confirming && "bg-success",
+            "bg-foreground/10 hover:bg-foreground/15",
         ),
     );
 
-    const dotGroupClass = $derived(
-        cn(
+    const confirmClass = $derived(
+        cn("bg-success hover:bg-success"),
+    );
+
+    function dotGroupClass(confirming: boolean): string {
+        return cn(
             "flex items-center",
             size === "default" ? "gap-1.5" : "gap-1",
-            masterAction.confirming && "invisible",
-        ),
-    );
+            confirming && "invisible",
+        );
+    }
+
+    function dotClass(index: number): string {
+        return cn(
+            "block rounded-full transition-colors",
+            size === "default" ? "size-1.5" : "size-1",
+            index >= consecutiveCorrect && "bg-background",
+        );
+    }
 </script>
 
-{#snippet dots()}
+{#snippet dots(confirming: boolean)}
     <!-- dots 始终渲染，confirming 时 invisible 让位给 ✓ icon overlay -->
-    <span class={dotGroupClass}>
+    <span class={dotGroupClass(confirming)}>
         {#each Array(safeRequiredStreak) as _, i}
             <span
-                class={cn(
-                    "block rounded-full transition-colors",
-                    size === "default" ? "size-1.5" : "size-1",
-                    i >= consecutiveCorrect && "bg-background",
-                )}
+                class={dotClass(i)}
                 style:background-color={i < consecutiveCorrect
                     ? filledDotColor
                     : undefined}
@@ -127,30 +127,34 @@
 
 {#if readonly}
     <span
-        class={rootClass}
-        style:width="{naturalWidth}px"
+        class={cn(rootClass, "hover:bg-foreground/10")}
+        style={naturalWidthStyle}
         aria-label="掌握进度"
     >
-        {@render dots()}
+        {@render dots(false)}
     </span>
 {:else}
-    <button
-        type="button"
+    <ConfirmActionButton
+        unstyled
         class={rootClass}
-        style:width="{buttonWidth}px"
-        aria-label={masterAction.confirming
-            ? "再次点击确认掌握"
-            : "标记为已掌握"}
-        title={masterAction.confirming ? "再次点击确认掌握" : "标记为已掌握"}
-        onclick={() => masterAction.trigger()}
+        confirmClass={confirmClass}
+        style={naturalWidthStyle}
+        confirmStyle={confirmWidthStyle}
+        idleAriaLabel="标记为已掌握"
+        confirmAriaLabel="再次点击确认掌握"
+        idleTitle="标记为已掌握"
+        confirmTitle="再次点击确认掌握"
+        onConfirm={() => onMaster?.()}
     >
-        {@render dots()}
-        {#if masterAction.confirming}
-            <IconChecks
-                size={size === "default" ? 14 : 10}
-                stroke={2.5}
-                class="absolute inset-0 m-auto text-success-foreground"
-            />
-        {/if}
-    </button>
+        {#snippet children({ confirming })}
+            {@render dots(confirming)}
+            {#if confirming}
+                <IconChecks
+                    size={size === "default" ? 14 : 10}
+                    stroke={2.5}
+                    class="absolute inset-0 m-auto text-success-foreground"
+                />
+            {/if}
+        {/snippet}
+    </ConfirmActionButton>
 {/if}

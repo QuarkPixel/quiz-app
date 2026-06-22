@@ -20,10 +20,7 @@
     import type { ToastVariant } from "@/quiz/session/QuizSession.svelte";
     import * as Card from "$lib/components/ui/card";
     import * as Dialog from "$lib/components/ui/dialog";
-    import {
-        QUESTION_TYPES,
-        QUESTION_TYPE_ORDER,
-    } from "@/quiz/types/registry";
+    import { QUESTION_TYPES, QUESTION_TYPE_ORDER } from "@/quiz/types/registry";
     import { useQuizSession } from "@/quiz/session/context";
     import HeatmapSection from "./HeatmapSection.svelte";
     import QuestionListSection from "./QuestionListSection.svelte";
@@ -34,15 +31,16 @@
         IconTargetArrow,
     } from "@tabler/icons-svelte";
     import { isCoarsePointer } from "$lib/utils";
-    import type {
-        QuestionGroup,
-        ReviewIndicator,
-    } from "./virtualList/types";
+    import type { QuestionGroup, ReviewIndicator } from "./virtualList/types";
 
     interface Props {
         open: boolean;
         onOpenChange: (open: boolean) => void;
-        onToast?: (title: string, description?: string, variant?: ToastVariant) => void;
+        onToast?: (
+            title: string,
+            description?: string,
+            variant?: ToastVariant,
+        ) => void;
     }
 
     let { open, onOpenChange, onToast }: Props = $props();
@@ -89,6 +87,7 @@
     const overview = $derived.by(() => {
         const hash = session.hash;
         const total = session.questions.length;
+        const round = session.appState.currentRound;
         const mastered = masteredQuestions.length;
         const active = session.appState.activePool.length;
         const unlearned = Math.max(0, total - mastered - active);
@@ -100,7 +99,7 @@
         ).length;
         return {
             hash,
-            total,
+            round,
             mastered,
             active,
             unlearned,
@@ -151,7 +150,8 @@
 
         if (!masteredSet.has(question.id)) return null;
 
-        const hasEverMistaken = session.appState.masteredMistakes[question.id] === true;
+        const hasEverMistaken =
+            session.appState.masteredMistakes[question.id] === true;
         const requiredStreak = toPositiveInteger(
             hasEverMistaken
                 ? session.appState.settings.correctStreakAfterMistake
@@ -202,7 +202,11 @@
         );
         switch (result.kind) {
             case "ok":
-                onToast?.("已另存为新题库", `已加入题库「${name}」，请在侧边栏查看。`, "success");
+                onToast?.(
+                    "已另存为新题库",
+                    `已加入题库「${name}」，请在侧边栏查看。`,
+                    "success",
+                );
                 break;
             case "duplicate":
                 onToast?.(
@@ -306,17 +310,17 @@
                             class="absolute sm:-bottom-12 sm:-right-5 -bottom-3 right-0 text-muted-foreground opacity-20 -z-1"
                         />
                         <span class="text-muted-foreground text-xs"
-                            >全部题目</span
+                            >答题次数</span
                         >
                         <span
                             class="font-mono text-2xl font-semibold tabular-nums text-foreground/60"
                         >
-                            {overview.total}
+                            {overview.round}
                         </span>
                         <span
                             class="text-muted-foreground text-xs tabular-nums"
                         >
-                            当前题库
+                            总共提交答案次数
                         </span>
                     </Card.Content>
                 </Card.Root>
@@ -327,13 +331,15 @@
             <div class="flex min-h-0 flex-1 flex-col gap-3">
                 <ReviewFilterBar
                     {filter}
-                    onFilterChange={onFilterChange}
+                    {onFilterChange}
                     {searchTerm}
                     onSearchChange={(v) => (searchTerm = v)}
                     {canExport}
                     onExport={exportAsNewBank}
                     bind:inputRef={searchInputRef}
-                    availableTypes={getAvailableQuestionTypes(session.questions)}
+                    availableTypes={getAvailableQuestionTypes(
+                        session.questions,
+                    )}
                 />
 
                 <QuestionListSection
