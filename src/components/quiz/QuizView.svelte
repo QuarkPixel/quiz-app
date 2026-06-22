@@ -108,7 +108,6 @@
         const updateViewportState = (): void => {
             scrollTop = viewport.scrollTop;
             isScrollable = viewport.scrollHeight > viewport.clientHeight + 1;
-
             scrollTopAble = scrollTop > 256 && !scrolling;
 
             if (scrollTop === 0) {
@@ -302,9 +301,7 @@
         class={cn(
             "min-h-0 flex-1 overflow-y-auto px-4 sm:px-6",
             "scroll-pt-[calc(env(safe-area-inset-top)+6rem)] scrollbar-none",
-            isScrollable
-                ? "pb-[calc(5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-(--app-shell-content-top)"
-                : "pb-4 sm:pb-5",
+            "pb-[calc(5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-(--app-shell-content-top)",
         )}
     >
         <div
@@ -385,33 +382,27 @@
         </div>
     </div>
 
-    {#if !isScrollable}
+    <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
+        <div
+            aria-hidden="true"
+            class={cn(
+                "pointer-events-none absolute inset-x-0 bottom-0 h-28 transition-opacity duration-200",
+                isScrollable
+                    ? "opacity-100 bg-gradient-to-t from-background via-background/96 to-background/0"
+                    : "opacity-0",
+            )}
+        ></div>
+
         <footer
-            class="shrink-0 flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5"
+            class={cn(
+                "pointer-events-auto relative px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-8 sm:pb-[calc(1.25rem+env(safe-area-inset-bottom))]",
+                isScrollable ? "pt-6 sm:pt-7" : "pt-4 sm:pt-5",
+            )}
             onwheel={forwardWheelToScrollViewport}
         >
-            {@render footerBar(false)}
+            {@render footerBar(isScrollable)}
         </footer>
-    {/if}
-
-    {#if isScrollable}
-        <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
-            <div
-                aria-hidden="true"
-                class={cn(
-                    "pointer-events-none absolute inset-x-0 bottom-0 h-28 transition-opacity duration-200",
-                    "opacity-100 bg-gradient-to-t from-background via-background/96 to-background/0",
-                )}
-            ></div>
-
-            <footer
-                class="pointer-events-auto relative px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-6 sm:px-8 sm:pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:pt-7"
-                onwheel={forwardWheelToScrollViewport}
-            >
-                {@render footerBar(true)}
-            </footer>
-        </div>
-    {/if}
+    </div>
 </div>
 
 <Settings bind:open={showSettings} />
