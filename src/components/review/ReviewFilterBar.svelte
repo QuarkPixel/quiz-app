@@ -25,6 +25,7 @@
         onExport: () => void;
         inputRef?: HTMLInputElement | null;
         availableTypes: QuestionType[];
+        resultCount: number;
     }
 
     let {
@@ -37,13 +38,14 @@
         onExport,
         inputRef = $bindable<HTMLInputElement | null>(null),
         availableTypes,
+        resultCount,
     }: Props = $props();
 
     // 筛选栏展开状态（点击筛选按钮切换）
     let showFilters = $state(false);
 
     // 是否有任何“导出作用域”被应用（搜索和结构化筛选同级）
-    let showExport = $derived(canExport && scopeApplied);
+    let showExport = $derived(canExport && scopeApplied && resultCount !== 0);
 
     let learningValues = $derived<string[]>([...filter.learning]);
     let correctnessValues = $derived<string[]>([...filter.correctness]);
@@ -222,7 +224,8 @@
                                         "opacity-0 pointer-events-none",
                                 )}
                             >
-                                <IconDatabaseExport size={16} stroke={1.75} /> 导出为新题库
+                                <IconDatabaseExport size={16} stroke={1.75} />
+                                导出为新题库
                             </Button>
                         {/snippet}
                     </Tooltip.Trigger>

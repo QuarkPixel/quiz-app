@@ -325,6 +325,7 @@
                     {canExport}
                     scopeApplied={reviewScopeApplied}
                     onExport={exportAsNewBank}
+                    resultCount={grouped.length}
                     bind:inputRef={searchInputRef}
                     availableTypes={getAvailableQuestionTypes(
                         session.questions,
