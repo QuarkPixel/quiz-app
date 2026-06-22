@@ -1,4 +1,5 @@
 import type { Question, RuntimeState } from "@/types";
+import { QUESTION_TYPES_LOGIC } from "@/quiz/types/registry-logic";
 import {
   getCorrectness,
   getLearningStatus,
@@ -79,9 +80,47 @@ export function applyReviewFilter(
   });
 }
 
+export function normalizeReviewSearchTerm(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+export function matchesReviewSearch(question: Question, query: string): boolean {
+  if (query.length === 0) return true;
+  const typeDef = QUESTION_TYPES_LOGIC[question.type];
+  return [
+    question.id,
+    question.question,
+    typeDef.formatAnswerText(question),
+  ].some((text) => String(text ?? "").toLocaleLowerCase().includes(query));
+}
+
+/**
+ * 复习页的完整作用域：
+ * 先应用结构化筛选，再应用搜索文本。
+ */
+export function applyReviewScope(
+  questions: Question[],
+  state: ReviewFilterState,
+  runtime: RuntimeState,
+  searchTerm: string,
+): Question[] {
+  const query = normalizeReviewSearchTerm(searchTerm);
+  return applyReviewFilter(questions, state, runtime).filter((question) =>
+    matchesReviewSearch(question, query),
+  );
+}
+
 /** 筛选是否处于「无任何过滤」的初始状态。 */
 export function isFilterEmpty(state: ReviewFilterState): boolean {
   return Object.values(state).every((filter: Set<any>) => filter.size === 0);
+}
+
+/** 复习页当前是否收窄了题目范围（搜索和结构化筛选算同一级别）。 */
+export function hasReviewScope(
+  state: ReviewFilterState,
+  searchTerm: string,
+): boolean {
+  return !isFilterEmpty(state) || normalizeReviewSearchTerm(searchTerm) !== "";
 }
 
 /**
@@ -123,6 +162,28 @@ export function describeFilter(state: ReviewFilterState): string {
       }
     }
   }
+
+  return parts.join("+");
+}
+
+function compactSearchTerm(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * 生成用于导出题库名的完整作用域描述。
+ * 例如「已掌握+正确+搜索:foo」。
+ */
+export function describeReviewScope(
+  state: ReviewFilterState,
+  searchTerm: string,
+): string {
+  const parts: string[] = [];
+  const filterDescription = describeFilter(state);
+  const query = compactSearchTerm(searchTerm);
+
+  if (filterDescription) parts.push(filterDescription);
+  if (query) parts.push(`搜索：${query}`);
 
   return parts.join("+");
 }

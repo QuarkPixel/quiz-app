@@ -11,16 +11,17 @@
         getMaxLearningLevel,
     } from "@/features/quiz/learningProgress";
     import {
-        applyReviewFilter,
+        applyReviewScope,
         createReviewFilterState,
-        describeFilter,
+        describeReviewScope,
+        hasReviewScope,
         type ReviewFilterState,
     } from "@/features/quiz/reviewFilters";
     import { useQuizSource } from "@/source/context";
     import type { ToastVariant } from "@/quiz/session/QuizSession.svelte";
     import * as Card from "$lib/components/ui/card";
     import * as Dialog from "$lib/components/ui/dialog";
-    import { QUESTION_TYPES, QUESTION_TYPE_ORDER } from "@/quiz/types/registry";
+    import { QUESTION_TYPE_ORDER } from "@/quiz/types/registry";
     import { useQuizSession } from "@/quiz/session/context";
     import HeatmapSection from "./HeatmapSection.svelte";
     import QuestionListSection from "./QuestionListSection.svelte";
@@ -70,20 +71,6 @@
     );
     const maxLearningLevel = $derived(getMaxLearningLevel(session.appState));
 
-    function normalizeSearchText(value: string): string {
-        return value.trim().toLocaleLowerCase();
-    }
-
-    function matchesSearch(question: Question, query: string): boolean {
-        if (query.length === 0) return true;
-        const typeDef = QUESTION_TYPES[question.type];
-        return [
-            question.id,
-            question.question,
-            typeDef.formatAnswerText(question),
-        ].some((text) => text.toLocaleLowerCase().includes(query));
-    }
-
     const overview = $derived.by(() => {
         const hash = session.hash;
         const total = session.questions.length;
@@ -110,15 +97,16 @@
         };
     });
 
-    // 两层筛选结果（不含搜索）：用于「导出为新题库」，名字仅描述这两层
-    const filteredByState = $derived(
-        applyReviewFilter(session.questions, filter, session.appState),
+    let filteredQuestions = $derived(
+        applyReviewScope(
+            session.questions,
+            filter,
+            session.appState,
+            searchTerm,
+        ),
     );
 
-    let filteredQuestions = $derived.by(() => {
-        const query = normalizeSearchText(searchTerm);
-        return filteredByState.filter((q) => matchesSearch(q, query));
-    });
+    const reviewScopeApplied = $derived(hasReviewScope(filter, searchTerm));
 
     const grouped = $derived.by<QuestionGroup[]>(() => {
         return QUESTION_TYPE_ORDER.map((type) => ({
@@ -192,13 +180,13 @@
 
     async function exportAsNewBank(): Promise<void> {
         if (!source.importBank) return;
-        const description = describeFilter(filter);
+        const description = describeReviewScope(filter, searchTerm);
         const name = description
             ? `${session.bank.name} ${description}`
             : session.bank.name;
         const result = await source.importBank(
             name,
-            JSON.stringify(filteredByState),
+            JSON.stringify(filteredQuestions),
         );
         switch (result.kind) {
             case "ok":
@@ -335,6 +323,7 @@
                     {searchTerm}
                     onSearchChange={(v) => (searchTerm = v)}
                     {canExport}
+                    scopeApplied={reviewScopeApplied}
                     onExport={exportAsNewBank}
                     bind:inputRef={searchInputRef}
                     availableTypes={getAvailableQuestionTypes(

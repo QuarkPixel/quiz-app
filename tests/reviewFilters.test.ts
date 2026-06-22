@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   applyReviewFilter,
+  applyReviewScope,
   createReviewFilterState,
+  describeReviewScope,
   describeFilter,
+  hasReviewScope,
   isFilterEmpty,
   type ReviewFilterState,
 } from "../src/features/quiz/reviewFilters";
@@ -24,7 +27,28 @@ import type {
 } from "../src/types";
 
 function makeQuestion(id: string, type: QuestionType = "judgment"): Question {
-  return { id, type, question: `q-${id}`, answer: true };
+  switch (type) {
+    case "judgment":
+      return { id, type, question: `q-${id}`, answer: true };
+    case "single":
+      return {
+        id,
+        type,
+        question: `q-${id}`,
+        options: [{ text: "A" }, { text: "B" }],
+        answer: [0],
+      };
+    case "multiple":
+      return {
+        id,
+        type,
+        question: `q-${id}`,
+        options: [{ text: "A" }, { text: "B" }, { text: "C" }],
+        answer: [0, 2],
+      };
+    case "blank":
+      return { id, type, question: `q-${id}`, answer: "blank-answer" };
+  }
 }
 
 function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
@@ -275,6 +299,43 @@ describe("applyReviewFilter", () => {
   });
 });
 
+describe("applyReviewScope", () => {
+  it("search alone narrows result set", () => {
+    const { questions, state } = fixture();
+    expect(
+      ids(applyReviewScope(questions, filter(), state, "q-u1")),
+    ).toEqual(["u1"]);
+  });
+
+  it("search is applied after structured filters", () => {
+    const { questions, state } = fixture();
+    expect(
+      ids(
+        applyReviewScope(
+          questions,
+          filter(["mastered"], {}, ["single", "judgment"]),
+          state,
+          "q-m2",
+        ),
+      ),
+    ).toEqual(["m2"]);
+  });
+
+  it("search can match formatted answer text", () => {
+    const questions = [
+      {
+        id: "j1",
+        type: "judgment",
+        question: "判断题",
+        answer: true,
+      } satisfies Question,
+    ];
+    expect(
+      ids(applyReviewScope(questions, filter(), makeState(), "正确")),
+    ).toEqual(["j1"]);
+  });
+});
+
 describe("isFilterEmpty / describeFilter", () => {
   it("initial state is empty", () => {
     expect(isFilterEmpty(createReviewFilterState())).toBe(true);
@@ -294,5 +355,28 @@ describe("isFilterEmpty / describeFilter", () => {
 
   it("describeFilter only correctness", () => {
     expect(describeFilter(filter([], { incorrect: true }))).toBe("错误");
+  });
+
+  it("search alone still counts as scoped result", () => {
+    expect(hasReviewScope(createReviewFilterState(), " keyword ")).toBe(true);
+  });
+
+  it("blank search and empty filter means no scope", () => {
+    expect(hasReviewScope(createReviewFilterState(), "   ")).toBe(false);
+  });
+
+  it("describeReviewScope includes search after filters", () => {
+    expect(
+      describeReviewScope(
+        filter(["mastered"], { correct: true }, ["single"]),
+        "  foo   bar  ",
+      ),
+    ).toBe("已掌握+正确+单选题+搜索:foo bar");
+  });
+
+  it("describeReviewScope supports search-only export names", () => {
+    expect(describeReviewScope(createReviewFilterState(), "abc")).toBe(
+      "搜索:abc",
+    );
   });
 });

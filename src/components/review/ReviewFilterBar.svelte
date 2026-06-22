@@ -9,10 +9,7 @@
     import IconFilterSpark from "@tabler/icons-svelte/icons/filter-2-spark";
     import IconDatabaseExport from "@tabler/icons-svelte/icons/database-export";
     import type { Correctness, LearningStatus } from "@/features/quiz";
-    import {
-        isFilterEmpty,
-        type ReviewFilterState,
-    } from "@/features/quiz/reviewFilters";
+    import { type ReviewFilterState } from "@/features/quiz/reviewFilters";
     import { cn } from "tailwind-variants";
     import type { QuestionType } from "@/types";
     import { QUESTION_TYPES } from "@/quiz/types/registry";
@@ -24,6 +21,7 @@
         searchTerm: string;
         onSearchChange: (value: string) => void;
         canExport: boolean;
+        scopeApplied: boolean;
         onExport: () => void;
         inputRef?: HTMLInputElement | null;
         availableTypes: QuestionType[];
@@ -35,6 +33,7 @@
         searchTerm,
         onSearchChange,
         canExport,
+        scopeApplied,
         onExport,
         inputRef = $bindable<HTMLInputElement | null>(null),
         availableTypes,
@@ -43,9 +42,8 @@
     // 筛选栏展开状态（点击筛选按钮切换）
     let showFilters = $state(false);
 
-    // 是否有任何筛选被应用（决定 spark 图标与导出按钮可见性）
-    let filterApplied = $derived(!isFilterEmpty(filter));
-    let showExport = $derived(canExport && filterApplied);
+    // 是否有任何“导出作用域”被应用（搜索和结构化筛选同级）
+    let showExport = $derived(canExport && scopeApplied);
 
     let learningValues = $derived<string[]>([...filter.learning]);
     let correctnessValues = $derived<string[]>([...filter.correctness]);
@@ -153,14 +151,14 @@
                         type="button"
                         variant={showFilters ? "secondary" : "ghost"}
                         class={cn(
-                            (filterApplied || showFilters) && "text-success",
+                            (scopeApplied || showFilters) && "text-success",
                         )}
                         size="icon-sm"
                         aria-pressed={showFilters}
                         aria-label="筛选"
                         onclick={() => (showFilters = !showFilters)}
                     >
-                        {#if filterApplied}
+                        {#if scopeApplied}
                             <IconFilterSpark size={16} stroke={2} />
                         {:else}
                             <IconFilter size={16} stroke={2} />
