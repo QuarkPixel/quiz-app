@@ -298,6 +298,37 @@ export class LibrarySource implements QuizSource {
     this.emit();
   }
 
+  moveBanksToTop(hashes: string[]): void {
+    if (hashes.length === 0) return;
+
+    const seen = new Set<string>();
+    const orderedSelection = hashes.filter((hash) => {
+      if (seen.has(hash)) return false;
+      seen.add(hash);
+      return this.index.some((bank) => bank.hash === hash);
+    });
+    if (orderedSelection.length === 0) return;
+
+    const selected = new Set(orderedSelection);
+    const selectedBanks = this.index.filter((bank) => selected.has(bank.hash));
+    if (selectedBanks.length === 0) return;
+
+    const remainingBanks = this.index.filter((bank) => !selected.has(bank.hash));
+    const nextIndex = [...selectedBanks, ...remainingBanks];
+    const isUnchanged = nextIndex.every((bank, index) => bank.hash === this.index[index]?.hash);
+    if (isUnchanged) return;
+
+    try {
+      localStorage.setItem(STORAGE_KEY_LIBRARY, JSON.stringify(nextIndex));
+    } catch (e) {
+      console.warn("Failed to reorder library index:", e);
+      return;
+    }
+
+    this.index = nextIndex;
+    this.emit();
+  }
+
   removeBank(hash: string): void {
     const idx = this.index.findIndex((b) => b.hash === hash);
     if (idx === -1) return;

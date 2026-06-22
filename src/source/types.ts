@@ -56,6 +56,7 @@ export interface QuizSource {
   importBank?(name: string, rawJson: string): Promise<ImportBankResult>;
   renameBank?(hash: string, name: string): void;
   removeBank?(hash: string): void;
+  moveBanksToTop?(hashes: string[]): void;
 
   /**
    * 把进度备份字符串解码后覆盖到指定 bank 的 state。
