@@ -1,5 +1,5 @@
 /**
- * QuizSession：答题流的状态层（Pinia 等价物）。
+ * QuizSession：答题流的状态层。
  *
  * 把 QuizView 之前的所有 reactive state、derived、actions 聚合到一个 class。
  * 子组件通过 useQuizSession() 拿到实例，避免 prop drilling。
