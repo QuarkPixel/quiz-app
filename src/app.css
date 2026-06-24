@@ -177,6 +177,14 @@
     }
 }
 
+::selection {
+    background-color: oklch(from var(--foreground) l c h / 30%);
+}
+
+::-moz-selection {
+    background-color: oklch(from var(--foreground) l c h / 30%);
+}
+
 #app > [data-slot="sidebar-wrapper"] {
     height: 100%;
     min-height: 100%;
