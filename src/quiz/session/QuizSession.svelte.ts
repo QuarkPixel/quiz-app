@@ -112,6 +112,13 @@ export class QuizSession {
   pendingFilterType: QuestionType | "all" | null = $state(null);
 
   /**
+   * 答题过程中新进入活动池、待提示的题目队列（FIFO）。
+   * 仅在 notifyNewQuestionInPool 开启时填充。答题流里一次最多入池一题，
+   * 所以这其实总是 0/1 条；用队列只是为了语义上稳健。
+   */
+  newQuestionQueue: Question[] = $state([]);
+
+  /**
    * submit 前的 appState 快照，用于「当作正确」时 rewind。
    * 不是 $state —— 只是临时引用，不参与 reactivity。
    */
@@ -141,6 +148,10 @@ export class QuizSession {
     const masteredSet = new Set(this.appState.masteredIds);
     return this.questions.every((q) => masteredSet.has(q.id));
   });
+  /** 当前要展示的新题（队首），无则 null */
+  currentNewQuestion: Question | null = $derived(
+    this.newQuestionQueue[0] ?? null,
+  );
 
   constructor(
     bank: Bank,
@@ -224,11 +235,13 @@ export class QuizSession {
     this.isCorrect = nextIsCorrect;
     this.deps.flash(nextIsCorrect);
     maybePlayAnswerSound(this.appState, this.deps.sound, nextIsCorrect);
+    const poolIdsBeforeAnswer = this.activePoolIdSet();
     this.appState = applyAnswer(
       this.appState,
       this.currentQuestion.id,
       nextIsCorrect,
     );
+    this.enqueueNewlyPooled(poolIdsBeforeAnswer);
     this.save();
 
     if (nextIsCorrect && this.appState.settings.autoNextOnCorrect) {
@@ -243,11 +256,13 @@ export class QuizSession {
    */
   treatLastAnswerAsCorrect(): void {
     if (!this.preSubmitState || !this.currentQuestion) return;
+    const poolIdsBeforeRewind = this.activePoolIdSet();
     this.appState = applyAnswer(
       this.preSubmitState,
       this.currentQuestion.id,
       true,
     );
+    this.enqueueNewlyPooled(poolIdsBeforeRewind);
     this.preSubmitState = null;
     this.save();
     this.isCorrect = true;
@@ -260,6 +275,7 @@ export class QuizSession {
    * 如果掌握的就是当前题，自动 selectNext。
    */
   markAsMastered(questionId: string): void {
+    const poolIdsBeforeMastery = this.activePoolIdSet();
     const activeItem = this.appState.activePool.find(
       (item) => item.id === questionId,
     );
@@ -282,6 +298,7 @@ export class QuizSession {
       pendingIds: this.appState.pendingIds.filter((id) => id !== questionId),
     };
     this.appState = fillActivePool(nextState);
+    this.enqueueNewlyPooled(poolIdsBeforeMastery);
     this.save();
     if (this.currentQuestion?.id === questionId) {
       this.selectNext();
@@ -598,6 +615,34 @@ export class QuizSession {
     activePool[itemIndex] = { ...item, hasBeenShown: true };
     this.appState = { ...this.appState, activePool };
     this.save();
+  }
+
+  /** 关闭当前新题提示，露出队列里的下一条（如果有）。 */
+  dismissNewQuestion(): void {
+    this.newQuestionQueue = this.newQuestionQueue.slice(1);
+  }
+
+  /** 活动池里当前的题目 id 集合，用于 diff 出新入池的题。 */
+  private activePoolIdSet(): Set<string> {
+    return new Set(this.appState.activePool.map((item) => item.id));
+  }
+
+  /**
+   * 对比一次状态变迁前后的活动池，把新进入的题目按 settings 入队提示。
+   * 仅答题流（submit / 当作正确 / 掌握）调用，启动与批量填充不触发。
+   */
+  private enqueueNewlyPooled(previousIds: Set<string>): void {
+    if (!this.appState.settings.notifyNewQuestionInPool) return;
+
+    const questionsById = new Map(this.questions.map((q) => [q.id, q]));
+    const added = this.appState.activePool
+      .filter((item) => !previousIds.has(item.id))
+      .map((item) => questionsById.get(item.id))
+      .filter((q): q is Question => q !== undefined);
+
+    if (added.length > 0) {
+      this.newQuestionQueue = [...this.newQuestionQueue, ...added];
+    }
   }
 
   private focusBlankInputIfNeeded(): void {

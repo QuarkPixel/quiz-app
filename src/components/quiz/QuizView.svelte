@@ -4,6 +4,7 @@
     import ReviewView from "../review/ReviewView.svelte";
     import Settings from "../settings/Settings.svelte";
     import PoolPanel from "./PoolPanel.svelte";
+    import NewQuestionDialog from "./NewQuestionDialog.svelte";
     import AlertToast from "../layout/AlertToast.svelte";
     import ProgressBar from "./ProgressBar.svelte";
     import QuestionArea from "./QuestionArea.svelte";
@@ -406,6 +407,8 @@
 </div>
 
 <Settings bind:open={showSettings} />
+
+<NewQuestionDialog />
 
 <ReviewView
     open={showReview}

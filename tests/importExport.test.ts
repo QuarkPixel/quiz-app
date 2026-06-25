@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { exportProgress, importProgress } from "../src/features/importExport";
-import type { Question, QuestionType, RuntimeState, StoredState } from "../src/types";
+import type {
+  Question,
+  QuestionType,
+  RuntimeState,
+  StoredState,
+} from "../src/types";
 
 const HASH = "abcdef0123456789";
 
@@ -76,6 +81,7 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
       correctStreakAfterMistake: 5,
       selectionMode: "sequential",
       soundEnabled: false,
+      notifyNewQuestionInPool: false,
     },
     ui: {
       progressFocused: false,
@@ -158,17 +164,19 @@ async function decodePayload(encoded: string): Promise<unknown> {
   return JSON.parse(new TextDecoder().decode(bytes));
 }
 
-function compact(overrides: Partial<{
-  version: unknown;
-  questionCount: unknown;
-  masteredBitmap: unknown;
-  activePool: unknown;
-  currentRound: unknown;
-  filterCode: unknown;
-  settings: unknown;
-  ui: unknown;
-  masteredMistakes: unknown;
-}> = {}): unknown[] {
+function compact(
+  overrides: Partial<{
+    version: unknown;
+    questionCount: unknown;
+    masteredBitmap: unknown;
+    activePool: unknown;
+    currentRound: unknown;
+    filterCode: unknown;
+    settings: unknown;
+    ui: unknown;
+    masteredMistakes: unknown;
+  }> = {},
+): unknown[] {
   const version = overrides.version ?? 4;
   const base = [
     version,
@@ -214,6 +222,7 @@ describe("exportProgress / importProgress round-trip", () => {
         correctStreakAfterMistake: 4,
         selectionMode: "random",
         soundEnabled: false,
+        notifyNewQuestionInPool: false,
       },
       ui: { progressFocused: false, showPool: false },
     };
@@ -236,7 +245,7 @@ describe("bitmap / index 编码", () => {
     const payload = await decodePayload(encoded);
 
     expect(payload).toEqual([
-      6,
+      7,
       QUESTIONS.length,
       "3",
       [
@@ -245,7 +254,7 @@ describe("bitmap / index 编码", () => {
       ],
       8,
       1,
-      [1, 1, 20, 3, 5, "sequential", 0],
+      [1, 1, 20, 3, 5, "sequential", 0, 0],
       [0, 0],
       "2",
     ]);
@@ -327,7 +336,11 @@ describe("filterType / settings / ui round-trip", () => {
   ];
   for (const ft of cases) {
     it(`filterType=${ft}`, async () => {
-      const state = makeState({ filterType: ft, masteredIds: [], activePool: [] });
+      const state = makeState({
+        filterType: ft,
+        masteredIds: [],
+        activePool: [],
+      });
       const encoded = await exportProgress(state, HASH, QUESTIONS);
       const restored = await importProgress(encoded, HASH, QUESTIONS);
       expect(restored.filterType).toBe(ft);
@@ -344,6 +357,7 @@ describe("filterType / settings / ui round-trip", () => {
         correctStreakAfterMistake: 6,
         selectionMode: "random",
         soundEnabled: false,
+        notifyNewQuestionInPool: false,
       },
     });
     const encoded = await exportProgress(state, HASH, QUESTIONS);
@@ -360,6 +374,7 @@ describe("filterType / settings / ui round-trip", () => {
         correctStreakToMaster: 3,
         correctStreakAfterMistake: 5,
         selectionMode: "sequential",
+        notifyNewQuestionInPool: false,
         soundEnabled: true,
       },
     });
@@ -375,6 +390,7 @@ describe("filterType / settings / ui round-trip", () => {
       5,
       "sequential",
       1,
+      0,
     ]);
     expect(restored.settings.soundEnabled).toBe(true);
   });
@@ -430,21 +446,21 @@ describe("filterType / settings / ui round-trip", () => {
 describe("importProgress 错误处理", () => {
   it("hash 不匹配抛错", async () => {
     const encoded = await exportProgress(makeState(), HASH, QUESTIONS);
-    await expect(importProgress(encoded, "differenthash0000", QUESTIONS)).rejects.toThrow(
-      /题库版本不匹配/,
-    );
+    await expect(
+      importProgress(encoded, "differenthash0000", QUESTIONS),
+    ).rejects.toThrow(/题库版本不匹配/);
   });
 
   it("无分隔符抛 '找不到版本分隔符'", async () => {
-    await expect(importProgress("noseparator", HASH, QUESTIONS)).rejects.toThrow(
-      /找不到版本分隔符/,
-    );
+    await expect(
+      importProgress("noseparator", HASH, QUESTIONS),
+    ).rejects.toThrow(/找不到版本分隔符/);
   });
 
   it("hash 对但 base64 非法字符 → 解压失败或 Base64 失败", async () => {
-    await expect(importProgress(`${HASH}.!!!!`, HASH, QUESTIONS)).rejects.toThrow(
-      /解压失败|Base64 解码失败/,
-    );
+    await expect(
+      importProgress(`${HASH}.!!!!`, HASH, QUESTIONS),
+    ).rejects.toThrow(/解压失败|Base64 解码失败/);
   });
 
   it("hash 对但解压后 JSON 非法 → 数据解析失败", async () => {
@@ -476,7 +492,9 @@ describe("importProgress 错误处理", () => {
   });
 
   it("题目数量不匹配 → 题目数量不匹配", async () => {
-    const encoded = await encodePayload(compact({ questionCount: QUESTIONS.length + 1 }));
+    const encoded = await encodePayload(
+      compact({ questionCount: QUESTIONS.length + 1 }),
+    );
     await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /题目数量不匹配/,
     );
@@ -493,9 +511,9 @@ describe("importProgress 错误处理", () => {
     const encoded = await encodePayload(
       compact({ questionCount: 2, masteredBitmap: "4" }),
     );
-    await expect(importProgress(encoded, HASH, QUESTIONS.slice(0, 2))).rejects.toThrow(
-      /已掌握位图索引越界/,
-    );
+    await expect(
+      importProgress(encoded, HASH, QUESTIONS.slice(0, 2)),
+    ).rejects.toThrow(/已掌握位图索引越界/);
   });
 
   it("activeRaw 不是数组 → 活动池格式错误", async () => {
@@ -511,7 +529,9 @@ describe("importProgress 错误处理", () => {
       /活动池条目格式错误/,
     );
 
-    const encoded2 = await encodePayload(compact({ activePool: [[2, 1, 0, 1]] }));
+    const encoded2 = await encodePayload(
+      compact({ activePool: [[2, 1, 0, 1]] }),
+    );
     await expect(importProgress(encoded2, HASH, QUESTIONS)).rejects.toThrow(
       /活动池条目格式错误/,
     );
@@ -525,7 +545,9 @@ describe("importProgress 错误处理", () => {
   });
 
   it("activePool 题目索引越界 → 活动池题目索引错误", async () => {
-    const encoded = await encodePayload(compact({ activePool: [[99, 1, 0, 1, 1]] }));
+    const encoded = await encodePayload(
+      compact({ activePool: [[99, 1, 0, 1, 1]] }),
+    );
     await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
       /活动池题目索引错误/,
     );

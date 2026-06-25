@@ -43,6 +43,7 @@ export function createDefaultSettings(): UserSettings {
     correctStreakToMaster: CORRECT_STREAK_TO_MASTER,
     correctStreakAfterMistake: CORRECT_STREAK_AFTER_MISTAKE,
     selectionMode: "random",
+    notifyNewQuestionInPool: false,
   };
 }
 

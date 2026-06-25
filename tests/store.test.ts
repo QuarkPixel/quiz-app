@@ -197,6 +197,7 @@ describe("loadStoredState", () => {
       activePoolSize: 42,
       correctStreakToMaster: 5,
       correctStreakAfterMistake: 8,
+      notifyNewQuestionInPool: false,
       selectionMode: "sequential",
       soundEnabled: true,
     });
@@ -307,7 +308,9 @@ describe("loadStoredState", () => {
     const loaded = loadStoredState(HASH);
     expect(loaded.settings.autoNextOnCorrect).toBe(true);
     expect(loaded.settings.activePoolSize).toBe(ACTIVE_POOL_SIZE);
-    expect(loaded.settings.correctStreakToMaster).toBe(CORRECT_STREAK_TO_MASTER);
+    expect(loaded.settings.correctStreakToMaster).toBe(
+      CORRECT_STREAK_TO_MASTER,
+    );
     expect(loaded.settings.correctStreakAfterMistake).toBe(
       CORRECT_STREAK_AFTER_MISTAKE,
     );
@@ -421,9 +424,11 @@ describe("saveState", () => {
 
   it("写入配额异常仅 warn 不抛错", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("QuotaExceeded");
-    });
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("QuotaExceeded");
+      });
     const runtime: RuntimeState = {
       masteredIds: [],
       activePool: [],
@@ -603,10 +608,7 @@ describe("buildRuntimeState", () => {
     ];
     const state: StoredState = {
       masteredIds: [],
-      activePool: [
-        createActivePoolItem("a"),
-        createActivePoolItem("b"),
-      ],
+      activePool: [createActivePoolItem("a"), createActivePoolItem("b")],
       currentRound: 0,
       filterType: "single",
       settings: createDefaultSettings(),
@@ -622,10 +624,7 @@ describe("buildRuntimeState", () => {
     ];
     const state: StoredState = {
       masteredIds: [],
-      activePool: [
-        createActivePoolItem("a"),
-        createActivePoolItem("deleted"),
-      ],
+      activePool: [createActivePoolItem("a"), createActivePoolItem("deleted")],
       currentRound: 0,
       filterType: "all",
       settings: createDefaultSettings(),
@@ -653,11 +652,7 @@ describe("buildRuntimeState", () => {
   });
 
   it("filterType=all 时 pendingIds 包含全部非 mastered 非 active 的题", () => {
-    const questions = [
-      makeQuestion("a"),
-      makeQuestion("b"),
-      makeQuestion("c"),
-    ];
+    const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const state: StoredState = {
       masteredIds: [],
       activePool: [],

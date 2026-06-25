@@ -371,12 +371,12 @@ describe("isFilterEmpty / describeFilter", () => {
         filter(["mastered"], { correct: true }, ["single"]),
         "  foo   bar  ",
       ),
-    ).toBe("已掌握+正确+单选题+搜索:foo bar");
+    ).toBe("已掌握+正确+单选题+搜索：foo bar");
   });
 
   it("describeReviewScope supports search-only export names", () => {
     expect(describeReviewScope(createReviewFilterState(), "abc")).toBe(
-      "搜索:abc",
+      "搜索：abc",
     );
   });
 });

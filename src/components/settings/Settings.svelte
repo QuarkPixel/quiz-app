@@ -158,6 +158,41 @@
                         />
                     </div>
                 {/if}
+                <div class="flex items-center justify-between gap-3">
+                    <Label
+                        for="notify-new-question"
+                        class="text-sm font-normal flex items-center gap-1"
+                    >
+                        新题入池时弹窗提示
+                        <Tooltip.Root>
+                            <Tooltip.Trigger>
+                                {#snippet child({ props })}
+                                    <button
+                                        {...props}
+                                        type="button"
+                                        class="text-muted-foreground hover:text-foreground inline-flex items-center justify-center"
+                                        aria-label="关于新题入池提示"
+                                    >
+                                        <IconInfoCircle size={14} stroke={1.5} />
+                                    </button>
+                                {/snippet}
+                            </Tooltip.Trigger>
+                            <Tooltip.Content side="top" align="center">
+                                <span class="max-w-56 text-pretty">
+                                    每当有新题进入活动题池，弹窗展示题目与答案。适合初次了解题库内容。
+                                </span>
+                            </Tooltip.Content>
+                        </Tooltip.Root>
+                    </Label>
+                    <Switch
+                        id="notify-new-question"
+                        bind:checked={
+                            session.appState.settings.notifyNewQuestionInPool
+                        }
+                        onCheckedChange={() => session.handlePreferenceChange()}
+                        size="sm"
+                    />
+                </div>
                 <SoundSettings />
             </section>
 

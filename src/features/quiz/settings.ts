@@ -140,6 +140,7 @@ export function sanitizeUserSettings(settings: UserSettings): UserSettings {
     ),
     selectionMode:
       settings.selectionMode === "sequential" ? "sequential" : "random",
+    notifyNewQuestionInPool: !!settings.notifyNewQuestionInPool,
     ...sanitizeSoundSettings(settings),
   };
 }

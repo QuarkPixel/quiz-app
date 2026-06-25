@@ -24,6 +24,7 @@
  *       correctStreakAfterMistake,
  *       selectionMode,
  *       soundEnabled(0|1),
+ *       notifyNewQuestionInPool(0|1),
  *     ]
  */
 
@@ -40,7 +41,7 @@ import type {
 
 // ── filterType 编解码 ──────────────────────────────────────────────────────────
 
-const FORMAT_VERSION = 6;
+const FORMAT_VERSION = 7;
 const MIN_SUPPORTED_FORMAT_VERSION = 4;
 
 const FILTER_TO_CODE: Record<string, number> = {
@@ -340,6 +341,7 @@ export async function exportProgress(
       state.settings.correctStreakAfterMistake,
       state.settings.selectionMode,
       encodeSoundEnabled(state.settings),
+      state.settings.notifyNewQuestionInPool ? 1 : 0,
     ],
     [
       state.ui.progressFocused ? 1 : 0,
@@ -468,6 +470,7 @@ export async function importProgress(
       settingsRaw[version >= 6 ? 5 : 4] === "sequential"
         ? "sequential"
         : "random",
+    notifyNewQuestionInPool: version >= 7 ? settingsRaw[7] === 1 : false,
     soundEnabled: decodeSoundEnabled(settingsRaw[version >= 6 ? 6 : 5]),
   };
 
