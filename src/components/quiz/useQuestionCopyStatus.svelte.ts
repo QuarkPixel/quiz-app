@@ -4,7 +4,7 @@ import type { CopyQuestionStatus } from "@/quiz/session/QuizSession.svelte";
 import { QuestionCopyPattern } from "@/quiz/types/types";
 
 /** 每道题的复制按钮状态机：成功 / 失败后短暂展示，再回 idle。 */
-export class CopyStatus {
+export class QuestionCopyStatusStore {
   private statuses = $state<Record<string, CopyQuestionStatus>>({});
   private timers: Record<string, ReturnType<typeof setTimeout>> = {};
 
@@ -28,13 +28,13 @@ export class CopyStatus {
     }
   }
 
-  async copy(event: MouseEvent, question: Question): Promise<void> {
+  async copy(
+    event: MouseEvent,
+    question: Question,
+    pattern: QuestionCopyPattern = QuestionCopyPattern.QuestionWithAnswer,
+  ): Promise<void> {
     event.stopPropagation();
-    const result = await this.session.copyQuestion(
-      question,
-      {},
-      QuestionCopyPattern.QuestionWithAnswer,
-    );
+    const result = await this.session.copyQuestion(question, {}, pattern);
     this.set(question.id, result === "copied" ? "copied" : "error");
   }
 }

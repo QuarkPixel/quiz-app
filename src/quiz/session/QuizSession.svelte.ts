@@ -121,6 +121,7 @@ export class QuizSession {
   // === 复制当前题目 state ===
   copyQuestionStatus: CopyQuestionStatus = $state("idle");
   pendingFilterType: QuestionType | "all" | null = $state(null);
+  isPreviewingNewQuestion = $state(false);
 
   /**
    * 答题过程中新进入活动池、待提示的题目队列（FIFO）。
@@ -185,6 +186,7 @@ export class QuizSession {
 
   /** 入口：补齐活动池 + 选第一道题 */
   initialize(): void {
+    this.clearNewQuestionPreviewState();
     this.appState = fillActivePool(this.appState);
     this.save();
     this.selectNext();
@@ -192,6 +194,7 @@ export class QuizSession {
 
   /** 选下一题，重置作答相关 state */
   selectNext(): void {
+    this.isPreviewingNewQuestion = false;
     this.currentQuestion = selectNextFromPool(
       this.questions,
       this.appState,
@@ -256,7 +259,7 @@ export class QuizSession {
     this.save();
 
     if (nextIsCorrect && this.appState.settings.autoNextOnCorrect) {
-      this.selectNext();
+      this.advanceQuestionFlow();
     }
   }
 
@@ -283,7 +286,7 @@ export class QuizSession {
 
   /**
    * 把任意一道题标为已掌握（顶部 indicator / PoolPanel 双击）。
-   * 如果掌握的就是当前题，自动 selectNext。
+   * 如果掌握的就是当前题，自动进入下一步流程（必要时先展示新题预览）。
    */
   markAsMastered(questionId: string): void {
     const poolIdsBeforeMastery = this.activePoolIdSet();
@@ -312,7 +315,7 @@ export class QuizSession {
     this.enqueueNewlyPooled(poolIdsBeforeMastery);
     this.save();
     if (this.currentQuestion?.id === questionId) {
-      this.selectNext();
+      this.advanceQuestionFlow();
     }
   }
 
@@ -320,6 +323,27 @@ export class QuizSession {
   markCurrentAsMastered(): void {
     if (!this.currentQuestion) return;
     this.markAsMastered(this.currentQuestion.id);
+  }
+
+  markPreviewQuestionAsMastered(): void {
+    const previewQuestion = this.currentNewQuestion;
+    if (!previewQuestion) return;
+
+    const previewQuestionId = previewQuestion.id;
+    this.markAsMastered(previewQuestionId);
+
+    if (this.currentNewQuestion?.id === previewQuestionId) {
+      this.newQuestionQueue = this.newQuestionQueue.slice(1);
+    }
+
+    if (this.currentNewQuestion) {
+      this.isPreviewingNewQuestion = true;
+      this.resetCopyQuestionStatus();
+      return;
+    }
+
+    this.isPreviewingNewQuestion = false;
+    this.selectNext();
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -354,6 +378,7 @@ export class QuizSession {
     activePoolPolicy: FilterChangeActivePoolPolicy,
   ): void {
     this.pendingFilterType = null;
+    this.clearNewQuestionPreviewState();
     this.appState = rebuildRuntimeStateForFilterChange(
       this.questions,
       this.appState,
@@ -409,6 +434,24 @@ export class QuizSession {
     this.save();
   }
 
+  advanceQuestionFlow(): void {
+    if (this.isPreviewingNewQuestion) {
+      this.newQuestionQueue = this.newQuestionQueue.slice(1);
+      this.resetCopyQuestionStatus();
+      if (this.currentNewQuestion) return;
+      this.selectNext();
+      return;
+    }
+
+    if (this.currentNewQuestion) {
+      this.isPreviewingNewQuestion = true;
+      this.resetCopyQuestionStatus();
+      return;
+    }
+
+    this.selectNext();
+  }
+
   async copyCurrentQuestion(
     options: CopyQuestionOptions = {},
     pattern?: QuestionCopyPattern,
@@ -421,6 +464,26 @@ export class QuizSession {
       this.getCurrentQuestionCopyContext(),
       options,
       pattern ?? this.getCurrentQuestionCopyPattern(),
+      (status) => this.setCopyQuestionStatus(status),
+    );
+  }
+
+  async copyPreviewQuestion(
+    options: CopyQuestionOptions = {},
+    pattern: QuestionCopyPattern = QuestionCopyPattern.QuestionWithAnswer,
+  ): Promise<CopyQuestionResult> {
+    const question = this.currentNewQuestion;
+    if (!question) return "unavailable";
+
+    const typeDef = QUESTION_TYPES[question.type];
+    if (!typeDef) return "unavailable";
+
+    return this.copyQuestionInternal(
+      question,
+      typeDef,
+      EMPTY_COPY_CONTEXT,
+      options,
+      pattern,
       (status) => this.setCopyQuestionStatus(status),
     );
   }
@@ -467,6 +530,7 @@ export class QuizSession {
   // ────────────────────────────────────────────────────────────────
 
   applyImportedState(newState: StoredState): void {
+    this.clearNewQuestionPreviewState();
     const stateWithPending: RuntimeState = {
       ...newState,
       masteredMistakes: newState.masteredMistakes ?? {},
@@ -561,6 +625,11 @@ export class QuizSession {
     this.copyQuestionStatus = "idle";
   }
 
+  private clearNewQuestionPreviewState(): void {
+    this.isPreviewingNewQuestion = false;
+    this.newQuestionQueue = [];
+  }
+
   private setCopyQuestionStatus(status: CopyQuestionStatus): void {
     if (this.copyQuestionResetTimer) {
       clearTimeout(this.copyQuestionResetTimer);
@@ -634,11 +703,6 @@ export class QuizSession {
     activePool[itemIndex] = { ...item, hasBeenShown: true };
     this.appState = { ...this.appState, activePool };
     this.save();
-  }
-
-  /** 关闭当前新题提示，露出队列里的下一条（如果有）。 */
-  dismissNewQuestion(): void {
-    this.newQuestionQueue = this.newQuestionQueue.slice(1);
   }
 
   /** 活动池里当前的题目 id 集合，用于 diff 出新入池的题。 */

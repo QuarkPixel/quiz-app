@@ -2,11 +2,13 @@
     import type { QuestionInputProps } from "../types";
     import { Input } from "$lib/components/ui/input";
     import { computeBlankDiff } from "./diff";
+    import { cn } from "$lib/utils";
 
     let {
         question,
         showResult,
         isCorrect,
+        readonlyDisplayMode = "answer",
         autoSubmitOnSelection: _autoSubmitOnSelection,
         blankAnswerInputs,
         onBlankAnswerInputsChange,
@@ -61,7 +63,12 @@
         {:else}
             <Input
                 data-slot="input"
-                class="blank-input h-12 px-4 text-lg md:text-lg"
+                class={cn(
+                    "blank-input h-12 px-4 text-lg md:text-lg",
+                    showResult &&
+                        readonlyDisplayMode === "preview" &&
+                        "border-warning bg-warning/8 text-foreground disabled:opacity-100 disabled:text-foreground disabled:bg-warning/8",
+                )}
                 value={blankAnswerInputs[i] ?? ""}
                 oninput={(e) => setAt(i, (e.target as HTMLInputElement).value)}
                 placeholder={Array.isArray(question.answer)

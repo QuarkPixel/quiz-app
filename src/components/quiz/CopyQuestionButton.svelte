@@ -10,9 +10,20 @@
     interface Props {
         status: CopyQuestionStatus;
         onclick: (e: MouseEvent) => void;
+        onpointerdown?: (e: PointerEvent) => void;
+        onpointermove?: (e: PointerEvent) => void;
+        onpointerup?: (e: PointerEvent) => void;
+        onpointercancel?: (e: PointerEvent) => void;
     }
 
-    let { status, onclick }: Props = $props();
+    let {
+        status,
+        onclick,
+        onpointerdown,
+        onpointermove,
+        onpointerup,
+        onpointercancel,
+    }: Props = $props();
 
     const label = $derived(
         status === "copied"
@@ -36,6 +47,10 @@
                 )}
                 aria-label={label}
                 {onclick}
+                {onpointerdown}
+                {onpointermove}
+                {onpointerup}
+                {onpointercancel}
             >
                 {#if status === "copied"}
                     <IconCopyCheck stroke={1.75} />

@@ -12,6 +12,7 @@ import {
 } from "@/features/quiz";
 import { SHORTCUTS } from "@/config";
 import { QUESTION_TYPES_LOGIC } from "@/quiz/types/registry-logic";
+import { QuestionCopyPattern } from "@/quiz/types/types";
 import type { QuizSession } from "./QuizSession.svelte";
 
 export interface KeyboardUiActions {
@@ -43,7 +44,14 @@ export function createKeyboardHandler(
       if (key === SHORTCUTS.copyQuestion) {
         if (hasSelectedText() || isEditingTarget(event)) return;
         event.preventDefault();
-        void session.copyCurrentQuestion({ announce: true });
+        if (session.isPreviewingNewQuestion) {
+          void session.copyPreviewQuestion(
+            { announce: true },
+            QuestionCopyPattern.QuestionWithAnswer,
+          );
+        } else {
+          void session.copyCurrentQuestion({ announce: true });
+        }
         return;
       }
       if (key === SHORTCUTS.togglePool) {
@@ -127,7 +135,7 @@ export function createKeyboardHandler(
 
     event.preventDefault();
     if (action.kind === "next") {
-      session.selectNext();
+      session.advanceQuestionFlow();
       return;
     }
 

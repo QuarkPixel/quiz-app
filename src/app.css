@@ -23,7 +23,7 @@
     --success: #81912f;
     --success-foreground: oklch(0.985 0 0);
     --warning: #e59f41;
-    --warning-foreground: oklch(0.145 0 0);
+    --warning-foreground: oklch(1 0 0);
     --learning-color-low: var(--success);
     --learning-color-high: var(--warning);
     --border: oklch(0 0 0 / 7.8%);

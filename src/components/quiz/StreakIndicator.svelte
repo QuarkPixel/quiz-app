@@ -6,10 +6,12 @@
     import IconChecks from "@tabler/icons-svelte/icons/checks";
 
     interface Props {
-        item: ActivePoolItem;
-        requiredStreak: number;
-        maxLevel: number;
+        item?: ActivePoolItem;
+        requiredStreak?: number;
+        maxLevel?: number;
         size?: "default" | "compact";
+        variant?: "streak" | "preview";
+        previewLabel?: string;
         readonly?: boolean;
         /**
          * 双击此 indicator 就把对应题掌握。
@@ -23,6 +25,8 @@
         requiredStreak,
         maxLevel,
         size = "default",
+        variant = "streak",
+        previewLabel = "PREVIEW",
         readonly = false,
         onMaster,
     }: Props = $props();
@@ -47,9 +51,7 @@
     } as const;
 
     const geom = $derived(GEOMETRY[size]);
-    const safeRequiredStreak = $derived(
-        toBoundedInteger(requiredStreak, 1, 1),
-    );
+    const safeRequiredStreak = $derived(toBoundedInteger(requiredStreak, 1, 1));
     const safeMaxLevel = $derived(toBoundedInteger(maxLevel, 1, 1));
     /** dots + gaps + 双侧 padding 的自然宽度 */
     const naturalWidth = $derived(
@@ -67,14 +69,14 @@
             Math.max(
                 1,
                 safeRequiredStreak -
-                    toBoundedInteger(item.consecutiveCorrect, 0, 0),
+                    toBoundedInteger(item?.consecutiveCorrect, 0, 0),
             ),
         ),
     );
     const consecutiveCorrect = $derived(
         Math.min(
             safeRequiredStreak,
-            toBoundedInteger(item.consecutiveCorrect, 0, 0),
+            toBoundedInteger(item?.consecutiveCorrect, 0, 0),
         ),
     );
     const filledDotColor = $derived(
@@ -85,14 +87,18 @@
         cn(
             "relative inline-flex items-center justify-center rounded-full",
             "transition-[width,background-color] duration-200",
-            size === "default" ? "p-1" : "p-[3px]",
-            "bg-foreground/10 hover:bg-foreground/15",
+            variant === "streak"
+                ? size === "default"
+                    ? "p-1"
+                    : "p-[3px]"
+                : "",
+            variant === "preview"
+                ? "text-warning hover:bg-foreground/10"
+                : "bg-foreground/10 hover:bg-foreground/15",
         ),
     );
 
-    const confirmClass = $derived(
-        cn("bg-success hover:bg-success"),
-    );
+    const confirmClass = $derived(cn("bg-success hover:bg-success"));
 
     function dotGroupClass(confirming: boolean): string {
         return cn(
@@ -125,21 +131,37 @@
     </span>
 {/snippet}
 
+{#snippet previewText(confirming: boolean)}
+    <span
+        class={cn(
+            "font-semibold tracking-[0.18em] transition-opacity leading-0",
+            size === "default" ? "px-2 text-[10px]" : "px-1.5 text-[9px]",
+            confirming && "invisible",
+        )}
+    >
+        {previewLabel}
+    </span>
+{/snippet}
+
 {#if readonly}
     <span
         class={cn(rootClass, "hover:bg-foreground/10")}
-        style={naturalWidthStyle}
-        aria-label="掌握进度"
+        style={variant === "preview" ? undefined : naturalWidthStyle}
+        aria-label={variant === "preview" ? previewLabel : "掌握进度"}
     >
-        {@render dots(false)}
+        {#if variant === "preview"}
+            {@render previewText(false)}
+        {:else}
+            {@render dots(false)}
+        {/if}
     </span>
 {:else}
     <ConfirmActionButton
         unstyled
         class={rootClass}
-        confirmClass={confirmClass}
-        style={naturalWidthStyle}
-        confirmStyle={confirmWidthStyle}
+        {confirmClass}
+        style={variant === "preview" ? undefined : naturalWidthStyle}
+        confirmStyle={variant === "preview" ? undefined : confirmWidthStyle}
         idleAriaLabel="标记为已掌握"
         confirmAriaLabel="再次点击确认掌握"
         idleTitle="标记为已掌握"
@@ -147,7 +169,11 @@
         onConfirm={() => onMaster?.()}
     >
         {#snippet children({ confirming })}
-            {@render dots(confirming)}
+            {#if variant === "preview"}
+                {@render previewText(confirming)}
+            {:else}
+                {@render dots(confirming)}
+            {/if}
             {#if confirming}
                 <IconChecks
                     size={size === "default" ? 14 : 10}

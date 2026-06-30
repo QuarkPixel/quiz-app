@@ -12,9 +12,13 @@
     import { backOut, cubicOut } from "svelte/easing";
     import { onDestroy } from "svelte";
     import StreakIndicator from "./StreakIndicator.svelte";
+    import CopyQuestionButton from "./CopyQuestionButton.svelte";
+    import { QuestionCopyStatusStore } from "./useQuestionCopyStatus.svelte";
     import { useQuizSession } from "@/quiz/session/context";
+    import { QuestionCopyPattern } from "@/quiz/types/types";
 
     const session = useQuizSession();
+    const copy = new QuestionCopyStatusStore(session);
 
     const questionMap = $derived(
         new Map(session.questions.map((q) => [q.id, q])),
@@ -182,24 +186,42 @@
                     onpointercancel={handlePoolItemPointerCancel}
                 >
                     <div
-                        class="text-muted-foreground/70 flex items-center gap-2 text-[10px]"
+                        class="text-muted-foreground/70 flex items-center justify-between gap-2 text-[10px]"
                     >
-                        <span class="font-mono">{entry.item.id}</span>
-                        {#if !entry.item.hasBeenShown}
-                            <span class="font-semibold font-mono text-success">
-                                NEW
-                            </span>
-                        {/if}
-                        <div class="ml-auto">
-                            <StreakIndicator
-                                item={entry.item}
-                                requiredStreak={entry.requiredStreak}
-                                maxLevel={entry.maxLevel}
-                                size="compact"
-                                onMaster={() =>
-                                    session.markAsMastered(entry.item.id)}
+                        <div class="flex items-center gap-1">
+                            <span class="font-mono">{entry.item.id}</span>
+                            <CopyQuestionButton
+                                status={copy.get(entry.item.id)}
+                                onclick={(event: MouseEvent) =>
+                                    copy.copy(
+                                        event,
+                                        entry.question,
+                                        QuestionCopyPattern.QuestionWithAnswer,
+                                    )}
+                                onpointerdown={(event) =>
+                                    event.stopPropagation()}
+                                onpointermove={(event) =>
+                                    event.stopPropagation()}
+                                onpointerup={(event) => event.stopPropagation()}
+                                onpointercancel={(event) =>
+                                    event.stopPropagation()}
                             />
+                            {#if !entry.item.hasBeenShown}
+                                <span
+                                    class="font-semibold font-mono text-success"
+                                >
+                                    NEW
+                                </span>
+                            {/if}
                         </div>
+                        <StreakIndicator
+                            item={entry.item}
+                            requiredStreak={entry.requiredStreak}
+                            maxLevel={entry.maxLevel}
+                            size="compact"
+                            onMaster={() =>
+                                session.markAsMastered(entry.item.id)}
+                        />
                     </div>
 
                     <p

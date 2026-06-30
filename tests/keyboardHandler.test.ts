@@ -41,11 +41,14 @@ function makeSessionStub(
     questionType?: Question["type"];
     autoSubmitOnSelection?: boolean;
     selectedAnswers?: number[];
+    isPreviewingNewQuestion?: boolean;
   } = {},
 ) {
   return {
     showResult,
+    isPreviewingNewQuestion: options.isPreviewingNewQuestion ?? false,
     currentQuestion: makeQuestion(options.questionType),
+    currentNewQuestion: makeQuestion(options.questionType),
     shuffledOptions: [
       { text: "A", originalIndex: 0 },
       { text: "B", originalIndex: 1 },
@@ -60,7 +63,10 @@ function makeSessionStub(
     },
     submit: vi.fn(),
     selectNext: vi.fn(),
+    advanceQuestionFlow: vi.fn(),
     copyCurrentQuestion: vi.fn(),
+    copyPreviewQuestion: vi.fn(),
+    copyQuestion: vi.fn(),
     togglePool: vi.fn(),
     toggleAutoNext: vi.fn(),
     startImport: vi.fn(),
@@ -68,7 +74,10 @@ function makeSessionStub(
   } as unknown as QuizSession & {
     submit: ReturnType<typeof vi.fn>;
     selectNext: ReturnType<typeof vi.fn>;
+    advanceQuestionFlow: ReturnType<typeof vi.fn>;
     copyCurrentQuestion: ReturnType<typeof vi.fn>;
+    copyPreviewQuestion: ReturnType<typeof vi.fn>;
+    copyQuestion: ReturnType<typeof vi.fn>;
     togglePool: ReturnType<typeof vi.fn>;
     toggleAutoNext: ReturnType<typeof vi.fn>;
     startImport: ReturnType<typeof vi.fn>;
@@ -135,6 +144,18 @@ describe("Mod 快捷键派发", () => {
     expect(session.copyCurrentQuestion).toHaveBeenCalledWith({
       announce: true,
     });
+    expect(ev.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("预览态 Cmd+C → copyPreviewQuestion", () => {
+    const session = makeSessionStub(false, {
+      isPreviewingNewQuestion: true,
+    });
+    const ui = makeUiStub();
+    const ev = mkEvent({ metaKey: true, key: SHORTCUTS.copyQuestion });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.copyPreviewQuestion).toHaveBeenCalledOnce();
+    expect(session.copyCurrentQuestion).not.toHaveBeenCalled();
     expect(ev.preventDefault).toHaveBeenCalledOnce();
   });
 
@@ -248,13 +269,13 @@ describe("Space / Enter 全局快捷键", () => {
     expect(session.selectNext).not.toHaveBeenCalled();
   });
 
-  it("Space (showResult=true) → selectNext", () => {
+  it("Space (showResult=true) → advanceQuestionFlow", () => {
     const session = makeSessionStub(true);
     const ui = makeUiStub();
     createKeyboardHandler(session, ui)(
       mkEvent({ code: "Space", key: " " }),
     );
-    expect(session.selectNext).toHaveBeenCalledOnce();
+    expect(session.advanceQuestionFlow).toHaveBeenCalledOnce();
     expect(session.submit).not.toHaveBeenCalled();
   });
 
@@ -274,7 +295,7 @@ describe("Space / Enter 全局快捷键", () => {
     const ev = mkEvent({ code: "Enter", key: "Enter", target: button });
     createKeyboardHandler(session, ui)(ev);
     expect(session.submit).not.toHaveBeenCalled();
-    expect(session.selectNext).not.toHaveBeenCalled();
+    expect(session.advanceQuestionFlow).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 
@@ -286,7 +307,7 @@ describe("Space / Enter 全局快捷键", () => {
     const ev = mkEvent({ code: "Space", key: " ", target: button });
     createKeyboardHandler(session, ui)(ev);
     expect(session.submit).not.toHaveBeenCalled();
-    expect(session.selectNext).not.toHaveBeenCalled();
+    expect(session.advanceQuestionFlow).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 
@@ -310,7 +331,7 @@ describe("Space / Enter 全局快捷键", () => {
       mkEvent({ code: "KeyZ", key: "z" }),
     );
     expect(session.submit).not.toHaveBeenCalled();
-    expect(session.selectNext).not.toHaveBeenCalled();
+    expect(session.advanceQuestionFlow).not.toHaveBeenCalled();
   });
 
   it("填空题未聚焦输入框时按 Space → submit", () => {
@@ -320,7 +341,7 @@ describe("Space / Enter 全局快捷键", () => {
       mkEvent({ code: "Space", key: " " }),
     );
     expect(session.submit).toHaveBeenCalledOnce();
-    expect(session.selectNext).not.toHaveBeenCalled();
+    expect(session.advanceQuestionFlow).not.toHaveBeenCalled();
   });
 
   it("填空题上的 Enter → submit", () => {

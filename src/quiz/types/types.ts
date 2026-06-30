@@ -28,6 +28,7 @@ export interface QuestionInputProps {
   question: Question;
   showResult: boolean;
   isCorrect: boolean;
+  readonlyDisplayMode?: "answer" | "preview";
   autoSubmitOnSelection: boolean;
   shuffledOptions: ShuffledOption[];
   selectedAnswers: number[];

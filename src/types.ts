@@ -49,7 +49,7 @@ export interface UserSettings {
   correctStreakAfterMistake: number;
   /** 新题入池模式：random=随机入池，sequential=按题库顺序入池 */
   selectionMode: QuestionOrder;
-  /** 新题进入活动池时弹窗提示题目与答案（适合初次了解题库） */
+  /** 新题进入活动池后，在下一步前插入一次题目预览（适合初次了解题库） */
   notifyNewQuestionInPool: boolean;
   /** 是否启用音效（仅 library 模式使用） */
   soundEnabled?: boolean;

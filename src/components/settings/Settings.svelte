@@ -17,7 +17,6 @@
     import { useQuizSession } from "@/quiz/session/context";
     import QuestionOrder from "./QuestionOrder.svelte";
     import SoundSettings from "$sound-settings";
-    import { QUESTION_TYPES } from "@/quiz/types/registry";
     import { IconInfoCircle } from "@tabler/icons-svelte";
 
     interface Props {
@@ -137,12 +136,7 @@
                                 </Tooltip.Trigger>
                                 <Tooltip.Content side="top" align="center">
                                     <span class="flex items-center"
-                                        ><QUESTION_TYPES.single.icon
-                                            size={12}
-                                        />单选&thinsp;/&thinsp;
-                                        <QUESTION_TYPES.judgment.icon
-                                            size={12}
-                                        />判断&ensp;题选中时，自动提交答案。
+                                        >单选&thinsp;/&thinsp;判断&thinsp;题选中时，自动提交答案。
                                     </span>
                                 </Tooltip.Content>
                             </Tooltip.Root>
@@ -163,7 +157,7 @@
                         for="notify-new-question"
                         class="text-sm font-normal flex items-center gap-1"
                     >
-                        新题入池时弹窗提示
+                        新题入池时预览
                         <Tooltip.Root>
                             <Tooltip.Trigger>
                                 {#snippet child({ props })}
@@ -171,15 +165,18 @@
                                         {...props}
                                         type="button"
                                         class="text-muted-foreground hover:text-foreground inline-flex items-center justify-center"
-                                        aria-label="关于新题入池提示"
+                                        aria-label="关于新题入池预览"
                                     >
-                                        <IconInfoCircle size={14} stroke={1.5} />
+                                        <IconInfoCircle
+                                            size={14}
+                                            stroke={1.5}
+                                        />
                                     </button>
                                 {/snippet}
                             </Tooltip.Trigger>
                             <Tooltip.Content side="top" align="center">
                                 <span class="max-w-56 text-pretty">
-                                    每当有新题进入活动题池，弹窗展示题目与答案。适合初次了解题库内容。
+                                    每当有新题进入活动题池，继续前先插入一次题目与答案预览。适合初次了解题库内容。
                                 </span>
                             </Tooltip.Content>
                         </Tooltip.Root>

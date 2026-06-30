@@ -8,6 +8,7 @@
     let {
         question,
         showResult,
+        readonlyDisplayMode = "answer",
         autoSubmitOnSelection,
         selectedAnswers,
         onSelectedAnswersChange,
@@ -35,13 +36,17 @@
         showResult && (question.answer as boolean) === opt.value}
     {@const isWrong =
         showResult && isSelected && (question.answer as boolean) !== opt.value}
+    {@const isPreviewCorrect =
+        readonlyDisplayMode === "preview" && isOptionCorrect}
     {@const OptIcon = opt.icon}
     <button
         type="button"
         class={cn(
             "border-border bg-background hover:bg-muted flex items-center gap-3 rounded-lg border px-4 py-3.5 text-left text-base transition-colors disabled:cursor-default",
             isSelected && !showResult && "border-foreground bg-muted",
+            isPreviewCorrect && "border-warning bg-warning/8 text-warning",
             isOptionCorrect &&
+                !isPreviewCorrect &&
                 "border-success bg-success/8 text-success",
             isWrong && "border-destructive bg-destructive/8 text-destructive",
         )}

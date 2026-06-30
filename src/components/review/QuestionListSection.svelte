@@ -4,7 +4,7 @@
     import { useQuizSession } from "@/quiz/session/context";
     import { getVisibleRange } from "./virtualList/layout";
     import { VirtualScroll } from "./virtualList/useVirtualScroll.svelte";
-    import { CopyStatus } from "./useCopyStatus.svelte";
+    import { QuestionCopyStatusStore } from "../quiz/useQuestionCopyStatus.svelte";
     import QuestionCard from "./QuestionCard.svelte";
     import type { QuestionGroup } from "./virtualList/types";
 
@@ -24,7 +24,7 @@
 
     const session = useQuizSession();
     const vs = new VirtualScroll();
-    const copy = new CopyStatus(session);
+    const copy = new QuestionCopyStatusStore(session);
 
     // 把响应式 prop 喂给控制器，触发其内部 layouts 重算
     $effect(() => {

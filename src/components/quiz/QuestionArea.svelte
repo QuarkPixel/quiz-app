@@ -3,6 +3,7 @@
     import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import { cn } from "$lib/utils";
     import CopyQuestionButton from "./CopyQuestionButton.svelte";
+    import NewQuestionPreview from "./NewQuestionPreview.svelte";
     import IconCircleCheck from "@tabler/icons-svelte/icons/circle-check";
     import IconConfetti from "@tabler/icons-svelte/icons/confetti";
     import IconInputCheck from "@tabler/icons-svelte/icons/input-check";
@@ -30,7 +31,9 @@
     }
 </script>
 
-{#if session.currentQuestion && (session.currentPoolItem || session.showResult)}
+{#if session.isPreviewingNewQuestion && session.currentNewQuestion}
+    <NewQuestionPreview />
+{:else if session.currentQuestion && (session.currentPoolItem || session.showResult)}
     <div class="flex items-center gap-3">
         {#key session.currentQuestion.type}
             {@const TypeIcon =
@@ -174,7 +177,11 @@
                 提交答案
             </Button>
         {:else}
-            <Button size="lg" class="px-8" onclick={() => session.selectNext()}>
+            <Button
+                size="lg"
+                class="px-8"
+                onclick={() => session.advanceQuestionFlow()}
+            >
                 下一题
             </Button>
         {/if}

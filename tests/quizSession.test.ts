@@ -247,6 +247,19 @@ describe("markCurrentAsMastered", () => {
       session.appState.activePool.find((i) => i.id === targetId),
     ).toBeUndefined();
   });
+
+  it("当前题标记已掌握后若有新题入池，会先进入预览", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+    session.initialize();
+    session.appState.settings.notifyNewQuestionInPool = true;
+    session.newQuestionQueue = [session.questions.find((q) => q.id !== session.currentQuestion!.id)!];
+
+    session.markCurrentAsMastered();
+
+    expect(session.isPreviewingNewQuestion).toBe(true);
+    expect(session.currentNewQuestion).not.toBeNull();
+  });
 });
 
 describe("markAsMastered（任一池项）", () => {
@@ -620,6 +633,56 @@ describe("复制当前题目", () => {
 
     expect(result).toBe("copied");
     expect(writeTextMock).toHaveBeenCalledWith("判断题：\nq-only_q\n\n答案：正确");
+  });
+});
+
+describe("新题预览流程", () => {
+  it("advanceQuestionFlow 会先展示预览，再继续真正下一题", () => {
+    const { deps } = makeDeps();
+    const questions = [
+      q("current", "judgment", true),
+      q("preview", "judgment", false),
+      q("next", "judgment", true),
+    ];
+    const session = new QuizSession(makeBank(questions), deps);
+    session.appState.settings.selectionMode = "sequential";
+    session.initialize();
+    session.showResult = true;
+    session.newQuestionQueue = [questions[1]];
+
+    session.advanceQuestionFlow();
+
+    expect(session.isPreviewingNewQuestion).toBe(true);
+    expect(session.currentNewQuestion?.id).toBe("preview");
+    expect(session.currentQuestion?.id).toBe("current");
+
+    session.advanceQuestionFlow();
+
+    expect(session.isPreviewingNewQuestion).toBe(false);
+    expect(session.currentNewQuestion).toBeNull();
+    expect(session.showResult).toBe(false);
+    expect(session.currentQuestion?.id).not.toBe("current");
+  });
+
+  it("markPreviewQuestionAsMastered 会掌握当前预览题并继续流程", () => {
+    const { deps } = makeDeps();
+    const questions = [
+      q("current", "judgment", true),
+      q("preview", "judgment", false),
+      q("next", "judgment", true),
+    ];
+    const session = new QuizSession(makeBank(questions), deps);
+    session.appState.settings.selectionMode = "sequential";
+    session.initialize();
+    session.newQuestionQueue = [questions[1]];
+    session.isPreviewingNewQuestion = true;
+
+    session.markPreviewQuestionAsMastered();
+
+    expect(session.appState.masteredIds).toContain("preview");
+    expect(session.currentNewQuestion).toBeNull();
+    expect(session.isPreviewingNewQuestion).toBe(false);
+    expect(session.currentQuestion?.id).not.toBe("current");
   });
 });
 
