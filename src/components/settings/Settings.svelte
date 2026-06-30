@@ -176,7 +176,7 @@
                             </Tooltip.Trigger>
                             <Tooltip.Content side="top" align="center">
                                 <span class="max-w-56 text-pretty">
-                                    每当有新题进入活动题池，继续前先插入一次题目与答案预览。适合初次了解题库内容。
+                                    有新题进入活动题池时插入预览
                                 </span>
                             </Tooltip.Content>
                         </Tooltip.Root>
