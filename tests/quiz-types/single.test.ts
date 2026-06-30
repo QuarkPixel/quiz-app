@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { singleType } from "../../src/quiz/types/single";
 import type { Question } from "../../src/types";
-import type { QuestionCopyContext, ShuffledOption } from "../../src/quiz/types/types";
+import {
+  QuestionCopyPattern,
+  type QuestionCopyContext,
+  type ShuffledOption,
+} from "../../src/quiz/types/types";
 
 describe("singleType 元信息", () => {
   it("id / name 正确", () => {
@@ -115,15 +119,19 @@ describe("singleType.formatCopyText", () => {
     { text: "乙", originalIndex: 1 },
   ];
   const baseContext: QuestionCopyContext = {
-    showResult: false,
-    isCorrect: false,
     shuffledOptions: shuffled,
     selectedAnswers: [],
     blankAnswerInputs: [],
   };
 
   it("未作答时只复制题干和当前选项顺序", () => {
-    expect(singleType.formatCopyText(q, baseContext)).toBe(
+    expect(
+      singleType.formatCopyText(
+        q,
+        baseContext,
+        QuestionCopyPattern.QuestionOnly,
+      ),
+    ).toBe(
       ["单选题：", "请选择正确说法", "A. 丙", "B. 甲", "C. 乙"].join("\n"),
     );
   });
@@ -132,10 +140,8 @@ describe("singleType.formatCopyText", () => {
     expect(
       singleType.formatCopyText(q, {
         ...baseContext,
-        showResult: true,
-        isCorrect: true,
         selectedAnswers: [2],
-      }),
+      }, QuestionCopyPattern.QuestionWithAnswer),
     ).toBe(
       ["单选题：", "请选择正确说法", "A. 丙", "B. 甲", "C. 乙", "", "答案：A"].join(
         "\n",
@@ -147,9 +153,8 @@ describe("singleType.formatCopyText", () => {
     expect(
       singleType.formatCopyText(q, {
         ...baseContext,
-        showResult: true,
         selectedAnswers: [0],
-      }),
+      }, QuestionCopyPattern.QuestionWithMyAnswerAndAnswer),
     ).toBe(
       [
         "单选题：",

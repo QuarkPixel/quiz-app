@@ -49,6 +49,11 @@ import {
   EXPORT_STATUS_SUCCESS_RESET_MS,
 } from "@/config";
 import { QUESTION_TYPES } from "../types/registry";
+import type { QuestionTypeDef } from "../types/types";
+import {
+  QuestionCopyPattern,
+  type QuestionCopyContext,
+} from "../types/types";
 import {
   initializeSoundPreference,
   maybePlayAnswerSound,
@@ -83,6 +88,12 @@ export interface CopyQuestionOptions {
 }
 
 export type ShuffledOption = Option & { originalIndex: number };
+
+const EMPTY_COPY_CONTEXT: QuestionCopyContext = {
+  shuffledOptions: [],
+  selectedAnswers: [],
+  blankAnswerInputs: [],
+};
 
 export class QuizSession {
   readonly bank: Bank;
@@ -400,77 +411,36 @@ export class QuizSession {
 
   async copyCurrentQuestion(
     options: CopyQuestionOptions = {},
+    pattern?: QuestionCopyPattern,
   ): Promise<CopyQuestionResult> {
     if (!this.currentQuestion || !this.currentTypeDef) return "unavailable";
 
-    const text = this.currentTypeDef.formatCopyText(this.currentQuestion, {
-      showResult: this.showResult,
-      isCorrect: this.isCorrect,
-      shuffledOptions: this.shuffledOptions,
-      selectedAnswers: this.selectedAnswers,
-      blankAnswerInputs: this.blankAnswerInputs,
-    });
-
-    try {
-      await writeText(text);
-      this.setCopyQuestionStatus("copied");
-      if (options.announce) {
-        this.deps.toast(
-          "题目已复制到剪贴板",
-          "可直接粘贴到任意位置。",
-          "success",
-        );
-      }
-      return "copied";
-    } catch {
-      this.setCopyQuestionStatus("error");
-      if (options.announce) {
-        this.deps.toast(
-          "复制失败",
-          "当前浏览器不允许写入剪贴板。",
-          "destructive",
-        );
-      }
-      return "error";
-    }
+    return this.copyQuestionInternal(
+      this.currentQuestion,
+      this.currentTypeDef,
+      this.getCurrentQuestionCopyContext(),
+      options,
+      pattern ?? this.getCurrentQuestionCopyPattern(),
+      (status) => this.setCopyQuestionStatus(status),
+    );
   }
 
   /** 复制指定题目文本（用于列表等非当前题场景）。 */
-  async copyQuestionText(
+  async copyQuestion(
     question: Question,
     options: CopyQuestionOptions = {},
+    pattern: QuestionCopyPattern = QuestionCopyPattern.QuestionWithAnswer,
   ): Promise<CopyQuestionResult> {
     const typeDef = QUESTION_TYPES[question.type];
     if (!typeDef) return "unavailable";
 
-    const text = typeDef.formatCopyText(question, {
-      showResult: true,
-      isCorrect: true,
-      shuffledOptions: [],
-      selectedAnswers: [],
-      blankAnswerInputs: [],
-    });
-
-    try {
-      await writeText(text);
-      if (options.announce) {
-        this.deps.toast(
-          "题目已复制到剪贴板",
-          "可直接粘贴到任意位置。",
-          "success",
-        );
-      }
-      return "copied";
-    } catch {
-      if (options.announce) {
-        this.deps.toast(
-          "复制失败",
-          "当前浏览器不允许写入剪贴板。",
-          "destructive",
-        );
-      }
-      return "error";
-    }
+    return this.copyQuestionInternal(
+      question,
+      typeDef,
+      EMPTY_COPY_CONTEXT,
+      options,
+      pattern,
+    );
   }
 
   /** 算法相关设置变更：钳值、重 reconcile 活动池 */
@@ -600,6 +570,55 @@ export class QuizSession {
       this.copyQuestionStatus = "idle";
       this.copyQuestionResetTimer = null;
     }, 1800);
+  }
+
+  private getCurrentQuestionCopyContext(): QuestionCopyContext {
+    return {
+      shuffledOptions: this.shuffledOptions,
+      selectedAnswers: this.selectedAnswers,
+      blankAnswerInputs: this.blankAnswerInputs,
+    };
+  }
+
+  private getCurrentQuestionCopyPattern(): QuestionCopyPattern {
+    if (!this.showResult) return QuestionCopyPattern.QuestionOnly;
+    return this.isCorrect
+      ? QuestionCopyPattern.QuestionWithAnswer
+      : QuestionCopyPattern.QuestionWithMyAnswerAndAnswer;
+  }
+
+  private async copyQuestionInternal(
+    question: Question,
+    typeDef: QuestionTypeDef,
+    context: QuestionCopyContext,
+    options: CopyQuestionOptions,
+    pattern: QuestionCopyPattern,
+    onStatus?: (status: CopyQuestionStatus) => void,
+  ): Promise<CopyQuestionResult> {
+    const text = typeDef.formatCopyText(question, context, pattern);
+
+    try {
+      await writeText(text);
+      onStatus?.("copied");
+      if (options.announce) {
+        this.deps.toast(
+          "题目已复制到剪贴板",
+          "可直接粘贴到任意位置。",
+          "success",
+        );
+      }
+      return "copied";
+    } catch {
+      onStatus?.("error");
+      if (options.announce) {
+        this.deps.toast(
+          "复制失败",
+          "当前浏览器不允许写入剪贴板。",
+          "destructive",
+        );
+      }
+      return "error";
+    }
   }
 
   private markCurrentQuestionAsShown(): void {

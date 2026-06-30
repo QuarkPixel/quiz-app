@@ -12,6 +12,7 @@ import {
   createDefaultSettings,
 } from "../src/store";
 import { STORAGE_KEY_DEFAULT_SETTINGS } from "../src/config";
+import { QuestionCopyPattern } from "../src/quiz/types/types";
 
 const { writeTextMock, readTextMock } = vi.hoisted(() => ({
   writeTextMock: vi.fn(),
@@ -546,6 +547,23 @@ describe("复制当前题目", () => {
     expect(writeTextMock).toHaveBeenCalledWith("判断题：\nq-only_q");
   });
 
+  it("copyCurrentQuestion 支持显式 pattern", async () => {
+    const { deps } = makeDeps();
+
+    const session = new QuizSession(
+      makeBank([q("only_q", "judgment", true)]),
+      deps,
+    );
+    session.initialize();
+    const result = await session.copyCurrentQuestion(
+      {},
+      QuestionCopyPattern.QuestionWithAnswer,
+    );
+
+    expect(result).toBe("copied");
+    expect(writeTextMock).toHaveBeenCalledWith("判断题：\nq-only_q\n\n答案：正确");
+  });
+
   it("copyCurrentQuestion 快捷键触发时用 toast 反馈", async () => {
     const { deps, toast } = makeDeps();
 
@@ -589,6 +607,19 @@ describe("复制当前题目", () => {
 
     expect(result).toBe("error");
     expect(session.copyQuestionStatus).toBe("error");
+  });
+
+  it("copyQuestion 默认复制题干和答案", async () => {
+    const { deps } = makeDeps();
+
+    const session = new QuizSession(
+      makeBank([q("only_q", "judgment", true)]),
+      deps,
+    );
+    const result = await session.copyQuestion(session.questions[0]);
+
+    expect(result).toBe("copied");
+    expect(writeTextMock).toHaveBeenCalledWith("判断题：\nq-only_q\n\n答案：正确");
   });
 });
 

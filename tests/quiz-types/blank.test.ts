@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { blankType } from "../../src/quiz/types/blank";
 import type { Question } from "../../src/types";
-import type { QuestionCopyContext } from "../../src/quiz/types/types";
+import {
+  QuestionCopyPattern,
+  type QuestionCopyContext,
+} from "../../src/quiz/types/types";
 
 describe("blankType 元信息", () => {
   it("id / name 正确", () => {
@@ -95,15 +98,19 @@ describe("blankType.formatAnswerText", () => {
 describe("blankType.formatCopyText", () => {
   const q: Question = { id: "b1", type: "blank", question: "默写 hello", answer: "hello" };
   const baseContext: QuestionCopyContext = {
-    showResult: false,
-    isCorrect: false,
     shuffledOptions: [],
     selectedAnswers: [],
     blankAnswerInputs: [],
   };
 
   it("未作答时复制题干", () => {
-    expect(blankType.formatCopyText(q, baseContext)).toBe(
+    expect(
+      blankType.formatCopyText(
+        q,
+        baseContext,
+        QuestionCopyPattern.QuestionOnly,
+      ),
+    ).toBe(
       ["填空题：", "默写 hello"].join("\n"),
     );
   });
@@ -112,10 +119,8 @@ describe("blankType.formatCopyText", () => {
     expect(
       blankType.formatCopyText(q, {
         ...baseContext,
-        showResult: true,
-        isCorrect: true,
         blankAnswerInputs: ["hello"],
-      }),
+      }, QuestionCopyPattern.QuestionWithAnswer),
     ).toBe(["填空题：", "默写 hello", "", "答案：hello"].join("\n"));
   });
 
@@ -123,9 +128,8 @@ describe("blankType.formatCopyText", () => {
     expect(
       blankType.formatCopyText(q, {
         ...baseContext,
-        showResult: true,
         blankAnswerInputs: ["helo"],
-      }),
+      }, QuestionCopyPattern.QuestionWithMyAnswerAndAnswer),
     ).toBe(
       ["填空题：", "默写 hello", "", "我的答案：helo", "实际答案：hello"].join("\n"),
     );

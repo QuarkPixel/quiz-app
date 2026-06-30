@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { multipleType } from "../../src/quiz/types/multiple";
 import type { Question } from "../../src/types";
-import type { QuestionCopyContext, ShuffledOption } from "../../src/quiz/types/types";
+import {
+  QuestionCopyPattern,
+  type QuestionCopyContext,
+  type ShuffledOption,
+} from "../../src/quiz/types/types";
 
 describe("multipleType 元信息", () => {
   it("id / name 正确", () => {
@@ -118,15 +122,19 @@ describe("multipleType.formatCopyText", () => {
     { text: "丁", originalIndex: 3 },
   ];
   const baseContext: QuestionCopyContext = {
-    showResult: false,
-    isCorrect: false,
     shuffledOptions: shuffled,
     selectedAnswers: [],
     blankAnswerInputs: [],
   };
 
   it("未作答时复制题干和当前选项顺序", () => {
-    expect(multipleType.formatCopyText(q, baseContext)).toBe(
+    expect(
+      multipleType.formatCopyText(
+        q,
+        baseContext,
+        QuestionCopyPattern.QuestionOnly,
+      ),
+    ).toBe(
       ["多选题：", "请选择所有正确项", "A. 丙", "B. 乙", "C. 甲", "D. 丁"].join(
         "\n",
       ),
@@ -137,10 +145,8 @@ describe("multipleType.formatCopyText", () => {
     expect(
       multipleType.formatCopyText(q, {
         ...baseContext,
-        showResult: true,
-        isCorrect: true,
         selectedAnswers: [2, 0],
-      }),
+      }, QuestionCopyPattern.QuestionWithAnswer),
     ).toBe(
       [
         "多选题：",
@@ -159,9 +165,8 @@ describe("multipleType.formatCopyText", () => {
     expect(
       multipleType.formatCopyText(q, {
         ...baseContext,
-        showResult: true,
         selectedAnswers: [3, 2],
-      }),
+      }, QuestionCopyPattern.QuestionWithMyAnswerAndAnswer),
     ).toBe(
       [
         "多选题：",

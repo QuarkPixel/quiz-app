@@ -1,10 +1,12 @@
 import type { Question } from "../../types";
 import type {
   QuestionCopyContext,
+  QuestionCopyPattern,
   QuestionKeyboardAction,
   QuestionKeyboardEvent,
   ShuffledOption,
 } from "./types";
+import { finalizeQuestionCopyText } from "./copy";
 
 /**
  * 选择题（single / multiple）共享的校验逻辑。
@@ -150,6 +152,7 @@ export function formatChoiceCopyText(
   question: Question,
   context: QuestionCopyContext,
   heading: string,
+  pattern: QuestionCopyPattern,
 ): string {
   const options = displayOptions(question, context.shuffledOptions);
   const lines = [
@@ -157,8 +160,6 @@ export function formatChoiceCopyText(
     question.question,
     ...options.map((opt, idx) => `${copyChoiceLetter(idx)}. ${opt.text}`),
   ];
-
-  if (!context.showResult) return lines.join("\n");
 
   const correctAnswer = choiceCopyLetters(
     question,
@@ -171,15 +172,8 @@ export function formatChoiceCopyText(
     context.selectedAnswers,
   );
 
-  if (context.isCorrect || !myAnswer) {
-    lines.push("", `答案：${correctAnswer}`);
-  } else {
-    lines.push(
-      "",
-      `我的答案：${myAnswer}`,
-      `实际答案：${correctAnswer}`,
-    );
-  }
-
-  return lines.join("\n");
+  return finalizeQuestionCopyText(lines, pattern, {
+    correctAnswer,
+    myAnswer,
+  });
 }

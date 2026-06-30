@@ -34,8 +34,8 @@ export const multipleLogic: QuestionTypeLogic = {
     return formatChoiceAnswerText(question);
   },
 
-  formatCopyText(question, context) {
-    return formatChoiceCopyText(question, context, "多选题");
+  formatCopyText(question, context, pattern) {
+    return formatChoiceCopyText(question, context, "多选题", pattern);
   },
 
   getCorrectChoiceLetters(question: Question, shuffledOptions) {

@@ -1,5 +1,6 @@
 import type { Question } from "../../../types";
 import { matchAnswer } from "../../../features/quiz/answerMatcher";
+import { finalizeQuestionCopyText } from "../copy";
 import type { QuestionTypeLogic } from "../types";
 import { submitOrNextAction } from "../_choice";
 
@@ -35,10 +36,8 @@ export const blankLogic: QuestionTypeLogic = {
     return question.answer as string;
   },
 
-  formatCopyText(question: Question, context) {
+  formatCopyText(question: Question, context, pattern) {
     const lines = ["填空题：", question.question];
-
-    if (!context.showResult) return lines.join("\n");
 
     const correctAnswer = Array.isArray(question.answer)
       ? (question.answer as string[]).join(" | ")
@@ -47,14 +46,10 @@ export const blankLogic: QuestionTypeLogic = {
       .map((value) => value.trim())
       .filter(Boolean)
       .join(" | ");
-
-    if (context.isCorrect || !myAnswer) {
-      lines.push("", `答案：${correctAnswer}`);
-    } else {
-      lines.push("", `我的答案：${myAnswer}`, `实际答案：${correctAnswer}`);
-    }
-
-    return lines.join("\n");
+    return finalizeQuestionCopyText(lines, pattern, {
+      correctAnswer,
+      myAnswer,
+    });
   },
 
   getCorrectChoiceLetters() {

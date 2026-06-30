@@ -34,8 +34,8 @@ export const singleLogic: QuestionTypeLogic = {
     return formatChoiceAnswerText(question);
   },
 
-  formatCopyText(question, context) {
-    return formatChoiceCopyText(question, context, "单选题");
+  formatCopyText(question, context, pattern) {
+    return formatChoiceCopyText(question, context, "单选题", pattern);
   },
 
   getCorrectChoiceLetters(question: Question, shuffledOptions) {

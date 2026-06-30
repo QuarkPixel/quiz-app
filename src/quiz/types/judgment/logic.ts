@@ -1,4 +1,5 @@
 import type { Question } from "../../../types";
+import { finalizeQuestionCopyText } from "../copy";
 import type { QuestionTypeLogic } from "../types";
 import { submitOrNextAction } from "../_choice";
 
@@ -30,25 +31,15 @@ export const judgmentLogic: QuestionTypeLogic = {
     return question.answer ? "正确" : "错误";
   },
 
-  formatCopyText(question: Question, context) {
+  formatCopyText(question: Question, context, pattern) {
     const lines = ["判断题：", question.question];
-
-    if (!context.showResult) return lines.join("\n");
 
     const correctAnswer = question.answer ? "正确" : "错误";
     const selected = context.selectedAnswers[0];
-
-    if (context.isCorrect || selected === undefined) {
-      lines.push("", `答案：${correctAnswer}`);
-    } else {
-      lines.push(
-        "",
-        `我的答案：${selected === 0 ? "正确" : "错误"}`,
-        `实际答案：${correctAnswer}`,
-      );
-    }
-
-    return lines.join("\n");
+    return finalizeQuestionCopyText(lines, pattern, {
+      correctAnswer,
+      myAnswer: selected === undefined ? null : selected === 0 ? "正确" : "错误",
+    });
   },
 
   getCorrectChoiceLetters() {

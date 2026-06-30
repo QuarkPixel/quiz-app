@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { judgmentType } from "../../src/quiz/types/judgment";
 import type { Question } from "../../src/types";
-import type { QuestionCopyContext } from "../../src/quiz/types/types";
+import {
+  QuestionCopyPattern,
+  type QuestionCopyContext,
+} from "../../src/quiz/types/types";
 
 describe("judgmentType 元信息", () => {
   it("id / name 正确", () => {
@@ -81,15 +84,19 @@ describe("judgmentType.formatAnswerText", () => {
 describe("judgmentType.formatCopyText", () => {
   const q: Question = { id: "j1", type: "judgment", question: "地球是圆的", answer: true };
   const baseContext: QuestionCopyContext = {
-    showResult: false,
-    isCorrect: false,
     shuffledOptions: [],
     selectedAnswers: [],
     blankAnswerInputs: [],
   };
 
   it("未作答时复制判断题选项", () => {
-    expect(judgmentType.formatCopyText(q, baseContext)).toBe(
+    expect(
+      judgmentType.formatCopyText(
+        q,
+        baseContext,
+        QuestionCopyPattern.QuestionOnly,
+      ),
+    ).toBe(
       ["判断题：", "地球是圆的"].join("\n"),
     );
   });
@@ -98,9 +105,8 @@ describe("judgmentType.formatCopyText", () => {
     expect(
       judgmentType.formatCopyText(q, {
         ...baseContext,
-        showResult: true,
         selectedAnswers: [1],
-      }),
+      }, QuestionCopyPattern.QuestionWithMyAnswerAndAnswer),
     ).toBe(
       ["判断题：", "地球是圆的", "", "我的答案：错误", "实际答案：正确"].join(
         "\n",

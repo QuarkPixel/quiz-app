@@ -46,9 +46,14 @@ export interface QuestionReviewProps {
 }
 
 /** 复制当前题目时需要的答题上下文。 */
+export enum QuestionCopyPattern {
+  QuestionOnly = "question-only",
+  QuestionWithAnswer = "question-with-answer",
+  QuestionWithMyAnswerAndAnswer = "question-with-my-answer-and-answer",
+}
+
+/** 复制题目时，题型层需要知道的作答上下文。 */
 export interface QuestionCopyContext {
-  showResult: boolean;
-  isCorrect: boolean;
   shuffledOptions: ShuffledOption[];
   selectedAnswers: number[];
   blankAnswerInputs: string[];
@@ -148,7 +153,11 @@ export interface QuestionTypeLogic {
   formatAnswerText(question: Question): string;
 
   /** 当前题目的剪贴板文本。按钮在 QuestionArea，文案由各题型自己生成。 */
-  formatCopyText(question: Question, context: QuestionCopyContext): string;
+  formatCopyText(
+    question: Question,
+    context: QuestionCopyContext,
+    pattern: QuestionCopyPattern,
+  ): string;
 
   /**
    * 答错反馈用的字母（基于 shuffled 后位置）。
