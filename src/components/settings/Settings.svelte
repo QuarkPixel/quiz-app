@@ -18,6 +18,8 @@
     import QuestionOrder from "./QuestionOrder.svelte";
     import SoundSettings from "$sound-settings";
     import { IconInfoCircle } from "@tabler/icons-svelte";
+    import { cn } from "@/lib/utils";
+    import { getLearningLevelColor } from "@/features/quiz/learningProgress";
 
     interface Props {
         open?: boolean;
@@ -205,9 +207,15 @@
                     <Label for="pool-size" class="text-sm font-normal">
                         活动题目池大小
                         <div class="w-8 h-1 flex rounded-full overflow-hidden">
-                            <div class="bg-[#829A4C] h-full w-1/3"></div>
-                            <div class="bg-[#B9AC49] h-full w-1/3"></div>
-                            <div class="bg-[#F1BB58] h-full w-1/3"></div>
+                            {#each [0, 1, 2] as level}
+                                <div
+                                    style:background-color={getLearningLevelColor(
+                                        level,
+                                        2,
+                                    )}
+                                    class="h-full w-1/3"
+                                ></div>
+                            {/each}
                         </div>
                     </Label>
                     <Input
