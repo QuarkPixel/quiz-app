@@ -208,7 +208,7 @@
                             />
                             {#if !entry.item.hasBeenShown}
                                 <span
-                                    class="font-semibold font-mono text-success"
+                                    class="font-semibold font-mono text-warning"
                                 >
                                     NEW
                                 </span>
