@@ -18,7 +18,6 @@
     import QuestionOrder from "./QuestionOrder.svelte";
     import SoundSettings from "$sound-settings";
     import { IconInfoCircle } from "@tabler/icons-svelte";
-    import { cn } from "@/lib/utils";
     import { getLearningLevelColor } from "@/features/quiz/learningProgress";
 
     interface Props {
