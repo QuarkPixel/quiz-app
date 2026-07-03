@@ -45,6 +45,47 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isBankSummary(value: unknown): value is BankSummary {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.hash === "string" &&
+    value.hash.length > 0 &&
+    typeof value.name === "string" &&
+    isFiniteNumber(value.count) &&
+    isFiniteNumber(value.addedAt)
+  );
+}
+
+function readLibraryIndex(): BankSummary[] {
+  const raw = readJson<unknown>(STORAGE_KEY_LIBRARY, []);
+  if (!Array.isArray(raw)) {
+    console.warn("Failed to load library index: expected an array.");
+    return [];
+  }
+
+  const result: BankSummary[] = [];
+  const seenHashes = new Set<string>();
+  for (const item of raw) {
+    if (!isBankSummary(item) || seenHashes.has(item.hash)) continue;
+    seenHashes.add(item.hash);
+    result.push(item);
+  }
+
+  if (result.length !== raw.length) {
+    console.warn("Ignored invalid entries in library index.");
+  }
+
+  return result;
+}
+
 export class LibrarySource implements QuizSource {
   readonly mode = "library" as const;
 
@@ -56,7 +97,7 @@ export class LibrarySource implements QuizSource {
   private questionsCache = new Map<string, Question[]>();
 
   constructor() {
-    this.index = readJson<BankSummary[]>(STORAGE_KEY_LIBRARY, []);
+    this.index = readLibraryIndex();
     const savedActive = localStorage.getItem(STORAGE_KEY_ACTIVE_BANK);
     this.activeHash =
       savedActive && this.index.some((b) => b.hash === savedActive)

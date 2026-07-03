@@ -4,7 +4,7 @@ import {
   QuizSession,
 } from "../src/quiz/session/QuizSession.svelte";
 import type { Bank } from "../src/source/types";
-import type { Question, QuestionType } from "../src/types";
+import type { Question, QuestionType, StoredState } from "../src/types";
 import {
   saveState,
   loadStoredState,
@@ -745,6 +745,33 @@ describe("导出 / 导入", () => {
     session.importConfirmText = "blah";
     session.cancelImport();
     expect(session.importConfirmText).toBeNull();
+  });
+
+  it("applyImportedState 会 sanitize 导入设置后再重建运行态", () => {
+    const { deps } = makeDeps();
+    const session = new QuizSession(makeBank(), deps);
+    const imported: StoredState = {
+      masteredIds: [],
+      masteredMistakes: {},
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: {
+        ...createDefaultSettings(),
+        activePoolSize: 9999,
+        correctStreakToMaster: 0,
+        correctStreakAfterMistake: 999,
+        selectionMode: "invalid" as StoredState["settings"]["selectionMode"],
+      },
+      ui: { progressFocused: false, showPool: false },
+    };
+
+    session.applyImportedState(imported);
+
+    expect(session.appState.settings.activePoolSize).toBe(100);
+    expect(session.appState.settings.correctStreakToMaster).toBe(1);
+    expect(session.appState.settings.correctStreakAfterMistake).toBe(20);
+    expect(session.appState.settings.selectionMode).toBe("random");
   });
 });
 

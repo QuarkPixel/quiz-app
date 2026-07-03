@@ -70,6 +70,23 @@ function decodeSoundEnabled(raw: unknown): boolean {
   return SOUND_ENABLED_BY_DEFAULT;
 }
 
+function requireNonNegativeInteger(raw: unknown, message: string): number {
+  if (
+    typeof raw !== "number" ||
+    !Number.isInteger(raw) ||
+    raw < 0
+  ) {
+    throw new Error(message);
+  }
+  return raw;
+}
+
+function decodeFlag(raw: unknown, message: string): boolean {
+  if (raw === 1 || raw === true) return true;
+  if (raw === 0 || raw === false) return false;
+  throw new Error(message);
+}
+
 // ── 题目索引 / bitmap 编解码 ───────────────────────────────────────────────────
 
 interface QuestionIndex {
@@ -213,10 +230,10 @@ function decodeActivePool(
 
     const [
       questionIndex,
-      consecutiveCorrect,
-      hasEverMistaken,
-      lastSelectedRound,
-      hasBeenShown,
+      consecutiveCorrectRaw,
+      hasEverMistakenRaw,
+      lastSelectedRoundRaw,
+      hasBeenShownRaw,
     ] = item;
 
     if (
@@ -230,10 +247,22 @@ function decodeActivePool(
 
     return {
       id: questionIds[questionIndex],
-      consecutiveCorrect: consecutiveCorrect as number,
-      hasEverMistaken: hasEverMistaken === 1,
-      hasBeenShown: hasBeenShown === 1,
-      lastSelectedRound: lastSelectedRound as number,
+      consecutiveCorrect: requireNonNegativeInteger(
+        consecutiveCorrectRaw,
+        "数据格式无效：活动池连续答对次数格式错误。",
+      ),
+      hasEverMistaken: decodeFlag(
+        hasEverMistakenRaw,
+        "数据格式无效：活动池答错标记格式错误。",
+      ),
+      hasBeenShown: decodeFlag(
+        hasBeenShownRaw,
+        "数据格式无效：活动池展示标记格式错误。",
+      ),
+      lastSelectedRound: requireNonNegativeInteger(
+        lastSelectedRoundRaw,
+        "数据格式无效：活动池轮次格式错误。",
+      ),
     };
   });
 }
@@ -425,11 +454,10 @@ export async function importProgress(
     masteredMistakesRaw,
   ] = compact as unknown[];
 
-  if (
-    typeof version !== "number" ||
-    version < MIN_SUPPORTED_FORMAT_VERSION ||
-    version > FORMAT_VERSION
-  ) {
+  if (typeof version !== "number" || !Number.isInteger(version)) {
+    throw new Error("数据格式无效：进度格式版本格式错误。");
+  }
+  if (version < MIN_SUPPORTED_FORMAT_VERSION || version > FORMAT_VERSION) {
     throw new Error("数据格式无效：进度格式版本不支持。");
   }
   if (version >= 5 && compact.length !== 9) {
@@ -438,7 +466,11 @@ export async function importProgress(
   if (version === MIN_SUPPORTED_FORMAT_VERSION && compact.length !== 8) {
     throw new Error("数据格式无效：结构不符合预期。");
   }
-  if (questionCount !== ids.length) {
+  const decodedQuestionCount = requireNonNegativeInteger(
+    questionCount,
+    "数据格式无效：题目数量格式错误。",
+  );
+  if (decodedQuestionCount !== ids.length) {
     throw new Error("数据格式无效：题目数量不匹配。");
   }
   if (!Array.isArray(settingsRaw) || settingsRaw.length < 5) {
@@ -449,7 +481,23 @@ export async function importProgress(
   }
 
   // 还原数据
-  const activePoolSize = (settingsRaw[version >= 6 ? 2 : 1] as number);
+  const activePoolSizeIndex = version >= 6 ? 2 : 1;
+  const correctStreakToMasterIndex = version >= 6 ? 3 : 2;
+  const correctStreakAfterMistakeIndex = version >= 6 ? 4 : 3;
+  const selectionModeIndex = version >= 6 ? 5 : 4;
+  const soundEnabledIndex = version >= 6 ? 6 : 5;
+  const activePoolSize = requireNonNegativeInteger(
+    settingsRaw[activePoolSizeIndex],
+    "数据格式无效：活动池大小设置格式错误。",
+  );
+  const currentRoundValue = requireNonNegativeInteger(
+    currentRound,
+    "数据格式无效：当前轮次格式错误。",
+  );
+  const filterCodeValue = requireNonNegativeInteger(
+    filterCode,
+    "数据格式无效：筛选类型格式错误。",
+  );
   const masteredIds = decodeMasteredBitmap(masteredBitmapRaw, ids);
   const masteredMistakes =
     version >= 5
@@ -458,32 +506,59 @@ export async function importProgress(
   const activePool = decodeActivePool(activeRaw, ids);
 
   const filterType: QuestionType | "all" =
-    CODE_TO_FILTER[filterCode as number] ?? "all";
+    CODE_TO_FILTER[filterCodeValue] ?? "all";
 
   const settings: UserSettings = {
-    autoNextOnCorrect: settingsRaw[0] === 1,
-    autoSubmitOnSelection: version >= 6 ? settingsRaw[1] !== 0 : true,
-    activePoolSize: version >= 6 ? (settingsRaw[2] as number) : activePoolSize,
-    correctStreakToMaster: (settingsRaw[version >= 6 ? 3 : 2] as number),
-    correctStreakAfterMistake: (settingsRaw[version >= 6 ? 4 : 3] as number),
+    autoNextOnCorrect: decodeFlag(
+      settingsRaw[0],
+      "数据格式无效：答对自动下一题设置格式错误。",
+    ),
+    autoSubmitOnSelection:
+      version >= 6
+        ? decodeFlag(
+            settingsRaw[1],
+            "数据格式无效：选择后自动提交设置格式错误。",
+          )
+        : true,
+    activePoolSize,
+    correctStreakToMaster: requireNonNegativeInteger(
+      settingsRaw[correctStreakToMasterIndex],
+      "数据格式无效：掌握次数设置格式错误。",
+    ),
+    correctStreakAfterMistake: requireNonNegativeInteger(
+      settingsRaw[correctStreakAfterMistakeIndex],
+      "数据格式无效：错题掌握次数设置格式错误。",
+    ),
     selectionMode:
-      settingsRaw[version >= 6 ? 5 : 4] === "sequential"
+      settingsRaw[selectionModeIndex] === "sequential"
         ? "sequential"
         : "random",
-    notifyNewQuestionInPool: version >= 7 ? settingsRaw[7] === 1 : false,
-    soundEnabled: decodeSoundEnabled(settingsRaw[version >= 6 ? 6 : 5]),
+    notifyNewQuestionInPool:
+      version >= 7
+        ? decodeFlag(
+            settingsRaw[7],
+            "数据格式无效：新题提示设置格式错误。",
+          )
+        : false,
+    soundEnabled: decodeSoundEnabled(settingsRaw[soundEnabledIndex]),
   };
 
   const ui: UiPreferences = {
-    progressFocused: uiRaw[0] === 1,
-    showPool: uiRaw[1] === 1,
+    progressFocused: decodeFlag(
+      uiRaw[0],
+      "数据格式无效：进度聚焦偏好格式错误。",
+    ),
+    showPool: decodeFlag(
+      uiRaw[1],
+      "数据格式无效：题池显示偏好格式错误。",
+    ),
   };
 
   return {
     masteredIds,
     masteredMistakes,
     activePool,
-    currentRound: currentRound as number,
+    currentRound: currentRoundValue,
     filterType,
     settings,
     ui,

@@ -553,6 +553,38 @@ describe("importProgress 错误处理", () => {
     );
   });
 
+  it("activePool 数值字段不是非负整数 → 拒绝导入", async () => {
+    const invalidStreak = await encodePayload(
+      compact({ activePool: [[2, "1", 0, 1, 1]] }),
+    );
+    await expect(importProgress(invalidStreak, HASH, QUESTIONS)).rejects.toThrow(
+      /活动池连续答对次数格式错误/,
+    );
+
+    const invalidRound = await encodePayload(
+      compact({ activePool: [[2, 1, 0, -1, 1]] }),
+    );
+    await expect(importProgress(invalidRound, HASH, QUESTIONS)).rejects.toThrow(
+      /活动池轮次格式错误/,
+    );
+  });
+
+  it("activePool 标记字段不是 0/1 → 拒绝导入", async () => {
+    const encoded = await encodePayload(
+      compact({ activePool: [[2, 1, "false", 1, 1]] }),
+    );
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /活动池答错标记格式错误/,
+    );
+  });
+
+  it("currentRound 不是非负整数 → 拒绝导入", async () => {
+    const encoded = await encodePayload(compact({ currentRound: "8" }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /当前轮次格式错误/,
+    );
+  });
+
   it("settings 不是数组或长度 < 5 → 设置格式错误", async () => {
     const encoded1 = await encodePayload(compact({ settings: "nope" }));
     await expect(importProgress(encoded1, HASH, QUESTIONS)).rejects.toThrow(
@@ -565,6 +597,22 @@ describe("importProgress 错误处理", () => {
     );
   });
 
+  it("settings 数值字段不是非负整数 → 拒绝导入", async () => {
+    const invalidPoolSize = await encodePayload(
+      compact({ settings: [0, "10", 3, 4, "random"] }),
+    );
+    await expect(importProgress(invalidPoolSize, HASH, QUESTIONS)).rejects.toThrow(
+      /活动池大小设置格式错误/,
+    );
+
+    const invalidThreshold = await encodePayload(
+      compact({ settings: [0, 10, "3", 4, "random"] }),
+    );
+    await expect(importProgress(invalidThreshold, HASH, QUESTIONS)).rejects.toThrow(
+      /掌握次数设置格式错误/,
+    );
+  });
+
   it("ui 不是数组或长度 < 2 → UI 偏好格式错误", async () => {
     const encoded1 = await encodePayload(compact({ ui: "nope" }));
     await expect(importProgress(encoded1, HASH, QUESTIONS)).rejects.toThrow(
@@ -574,6 +622,13 @@ describe("importProgress 错误处理", () => {
     const encoded2 = await encodePayload(compact({ ui: [1] }));
     await expect(importProgress(encoded2, HASH, QUESTIONS)).rejects.toThrow(
       /UI 偏好格式错误/,
+    );
+  });
+
+  it("ui 标记字段不是 0/1 → 拒绝导入", async () => {
+    const encoded = await encodePayload(compact({ ui: ["yes", 0] }));
+    await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
+      /进度聚焦偏好格式错误/,
     );
   });
 

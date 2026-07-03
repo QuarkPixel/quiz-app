@@ -9,6 +9,7 @@
     "preview": "node scripts/cli.js preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
+    "verify": "pnpm check && pnpm test && pnpm build && pnpm build -- --bundled",
     "test:watch": "vitest",
     "export-xml": "node scripts/export-xml.js"
   },

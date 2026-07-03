@@ -756,7 +756,7 @@
         <Dialog.Header>
             <Dialog.Title>{deleteDialogTitle()}</Dialog.Title>
             <Dialog.Description>
-                {@html deleteDialogDescription()}
+                {deleteDialogDescription()}
             </Dialog.Description>
         </Dialog.Header>
         <Dialog.Footer>

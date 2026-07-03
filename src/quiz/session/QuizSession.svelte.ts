@@ -34,6 +34,7 @@ import {
   rebuildRuntimeState,
   rebuildRuntimeStateForFilterChange,
   reconcileAfterSettingsChange,
+  sanitizeUserSettings,
   saveState,
   selectNextFromPool,
   shuffle,
@@ -534,6 +535,7 @@ export class QuizSession {
     const stateWithPending: RuntimeState = {
       ...newState,
       masteredMistakes: newState.masteredMistakes ?? {},
+      settings: sanitizeUserSettings(newState.settings),
       pendingIds: [],
     };
     this.appState = rebuildRuntimeState(
