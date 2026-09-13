@@ -237,29 +237,3 @@
         </div>
     </div>
 </div>
-
-<style>
-    .filter-collapsible {
-        display: grid;
-        grid-template-rows: 0fr;
-        transition: grid-template-rows 0.2s ease;
-    }
-    .filter-collapsible.expanded {
-        grid-template-rows: 1fr;
-    }
-    .filter-collapsible-inner {
-        overflow: hidden;
-    }
-    .dotted-leader {
-        height: 4px;
-        align-self: center;
-        background-image: radial-gradient(
-            circle,
-            currentColor 1px,
-            transparent 1.4px
-        );
-        background-size: 6px 4px;
-        background-position: center;
-        background-repeat: repeat-x;
-    }
-</style>
