@@ -17,7 +17,7 @@ import {
   CORRECT_STREAK_TO_MASTER,
   CORRECT_STREAK_AFTER_MISTAKE,
   STORAGE_PREFIX_STATE,
-  STORAGE_KEY_DEFAULT_SETTINGS,
+  STORAGE_KEY_GENERAL,
 } from "../src/config";
 import type {
   Question,
@@ -46,6 +46,19 @@ function makeQuestion(id: string, type: QuestionType = "judgment"): Question {
 
 const HASH = "test_hash";
 
+/** 把默认模板写进 general 配置（新布局只有这一个配置键）。 */
+function seedDefaultSettings(defaultSettings: unknown): void {
+  localStorage.setItem(
+    STORAGE_KEY_GENERAL,
+    JSON.stringify({ defaultSettings }),
+  );
+}
+
+function readGeneralDefaultSettings(): unknown {
+  const raw = localStorage.getItem(STORAGE_KEY_GENERAL);
+  return raw === null ? null : JSON.parse(raw).defaultSettings;
+}
+
 // ---------------------------------------------------------------------------
 // createDefaultSettings
 // ---------------------------------------------------------------------------
@@ -56,17 +69,23 @@ describe("createDefaultSettings", () => {
     expect(s.activePoolSize).toBe(ACTIVE_POOL_SIZE);
     expect(s.correctStreakToMaster).toBe(CORRECT_STREAK_TO_MASTER);
     expect(s.correctStreakAfterMistake).toBe(CORRECT_STREAK_AFTER_MISTAKE);
-    expect(s.autoNextOnCorrect).toBe(false);
-    expect(s.autoSubmitOnSelection).toBe(true);
     expect(s.selectionMode).toBe("random");
+    expect(s.notifyNewQuestionInPool).toBe(false);
   });
 
   it("每次返回独立对象", () => {
     const a = createDefaultSettings();
     const b = createDefaultSettings();
     expect(a).not.toBe(b);
-    a.autoNextOnCorrect = true;
-    expect(b.autoNextOnCorrect).toBe(false);
+    a.activePoolSize = 99;
+    expect(b.activePoolSize).toBe(ACTIVE_POOL_SIZE);
+  });
+
+  it("不包含全局字段（音效 / 自动提交 / 自动下一题）", () => {
+    const s = createDefaultSettings();
+    expect("soundEnabled" in s).toBe(false);
+    expect("autoSubmitOnSelection" in s).toBe(false);
+    expect("autoNextOnCorrect" in s).toBe(false);
   });
 });
 
@@ -79,31 +98,27 @@ describe("loadDefaultSettings", () => {
     expect(loadDefaultSettings()).toEqual(createDefaultSettings());
   });
 
-  it("读取本地持久化的默认设置，并用代码默认值补齐缺失字段", () => {
-    localStorage.setItem(
-      STORAGE_KEY_DEFAULT_SETTINGS,
-      JSON.stringify({
-        autoNextOnCorrect: true,
-        soundEnabled: true,
-      }),
-    );
+  it("读取 general 配置里持久化的默认设置，并用代码默认值补齐缺失字段", () => {
+    seedDefaultSettings({
+      activePoolSize: 42,
+      correctStreakToMaster: 5,
+      correctStreakAfterMistake: 8,
+      selectionMode: "sequential",
+      notifyNewQuestionInPool: true,
+    });
 
     const settings = loadDefaultSettings();
 
-    expect(settings.autoNextOnCorrect).toBe(true);
-    expect(settings.autoSubmitOnSelection).toBe(true);
-    expect(settings.soundEnabled).toBe(true);
-    expect(settings.activePoolSize).toBe(ACTIVE_POOL_SIZE);
-    expect(settings.correctStreakToMaster).toBe(CORRECT_STREAK_TO_MASTER);
-    expect(settings.correctStreakAfterMistake).toBe(
-      CORRECT_STREAK_AFTER_MISTAKE,
-    );
-    expect(settings.selectionMode).toBe("random");
+    expect(settings.activePoolSize).toBe(42);
+    expect(settings.correctStreakToMaster).toBe(5);
+    expect(settings.correctStreakAfterMistake).toBe(8);
+    expect(settings.selectionMode).toBe("sequential");
+    expect(settings.notifyNewQuestionInPool).toBe(true);
   });
 
   it("默认设置损坏时不抛错，回落到代码默认值", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    localStorage.setItem(STORAGE_KEY_DEFAULT_SETTINGS, "{not valid json");
+    localStorage.setItem(STORAGE_KEY_GENERAL, "{not valid json");
 
     expect(loadDefaultSettings()).toEqual(createDefaultSettings());
   });
@@ -174,45 +189,28 @@ describe("loadStoredState", () => {
     expect(state.ui).toEqual({ progressFocused: false, showPool: false });
   });
 
-  it("启用持久化默认设置时，无 bank state 的新题库使用本地默认设置", () => {
-    localStorage.setItem(
-      STORAGE_KEY_DEFAULT_SETTINGS,
-      JSON.stringify({
-        autoNextOnCorrect: true,
-        activePoolSize: 42,
-        correctStreakToMaster: 5,
-        correctStreakAfterMistake: 8,
-        selectionMode: "sequential",
-        soundEnabled: true,
-      }),
-    );
-
-    const state = loadStoredState("new_hash", {
-      usePersistedDefaultSettings: true,
-    });
-
-    expect(state.settings).toEqual({
-      autoNextOnCorrect: true,
-      autoSubmitOnSelection: true,
+  it("无 bank state 的新题库使用 general 配置里的默认模板", () => {
+    seedDefaultSettings({
       activePoolSize: 42,
       correctStreakToMaster: 5,
       correctStreakAfterMistake: 8,
-      notifyNewQuestionInPool: false,
       selectionMode: "sequential",
-      soundEnabled: true,
+      notifyNewQuestionInPool: true,
+    });
+
+    const state = loadStoredState("new_hash");
+
+    expect(state.settings).toEqual({
+      activePoolSize: 42,
+      correctStreakToMaster: 5,
+      correctStreakAfterMistake: 8,
+      selectionMode: "sequential",
+      notifyNewQuestionInPool: true,
     });
   });
 
-  it("未启用持久化默认设置时，忽略本地默认设置", () => {
-    localStorage.setItem(
-      STORAGE_KEY_DEFAULT_SETTINGS,
-      JSON.stringify({
-        autoNextOnCorrect: true,
-        activePoolSize: 42,
-      }),
-    );
-
-    const state = loadStoredState("bundled_like_hash");
+  it("没有持久化默认模板时，新题库使用代码默认值", () => {
+    const state = loadStoredState("fresh_hash");
 
     expect(state.settings).toEqual(createDefaultSettings());
   });
@@ -232,37 +230,31 @@ describe("loadStoredState", () => {
     expect(loaded.ui.showPool).toBe(false);
   });
 
-  it("bank settings 部分字段缺失时，用持久化默认设置补齐", () => {
-    localStorage.setItem(
-      STORAGE_KEY_DEFAULT_SETTINGS,
-      JSON.stringify({
-        autoNextOnCorrect: false,
-        activePoolSize: 33,
-        correctStreakToMaster: 4,
-        correctStreakAfterMistake: 7,
-        selectionMode: "sequential",
-        soundEnabled: true,
-      }),
-    );
+  it("bank settings 部分字段缺失时，用持久化默认模板补齐", () => {
+    seedDefaultSettings({
+      activePoolSize: 33,
+      correctStreakToMaster: 4,
+      correctStreakAfterMistake: 7,
+      selectionMode: "sequential",
+      notifyNewQuestionInPool: true,
+    });
     const partial = {
       masteredIds: [],
       activePool: [],
       currentRound: 0,
       filterType: "all",
-      settings: { autoNextOnCorrect: true },
+      // 只显式给了 activePoolSize，其余字段应从默认模板继承
+      settings: { activePoolSize: 30 },
     };
     localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(partial));
 
-    const loaded = loadStoredState(HASH, {
-      usePersistedDefaultSettings: true,
-    });
+    const loaded = loadStoredState(HASH);
 
-    expect(loaded.settings.autoNextOnCorrect).toBe(true);
-    expect(loaded.settings.activePoolSize).toBe(33);
+    expect(loaded.settings.activePoolSize).toBe(30);
     expect(loaded.settings.correctStreakToMaster).toBe(4);
     expect(loaded.settings.correctStreakAfterMistake).toBe(7);
     expect(loaded.settings.selectionMode).toBe("sequential");
-    expect(loaded.settings.soundEnabled).toBe(true);
+    expect(loaded.settings.notifyNewQuestionInPool).toBe(true);
   });
 
   it("ui 段完整 round-trip", () => {
@@ -296,25 +288,24 @@ describe("loadStoredState", () => {
     expect(loaded.filterType).toBe("single");
   });
 
-  it("settings 部分字段缺失 → 补默认", () => {
+  it("settings 内容非法 → 钳值 / 回退默认", () => {
     const partial = {
       masteredIds: [],
       activePool: [],
       currentRound: 0,
       filterType: "all",
-      settings: { autoNextOnCorrect: true }, // 其它字段缺失
+      settings: { activePoolSize: 1000, selectionMode: "nope" },
     };
     localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(partial));
     const loaded = loadStoredState(HASH);
-    expect(loaded.settings.autoNextOnCorrect).toBe(true);
-    expect(loaded.settings.activePoolSize).toBe(ACTIVE_POOL_SIZE);
+    expect(loaded.settings.activePoolSize).toBe(100);
+    expect(loaded.settings.selectionMode).toBe("random");
     expect(loaded.settings.correctStreakToMaster).toBe(
       CORRECT_STREAK_TO_MASTER,
     );
     expect(loaded.settings.correctStreakAfterMistake).toBe(
       CORRECT_STREAK_AFTER_MISTAKE,
     );
-    expect(loaded.settings.selectionMode).toBe("random");
   });
 
   it("损坏 JSON → 不抛错，返回默认状态", () => {
@@ -390,16 +381,16 @@ describe("saveState", () => {
       activePool: [],
       currentRound: 0,
       filterType: "all",
-      settings: { ...createDefaultSettings(), autoNextOnCorrect: true },
+      settings: { ...createDefaultSettings(), activePoolSize: 33 },
       pendingIds: [],
     };
 
     saveState(HASH, runtime);
 
-    expect(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)).toBeNull();
+    expect(localStorage.getItem(STORAGE_KEY_GENERAL)).toBeNull();
   });
 
-  it("传入 updateDefaultSettings 时同步写入持久化默认设置", () => {
+  it("传入 updateDefaultSettings 时同步写入 general 配置的默认模板", () => {
     const runtime: RuntimeState = {
       masteredIds: [],
       activePool: [],
@@ -407,19 +398,16 @@ describe("saveState", () => {
       filterType: "all",
       settings: {
         ...createDefaultSettings(),
-        autoNextOnCorrect: true,
         activePoolSize: 24,
         selectionMode: "sequential",
-        soundEnabled: true,
+        notifyNewQuestionInPool: true,
       },
       pendingIds: [],
     };
 
     saveState(HASH, runtime, { updateDefaultSettings: true });
 
-    expect(
-      JSON.parse(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)!),
-    ).toEqual(runtime.settings);
+    expect(readGeneralDefaultSettings()).toEqual(runtime.settings);
   });
 
   it("写入配额异常仅 warn 不抛错", () => {
@@ -465,7 +453,7 @@ describe("resetStoredState", () => {
   it("保留前次的 filterType 和 settings", () => {
     const settings = {
       ...createDefaultSettings(),
-      autoNextOnCorrect: true,
+      notifyNewQuestionInPool: true,
       activePoolSize: 30,
     };
     saveState(HASH, {
@@ -478,7 +466,7 @@ describe("resetStoredState", () => {
     });
     const reset = resetStoredState(HASH);
     expect(reset.filterType).toBe("single");
-    expect(reset.settings.autoNextOnCorrect).toBe(true);
+    expect(reset.settings.notifyNewQuestionInPool).toBe(true);
     expect(reset.settings.activePoolSize).toBe(30);
   });
 
@@ -671,12 +659,12 @@ describe("buildRuntimeState", () => {
       activePool: [],
       currentRound: 42,
       filterType: "all",
-      settings: { ...createDefaultSettings(), autoNextOnCorrect: true },
+      settings: { ...createDefaultSettings(), notifyNewQuestionInPool: true },
     };
     const runtime = buildRuntimeState(questions, state);
     expect(runtime.currentRound).toBe(42);
     expect(runtime.masteredIds).toEqual(["x"]);
-    expect(runtime.settings.autoNextOnCorrect).toBe(true);
+    expect(runtime.settings.notifyNewQuestionInPool).toBe(true);
   });
 });
 

@@ -59,10 +59,7 @@ describe("loadRuntimeState", () => {
     expect(state.activePool).toEqual([]);
     expect(state.currentRound).toBe(0);
     expect(state.filterType).toBe("all");
-    expect(state.settings).toEqual({
-      ...createDefaultSettings(),
-      soundEnabled: false,
-    });
+    expect(state.settings).toEqual(createDefaultSettings());
     expect(state.pendingIds).toEqual(["a", "b"]);
   });
 
@@ -289,7 +286,7 @@ describe("rebuildRuntimeState", () => {
     ];
     const settings = {
       ...createDefaultSettings(),
-      autoNextOnCorrect: true,
+      notifyNewQuestionInPool: true,
       activePoolSize: 30,
     };
     const state = baseRuntime({
@@ -300,7 +297,7 @@ describe("rebuildRuntimeState", () => {
     const rebuilt = rebuildRuntimeState(questions, state, "single");
     expect(rebuilt.masteredIds).toEqual(["x", "y"]);
     expect(rebuilt.currentRound).toBe(17);
-    expect(rebuilt.settings.autoNextOnCorrect).toBe(true);
+    expect(rebuilt.settings.notifyNewQuestionInPool).toBe(true);
     expect(rebuilt.settings.activePoolSize).toBe(30);
   });
 });
@@ -439,7 +436,7 @@ describe("createResetRuntimeState", () => {
     ];
     const settings = {
       ...createDefaultSettings(),
-      autoNextOnCorrect: true,
+      notifyNewQuestionInPool: true,
       activePoolSize: 40,
     };
     saveState(HASH, {
@@ -454,7 +451,7 @@ describe("createResetRuntimeState", () => {
     });
     const reset = createResetRuntimeState(questions, HASH);
     expect(reset.filterType).toBe("single");
-    expect(reset.settings.autoNextOnCorrect).toBe(true);
+    expect(reset.settings.notifyNewQuestionInPool).toBe(true);
     expect(reset.settings.activePoolSize).toBe(40);
   });
 
@@ -527,11 +524,11 @@ describe("createResetRuntimeState", () => {
       currentRound: 0,
       filterType: "all",
       settings: {
-        autoNextOnCorrect: true,
         activePoolSize: 9999,
         correctStreakToMaster: 0,
         correctStreakAfterMistake: 999,
         selectionMode: "random",
+        notifyNewQuestionInPool: true,
       },
     };
     localStorage.setItem(STORAGE_PREFIX_STATE + HASH, JSON.stringify(stored));
@@ -539,7 +536,7 @@ describe("createResetRuntimeState", () => {
     expect(reset.settings.activePoolSize).toBe(100);
     expect(reset.settings.correctStreakToMaster).toBe(1);
     expect(reset.settings.correctStreakAfterMistake).toBe(20);
-    // autoNextOnCorrect 保留
-    expect(reset.settings.autoNextOnCorrect).toBe(true);
+    // 按库偏好保留
+    expect(reset.settings.notifyNewQuestionInPool).toBe(true);
   });
 });

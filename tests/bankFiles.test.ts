@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LibraryImportSession } from "../src/features/libraryFiles";
+import { BankImportSession } from "../src/features/bankFiles";
 import type {
   ApplyStateResult,
   BankSummary,
@@ -8,7 +8,9 @@ import type {
 } from "../src/source/types";
 
 function jsonFile(name: string): File {
-  return new File(["[]"], name, { type: "application/json" });
+  return new File(['{"questions":[]}'], name, {
+    type: "application/json",
+  });
 }
 
 function createSource(
@@ -19,25 +21,29 @@ function createSource(
   applyStateToBank: ReturnType<typeof vi.fn>;
 } {
   const summaries: BankSummary[] = [
-    { hash: "existing", name: "既有题库", count: 1, addedAt: 0 },
+    { hash: "existing", name: "既有题库", mode: "quiz", count: 1, addedAt: 0 },
   ];
   const queue = [...importResults];
 
   return {
-    mode: "library",
     getActiveBank: () => null,
     subscribe: () => () => undefined,
     listBanks: () => summaries,
+    setActiveBank: () => undefined,
+    renameBank: () => undefined,
+    removeBank: () => undefined,
+    moveBanksToTop: () => undefined,
     importBank: vi.fn(async () => {
       const result = queue.shift();
       if (result === undefined) throw new Error("unexpected import");
       return result;
     }),
     applyStateToBank: vi.fn(async () => applyResult),
+    exportBank: vi.fn(async () => null),
   };
 }
 
-describe("library file import session", () => {
+describe("bank file import session", () => {
   it("summarizes multiple imports and lists each ordinary failure", async () => {
     const source = createSource([
       { kind: "ok", hash: "ok" },
@@ -45,7 +51,7 @@ describe("library file import session", () => {
       { kind: "duplicate", hash: "duplicate" },
     ]);
 
-    const session = await LibraryImportSession.create(source, [
+    const session = await BankImportSession.create(source, [
       jsonFile("ok.json"),
       jsonFile("bad.json"),
       jsonFile("duplicate.json"),
@@ -67,7 +73,7 @@ describe("library file import session", () => {
       { kind: "duplicate", hash: "existing", stateStr: "state-backup" },
     ]);
 
-    const session = await LibraryImportSession.create(source, [
+    const session = await BankImportSession.create(source, [
       jsonFile("bad.json"),
       jsonFile("existing.json"),
     ]);
@@ -93,7 +99,7 @@ describe("library file import session", () => {
   it("uses concise copy for a single successful file", async () => {
     const source = createSource([{ kind: "ok", hash: "ok" }]);
 
-    const session = await LibraryImportSession.create(source, [
+    const session = await BankImportSession.create(source, [
       jsonFile("single.json"),
     ]);
     const prompt = session.currentPrompt();
@@ -107,11 +113,11 @@ describe("library file import session", () => {
   });
 
   it("imports clipboard text with a stable fallback bank name", async () => {
-    const rawJson = '[{"id":"q1"}]';
+    const rawJson = '{"questions":[{"id":"q1"}]}';
     const source = createSource([{ kind: "ok", hash: "ok" }]);
     const readText = vi.fn(async () => rawJson);
 
-    const session = await LibraryImportSession.createFromClipboard(
+    const session = await BankImportSession.createFromClipboard(
       source,
       readText,
     );
@@ -131,7 +137,7 @@ describe("library file import session", () => {
     const source = createSource([]);
     const readText = vi.fn(async () => " \n ");
 
-    const session = await LibraryImportSession.createFromClipboard(
+    const session = await BankImportSession.createFromClipboard(
       source,
       readText,
     );
@@ -150,7 +156,7 @@ describe("library file import session", () => {
       throw new Error("permission denied");
     });
 
-    const session = await LibraryImportSession.createFromClipboard(
+    const session = await BankImportSession.createFromClipboard(
       source,
       readText,
     );

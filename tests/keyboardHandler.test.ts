@@ -56,10 +56,10 @@ function makeSessionStub(
     ],
     selectedAnswers: options.selectedAnswers ?? [],
     blankAnswerInputs: [""],
-    appState: {
-      settings: {
-        autoSubmitOnSelection: options.autoSubmitOnSelection ?? true,
-      },
+    globalSettings: {
+      soundEnabled: false,
+      autoSubmitOnSelection: options.autoSubmitOnSelection ?? true,
+      autoNextOnCorrect: false,
     },
     submit: vi.fn(),
     selectNext: vi.fn(),
@@ -69,6 +69,7 @@ function makeSessionStub(
     copyQuestion: vi.fn(),
     togglePool: vi.fn(),
     toggleAutoNext: vi.fn(),
+    toggleSound: vi.fn(),
     startImport: vi.fn(),
     exportProgress: vi.fn(),
   } as unknown as QuizSession & {
@@ -80,6 +81,7 @@ function makeSessionStub(
     copyQuestion: ReturnType<typeof vi.fn>;
     togglePool: ReturnType<typeof vi.fn>;
     toggleAutoNext: ReturnType<typeof vi.fn>;
+    toggleSound: ReturnType<typeof vi.fn>;
     startImport: ReturnType<typeof vi.fn>;
     exportProgress: ReturnType<typeof vi.fn>;
   };

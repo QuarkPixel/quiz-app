@@ -3,7 +3,7 @@ import { flushSync } from "svelte";
 import {
   QuizSession,
 } from "../src/quiz/session/QuizSession.svelte";
-import type { Bank } from "../src/source/types";
+import type { QuizBank } from "../src/source/types";
 import type { Question, QuestionType, StoredState } from "../src/types";
 import {
   saveState,
@@ -11,8 +11,9 @@ import {
   createActivePoolItem,
   createDefaultSettings,
 } from "../src/store";
-import { STORAGE_KEY_DEFAULT_SETTINGS } from "../src/config";
+import { STORAGE_KEY_GENERAL } from "../src/config";
 import { QuestionCopyPattern } from "../src/quiz/types/types";
+import { globalSettingsStore } from "../src/features/globalSettings.svelte";
 
 const { writeTextMock, readTextMock } = vi.hoisted(() => ({
   writeTextMock: vi.fn(),
@@ -39,10 +40,11 @@ function q(
   return { id, type, question: `q-${id}`, answer, options };
 }
 
-function makeBank(questions?: Question[]): Bank {
+function makeBank(questions?: Question[]): QuizBank {
   return {
     hash: HASH,
     name: "test bank",
+    mode: "quiz",
     questions:
       questions ??
       [
@@ -68,6 +70,8 @@ function makeDeps() {
 
 beforeEach(() => {
   localStorage.clear();
+  // 全局设置是应用级单例，清空 localStorage 后需要同步重置内存值。
+  globalSettingsStore.reload();
 });
 
 afterEach(() => {
@@ -183,7 +187,7 @@ describe("submit", () => {
       q("b", "judgment", true),
     ];
     const session = new QuizSession(makeBank(questions), deps);
-    session.appState.settings.autoNextOnCorrect = true;
+    session.globalSettings.autoNextOnCorrect = true;
     session.initialize();
     const firstId = session.currentQuestion!.id;
     session.selectedAnswers = [0]; // judgment answer=true 的正确按钮
@@ -445,13 +449,13 @@ describe("reset", () => {
     if (!session.setFilter("single")) {
       session.confirmPendingFilterChange("clear-active-pool");
     }
-    session.appState.settings.autoNextOnCorrect = true;
-    session.handlePreferenceChange(); // 把设置持久化
+    session.appState.settings.notifyNewQuestionInPool = true;
+    session.handlePreferenceChange(); // 把按库设置持久化
 
     session.reset();
     expect(session.appState.masteredIds).toEqual([]);
     expect(session.appState.filterType).toBe("single"); // 保留
-    expect(session.appState.settings.autoNextOnCorrect).toBe(true); // 保留
+    expect(session.appState.settings.notifyNewQuestionInPool).toBe(true); // 保留
   });
 });
 
@@ -482,54 +486,55 @@ describe("UI 偏好 toggle", () => {
     expect(session.appState.ui.progressFocused).toBe(true);
   });
 
-  it("toggleAutoNext 触发 toast 通知", () => {
+  it("toggleAutoNext 翻转全局设置并触发 toast", () => {
     const { deps, toast } = makeDeps();
     const session = new QuizSession(makeBank(), deps);
     session.toggleAutoNext();
-    expect(session.appState.settings.autoNextOnCorrect).toBe(true);
+    expect(session.globalSettings.autoNextOnCorrect).toBe(true);
     expect(toast).toHaveBeenCalled();
   });
 
-  it("默认情况下，设置变更不会写入持久化默认设置", () => {
+  it("全局设置变更写入 general 配置", () => {
     const { deps } = makeDeps();
     const session = new QuizSession(makeBank(), deps);
 
     session.toggleAutoNext();
+    session.setSoundEnabled(true);
 
-    expect(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)).toBeNull();
+    const general = JSON.parse(
+      localStorage.getItem(STORAGE_KEY_GENERAL) ?? "{}",
+    );
+    expect(general.globalSettings.autoNextOnCorrect).toBe(true);
+    expect(general.globalSettings.soundEnabled).toBe(true);
   });
 
-  it("启用持久化默认设置时，设置变更会同步写入默认设置", () => {
+  it("按库设置变更会同步写入 general 默认模板", () => {
     const { deps } = makeDeps();
-    const session = new QuizSession(makeBank(), deps, {
-      persistDefaultSettings: true,
-    });
+    const session = new QuizSession(makeBank(), deps);
 
-    session.toggleAutoNext();
+    session.appState.settings.activePoolSize = 30;
+    session.handleAlgorithmChange();
 
-    expect(
-      JSON.parse(localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS)!),
-    ).toMatchObject({
-      autoNextOnCorrect: true,
-    });
+    const general = JSON.parse(
+      localStorage.getItem(STORAGE_KEY_GENERAL) ?? "{}",
+    );
+    expect(general.defaultSettings.activePoolSize).toBe(30);
   });
 
-  it("启用持久化默认设置时，新题库会继承默认设置", () => {
+  it("新题库会继承 general 配置里的默认模板", () => {
     localStorage.setItem(
-      STORAGE_KEY_DEFAULT_SETTINGS,
+      STORAGE_KEY_GENERAL,
       JSON.stringify({
-        ...createDefaultSettings(),
-        autoNextOnCorrect: true,
-        activePoolSize: 30,
+        defaultSettings: {
+          ...createDefaultSettings(),
+          activePoolSize: 30,
+        },
       }),
     );
     const { deps } = makeDeps();
 
-    const session = new QuizSession(makeBank(), deps, {
-      persistDefaultSettings: true,
-    });
+    const session = new QuizSession(makeBank(), deps);
 
-    expect(session.appState.settings.autoNextOnCorrect).toBe(true);
     expect(session.appState.settings.activePoolSize).toBe(30);
   });
 });

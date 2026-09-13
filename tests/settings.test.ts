@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import {
-  sanitizeUserSettings,
-  reconcileAfterSettingsChange,
-} from "../src/features/quiz/settings";
+import { reconcileAfterSettingsChange } from "../src/features/quiz/settings";
+import { sanitizeBankSettings } from "../src/bankSettings";
 import { createActivePoolItem, createDefaultSettings } from "../src/store";
 import {
   ACTIVE_POOL_SIZE,
@@ -14,7 +12,7 @@ import type {
   RuntimeState,
   ActivePoolItem,
   QuestionType,
-  UserSettings,
+  BankSettings,
 } from "../src/types";
 
 afterEach(() => {
@@ -29,7 +27,7 @@ function makeQuestion(id: string, type: QuestionType = "judgment"): Question {
   return { id, type, question: `q-${id}`, answer: true };
 }
 
-function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
+function makeSettings(overrides: Partial<BankSettings> = {}): BankSettings {
   return { ...createDefaultSettings(), ...overrides };
 }
 
@@ -53,69 +51,68 @@ function poolItem(
 }
 
 // ---------------------------------------------------------------------------
-// sanitizeUserSettings
+// sanitizeBankSettings
 // ---------------------------------------------------------------------------
 
-describe("sanitizeUserSettings / autoNextOnCorrect", () => {
-  it("强转 boolean", () => {
-    const s1 = sanitizeUserSettings(makeSettings({ autoNextOnCorrect: true }));
-    expect(s1.autoNextOnCorrect).toBe(true);
-    const s2 = sanitizeUserSettings(makeSettings({ autoNextOnCorrect: false }));
-    expect(s2.autoNextOnCorrect).toBe(false);
-    // truthy/falsy 非布尔值也强转
-    const s3 = sanitizeUserSettings(
-      makeSettings({ autoNextOnCorrect: 1 as unknown as boolean }),
-    );
-    expect(s3.autoNextOnCorrect).toBe(true);
-    const s4 = sanitizeUserSettings(
-      makeSettings({ autoNextOnCorrect: 0 as unknown as boolean }),
-    );
-    expect(s4.autoNextOnCorrect).toBe(false);
-  });
-});
-
-describe("sanitizeUserSettings / autoSubmitOnSelection", () => {
-  it("缺失时默认开启，显式 false 时保留 false", () => {
+describe("sanitizeBankSettings / notifyNewQuestionInPool", () => {
+  it("仅接受显式 true，其他值一律 false", () => {
     expect(
-      sanitizeUserSettings(
-        makeSettings({ autoSubmitOnSelection: undefined as never }),
-      ).autoSubmitOnSelection,
+      sanitizeBankSettings(makeSettings({ notifyNewQuestionInPool: true }))
+        .notifyNewQuestionInPool,
     ).toBe(true);
-
     expect(
-      sanitizeUserSettings(makeSettings({ autoSubmitOnSelection: false }))
-        .autoSubmitOnSelection,
+      sanitizeBankSettings(makeSettings({ notifyNewQuestionInPool: false }))
+        .notifyNewQuestionInPool,
+    ).toBe(false);
+    expect(
+      sanitizeBankSettings(
+        makeSettings({ notifyNewQuestionInPool: 1 as unknown as boolean }),
+      ).notifyNewQuestionInPool,
     ).toBe(false);
   });
 });
 
-describe("sanitizeUserSettings / activePoolSize", () => {
+describe("sanitizeBankSettings / 忽略旧版全局字段", () => {
+  it("旧设置里混入的 audioNextOnCorrect / soundEnabled 等不会出现在结果里", () => {
+    const result = sanitizeBankSettings({
+      ...makeSettings(),
+      autoNextOnCorrect: true,
+      autoSubmitOnSelection: false,
+      soundEnabled: true,
+    });
+    expect("autoNextOnCorrect" in result).toBe(false);
+    expect("autoSubmitOnSelection" in result).toBe(false);
+    expect("soundEnabled" in result).toBe(false);
+  });
+});
+
+describe("sanitizeBankSettings / activePoolSize", () => {
   it("低于下界 → 钳到 5", () => {
-    const result = sanitizeUserSettings(makeSettings({ activePoolSize: 2 }));
+    const result = sanitizeBankSettings(makeSettings({ activePoolSize: 2 }));
     expect(result.activePoolSize).toBe(5);
   });
 
   it("高于上界 → 钳到 100", () => {
-    const result = sanitizeUserSettings(makeSettings({ activePoolSize: 500 }));
+    const result = sanitizeBankSettings(makeSettings({ activePoolSize: 500 }));
     expect(result.activePoolSize).toBe(100);
   });
 
   it("范围内保留", () => {
-    expect(sanitizeUserSettings(makeSettings({ activePoolSize: 25 })).activePoolSize).toBe(25);
-    expect(sanitizeUserSettings(makeSettings({ activePoolSize: 5 })).activePoolSize).toBe(5);
-    expect(sanitizeUserSettings(makeSettings({ activePoolSize: 100 })).activePoolSize).toBe(100);
+    expect(sanitizeBankSettings(makeSettings({ activePoolSize: 25 })).activePoolSize).toBe(25);
+    expect(sanitizeBankSettings(makeSettings({ activePoolSize: 5 })).activePoolSize).toBe(5);
+    expect(sanitizeBankSettings(makeSettings({ activePoolSize: 100 })).activePoolSize).toBe(100);
   });
 
   it("非数字/NaN → 回退默认值", () => {
-    const r1 = sanitizeUserSettings(
+    const r1 = sanitizeBankSettings(
       makeSettings({ activePoolSize: NaN }),
     );
     expect(r1.activePoolSize).toBe(ACTIVE_POOL_SIZE);
-    const r2 = sanitizeUserSettings(
+    const r2 = sanitizeBankSettings(
       makeSettings({ activePoolSize: "foo" as unknown as number }),
     );
     expect(r2.activePoolSize).toBe(ACTIVE_POOL_SIZE);
-    const r3 = sanitizeUserSettings(
+    const r3 = sanitizeBankSettings(
       makeSettings({ activePoolSize: undefined as unknown as number }),
     );
     expect(r3.activePoolSize).toBe(ACTIVE_POOL_SIZE);
@@ -123,97 +120,85 @@ describe("sanitizeUserSettings / activePoolSize", () => {
 
   it("小数会被四舍五入", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ activePoolSize: 25.7 }))
+      sanitizeBankSettings(makeSettings({ activePoolSize: 25.7 }))
         .activePoolSize,
     ).toBe(26);
   });
 });
 
-describe("sanitizeUserSettings / correctStreakToMaster", () => {
+describe("sanitizeBankSettings / correctStreakToMaster", () => {
   it("越界 → 钳到边界", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ correctStreakToMaster: 0 }))
+      sanitizeBankSettings(makeSettings({ correctStreakToMaster: 0 }))
         .correctStreakToMaster,
     ).toBe(1);
     expect(
-      sanitizeUserSettings(makeSettings({ correctStreakToMaster: 99 }))
+      sanitizeBankSettings(makeSettings({ correctStreakToMaster: 99 }))
         .correctStreakToMaster,
     ).toBe(10);
   });
 
   it("范围内保留", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ correctStreakToMaster: 3 }))
+      sanitizeBankSettings(makeSettings({ correctStreakToMaster: 3 }))
         .correctStreakToMaster,
     ).toBe(3);
   });
 
   it("非数字 → 默认值", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ correctStreakToMaster: NaN }))
+      sanitizeBankSettings(makeSettings({ correctStreakToMaster: NaN }))
         .correctStreakToMaster,
     ).toBe(CORRECT_STREAK_TO_MASTER);
   });
 });
 
-describe("sanitizeUserSettings / correctStreakAfterMistake", () => {
+describe("sanitizeBankSettings / correctStreakAfterMistake", () => {
   it("越界 → 钳到边界", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ correctStreakAfterMistake: 0 }))
+      sanitizeBankSettings(makeSettings({ correctStreakAfterMistake: 0 }))
         .correctStreakAfterMistake,
     ).toBe(1);
     expect(
-      sanitizeUserSettings(makeSettings({ correctStreakAfterMistake: 999 }))
+      sanitizeBankSettings(makeSettings({ correctStreakAfterMistake: 999 }))
         .correctStreakAfterMistake,
     ).toBe(20);
   });
 
   it("非数字 → 默认值", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ correctStreakAfterMistake: NaN }))
+      sanitizeBankSettings(makeSettings({ correctStreakAfterMistake: NaN }))
         .correctStreakAfterMistake,
     ).toBe(CORRECT_STREAK_AFTER_MISTAKE);
   });
 });
 
-describe("sanitizeUserSettings / selectionMode", () => {
+describe("sanitizeBankSettings / selectionMode", () => {
   it("sequential 保留", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ selectionMode: "sequential" }))
+      sanitizeBankSettings(makeSettings({ selectionMode: "sequential" }))
         .selectionMode,
     ).toBe("sequential");
   });
 
   it("random 保留", () => {
     expect(
-      sanitizeUserSettings(makeSettings({ selectionMode: "random" }))
+      sanitizeBankSettings(makeSettings({ selectionMode: "random" }))
         .selectionMode,
     ).toBe("random");
   });
 
   it("非合法值 → 回退 random", () => {
     expect(
-      sanitizeUserSettings(
+      sanitizeBankSettings(
         makeSettings({ selectionMode: "invalid" as unknown as "random" }),
       ).selectionMode,
     ).toBe("random");
     expect(
-      sanitizeUserSettings(
+      sanitizeBankSettings(
         makeSettings({ selectionMode: undefined as unknown as "random" }),
       ).selectionMode,
     ).toBe("random");
-  });
-});
-
-describe("sanitizeUserSettings / soundEnabled", () => {
-  it("保留已持久化的 true", () => {
-    const result = sanitizeUserSettings(makeSettings({ soundEnabled: true }));
-    expect(result.soundEnabled).toBe(true);
-  });
-
-  it("缺省时按 library 默认值补为 false", () => {
-    const result = sanitizeUserSettings(makeSettings());
-    expect(result.soundEnabled).toBe(false);
   });
 });
 
@@ -224,7 +209,7 @@ describe("sanitizeUserSettings / soundEnabled", () => {
 describe("reconcileAfterSettingsChange / 池缩小", () => {
   it("池缩小时保留当前题（即使需要替换最后一位）", () => {
     // sequential 模式让 fillActivePool 行为可预测
-    // 注意 sanitizeUserSettings 会把 activePoolSize 钳到 [5,100]
+    // 注意 sanitizeBankSettings 会把 activePoolSize 钳到 [5,100]
     const questions = [
       makeQuestion("a"),
       makeQuestion("b"),
@@ -473,17 +458,17 @@ describe("reconcileAfterSettingsChange / 返回结构", () => {
     expect(result.state.settings.selectionMode).toBe("random");
   });
 
-  it("保留 library-only soundEnabled 偏好", () => {
+  it("保留按库的 notifyNewQuestionInPool 偏好", () => {
     const questions = [makeQuestion("a")];
     const state = makeState({
       activePool: [poolItem("a")],
       settings: makeSettings({
         activePoolSize: 5,
         selectionMode: "sequential",
-        soundEnabled: true,
+        notifyNewQuestionInPool: true,
       }),
     });
     const result = reconcileAfterSettingsChange(questions, state);
-    expect(result.state.settings.soundEnabled).toBe(true);
+    expect(result.state.settings.notifyNewQuestionInPool).toBe(true);
   });
 });

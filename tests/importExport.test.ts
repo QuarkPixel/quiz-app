@@ -74,13 +74,10 @@ function makeState(overrides: Partial<RuntimeState> = {}): RuntimeState {
     currentRound: 8,
     filterType: "single",
     settings: {
-      autoNextOnCorrect: true,
-      autoSubmitOnSelection: true,
       activePoolSize: 20,
       correctStreakToMaster: 3,
       correctStreakAfterMistake: 5,
       selectionMode: "sequential",
-      soundEnabled: false,
       notifyNewQuestionInPool: false,
     },
     ui: {
@@ -215,13 +212,10 @@ describe("exportProgress / importProgress round-trip", () => {
       currentRound: 0,
       filterType: "all",
       settings: {
-        autoNextOnCorrect: false,
-        autoSubmitOnSelection: true,
         activePoolSize: 10,
         correctStreakToMaster: 3,
         correctStreakAfterMistake: 4,
         selectionMode: "random",
-        soundEnabled: false,
         notifyNewQuestionInPool: false,
       },
       ui: { progressFocused: false, showPool: false },
@@ -245,7 +239,7 @@ describe("bitmap / index 编码", () => {
     const payload = await decodePayload(encoded);
 
     expect(payload).toEqual([
-      7,
+      8,
       QUESTIONS.length,
       "3",
       [
@@ -254,7 +248,7 @@ describe("bitmap / index 编码", () => {
       ],
       8,
       1,
-      [1, 1, 20, 3, 5, "sequential", 0, 0],
+      [20, 3, 5, "sequential", 0],
       [0, 0],
       "2",
     ]);
@@ -347,17 +341,14 @@ describe("filterType / settings / ui round-trip", () => {
     });
   }
 
-  it("selectionMode=random / autoNextOnCorrect=false", async () => {
+  it("selectionMode=random / notifyNewQuestionInPool=true", async () => {
     const state = makeState({
       settings: {
-        autoNextOnCorrect: false,
-        autoSubmitOnSelection: true,
         activePoolSize: 15,
         correctStreakToMaster: 2,
         correctStreakAfterMistake: 6,
         selectionMode: "random",
-        soundEnabled: false,
-        notifyNewQuestionInPool: false,
+        notifyNewQuestionInPool: true,
       },
     });
     const encoded = await exportProgress(state, HASH, QUESTIONS);
@@ -365,72 +356,55 @@ describe("filterType / settings / ui round-trip", () => {
     expect(restored.settings).toEqual(state.settings);
   });
 
-  it("soundEnabled=true 会 round-trip", async () => {
-    const state = makeState({
-      settings: {
-        autoNextOnCorrect: true,
-        autoSubmitOnSelection: true,
-        activePoolSize: 20,
-        correctStreakToMaster: 3,
-        correctStreakAfterMistake: 5,
-        selectionMode: "sequential",
-        notifyNewQuestionInPool: false,
-        soundEnabled: true,
-      },
-    });
+  it("v8 settings 段只包含按库设置", async () => {
+    const state = makeState();
     const encoded = await exportProgress(state, HASH, QUESTIONS);
     const payload = await decodePayload(encoded);
-    const restored = await importProgress(encoded, HASH, QUESTIONS);
 
-    expect((payload as unknown[])[6]).toEqual([
-      1,
-      1,
-      20,
-      3,
-      5,
-      "sequential",
-      1,
-      0,
-    ]);
-    expect(restored.settings.soundEnabled).toBe(true);
+    expect((payload as unknown[])[6]).toEqual([20, 3, 5, "sequential", 0]);
   });
 
-  it("旧进度缺少 soundEnabled 时补默认关闭", async () => {
+  it("进度备份不编码全局设置（音效 / 自动提交 / 自动下一题）", async () => {
+    const state = makeState();
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.settings).toEqual(state.settings);
+    expect("soundEnabled" in restored.settings).toBe(false);
+    expect("autoSubmitOnSelection" in restored.settings).toBe(false);
+    expect("autoNextOnCorrect" in restored.settings).toBe(false);
+  });
+
+  it("旧进度（v7）忽略全局字段，只还原按库设置", async () => {
+    const encoded = await encodePayload(
+      compact({ version: 7, settings: [1, 0, 20, 3, 5, "sequential", 1, 1] }),
+    );
+    const restored = await importProgress(encoded, HASH, QUESTIONS);
+
+    expect(restored.settings).toEqual({
+      activePoolSize: 20,
+      correctStreakToMaster: 3,
+      correctStreakAfterMistake: 5,
+      selectionMode: "sequential",
+      notifyNewQuestionInPool: true,
+    });
+    expect("soundEnabled" in restored.settings).toBe(false);
+    expect("autoNextOnCorrect" in restored.settings).toBe(false);
+  });
+
+  it("旧进度（v4）忽略全局字段，只还原按库设置", async () => {
     const encoded = await encodePayload(
       compact({ settings: [1, 10, 3, 4, "random"] }),
     );
     const restored = await importProgress(encoded, HASH, QUESTIONS);
 
-    expect(restored.settings.autoSubmitOnSelection).toBe(true);
-    expect(restored.settings.soundEnabled).toBe(false);
-  });
-
-  it("soundEnabled 字段为空时补默认关闭", async () => {
-    const encoded = await encodePayload(
-      compact({ settings: [1, 10, 3, 4, "random", null] }),
-    );
-    const restored = await importProgress(encoded, HASH, QUESTIONS);
-
-    expect(restored.settings.autoSubmitOnSelection).toBe(true);
-    expect(restored.settings.soundEnabled).toBe(false);
-  });
-
-  it("新格式中的 autoSubmitOnSelection 会 round-trip", async () => {
-    const state = makeState({
-      settings: {
-        autoNextOnCorrect: true,
-        autoSubmitOnSelection: false,
-        activePoolSize: 20,
-        correctStreakToMaster: 3,
-        correctStreakAfterMistake: 5,
-        selectionMode: "sequential",
-        soundEnabled: true,
-      },
+    expect(restored.settings).toEqual({
+      activePoolSize: 10,
+      correctStreakToMaster: 3,
+      correctStreakAfterMistake: 4,
+      selectionMode: "random",
+      notifyNewQuestionInPool: false,
     });
-    const encoded = await exportProgress(state, HASH, QUESTIONS);
-    const restored = await importProgress(encoded, HASH, QUESTIONS);
-
-    expect(restored.settings.autoSubmitOnSelection).toBe(false);
   });
 
   it("ui 段 round-trip：progressFocused=true, showPool=true", async () => {
