@@ -1,5 +1,5 @@
 import { mount } from "svelte";
-import App from "$app-root";
+import App from "./App.svelte";
 import { installDebugConsoleCommands } from "./debug";
 
 installDebugConsoleCommands();

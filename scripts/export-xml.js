@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // scripts/export-xml.js
-// 将 banks/questions.json 导出为 XML 格式
-// 用法: pnpm export-xml [output.xml]
+// 将一份题库 JSON（{ mode?, state?, questions }）导出为 XML 格式
+// 用法: pnpm export-xml [input.json] [output.xml]
 
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -10,13 +10,21 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
-const questions = JSON.parse(
-  readFileSync(resolve(root, 'banks/questions.json'), 'utf-8')
-);
-
-const outputPath = process.argv[2]
+const inputPath = process.argv[2]
   ? resolve(process.cwd(), process.argv[2])
-  : resolve(root, 'banks/questions.xml');
+  : resolve(root, 'banks/questions.example.json');
+
+const parsed = JSON.parse(readFileSync(inputPath, 'utf-8'));
+const questions = Array.isArray(parsed) ? parsed : parsed.questions;
+
+if (!Array.isArray(questions)) {
+  console.error(`[export-xml] 找不到 questions 数组: ${inputPath}`);
+  process.exit(1);
+}
+
+const outputPath = process.argv[3]
+  ? resolve(process.cwd(), process.argv[3])
+  : inputPath.replace(/\.json$/i, '.xml');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

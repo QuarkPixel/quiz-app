@@ -1,9 +1,8 @@
 import answerCorrectUrl from "/assets/sounds/answer-correct.webm";
 import answerWrongUrl from "/assets/sounds/answer-wrong.webm";
 import successUrl from "/assets/sounds/success.webm";
-import type { RuntimeState, UserSettings } from "../types";
+import type { GlobalSettings } from "../types";
 import type { SoundPlayer } from "./types";
-import { SOUND_ENABLED_BY_DEFAULT } from "../config";
 
 type SoundName = "answer-correct" | "answer-wrong" | "success";
 type Toast = (
@@ -102,49 +101,39 @@ function preferAmbientAudioSession(): void {
   }
 }
 
+/** 音效开关来自全局设置（GlobalSettings）。 */
 export function maybePlayAnswerSound(
-  state: RuntimeState,
+  settings: GlobalSettings,
   player: SoundPlayer,
   isCorrect: boolean,
 ): void {
-  if (state.settings.soundEnabled === true) {
+  if (settings.soundEnabled) {
     player.playAnswer(isCorrect);
   }
 }
 
 export function maybePlaySuccessSound(
-  state: RuntimeState,
+  settings: GlobalSettings,
   player: SoundPlayer,
 ): void {
-  if (state.settings.soundEnabled === true) {
+  if (settings.soundEnabled) {
     player.playSuccess();
   }
 }
 
-export function initializeSoundPreference(state: RuntimeState): void {
-  state.settings.soundEnabled ??= SOUND_ENABLED_BY_DEFAULT;
-}
-
-export function sanitizeSoundSettings(
-  settings: UserSettings,
-): Pick<UserSettings, "soundEnabled"> {
-  return {
-    soundEnabled:
-      typeof settings.soundEnabled === "boolean"
-        ? settings.soundEnabled
-        : SOUND_ENABLED_BY_DEFAULT,
-  };
-}
-
+/**
+ * 切换音效全局偏好。settings 由调用方持有（QuizSession 的 $state），
+ * 变更后通过 save() 持久化到 general 配置。
+ */
 export function setSoundEnabledPreference(
-  state: RuntimeState,
+  settings: GlobalSettings,
   next: boolean,
   save: () => void,
   toast: Toast,
   player: SoundPlayer,
 ): void {
-  if (state.settings.soundEnabled === next) return;
-  state.settings.soundEnabled = next;
+  if (settings.soundEnabled === next) return;
+  settings.soundEnabled = next;
   save();
   if (next) {
     player.preload();

@@ -4,12 +4,12 @@
   "type": "module",
   "packageManager": "pnpm@11.5.2",
   "scripts": {
-    "dev": "node scripts/cli.js dev",
-    "build": "node scripts/cli.js build",
-    "preview": "node scripts/cli.js preview",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "verify": "pnpm check && pnpm test && pnpm build && pnpm build -- --bundled",
+    "verify": "pnpm check && pnpm test && pnpm build",
     "test:watch": "vitest",
     "export-xml": "node scripts/export-xml.js"
   },
@@ -25,7 +25,6 @@
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
-    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^4.1.8"
   },
   "dependencies": {
