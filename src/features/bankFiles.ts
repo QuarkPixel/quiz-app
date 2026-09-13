@@ -4,26 +4,20 @@ import type { ImportBankResult, QuizSource } from "../source/types";
 const CLIPBOARD_DISPLAY_NAME = "剪贴板内容";
 const CLIPBOARD_BANK_NAME = "剪贴板题库";
 
-export interface LibraryFileMessage {
+export interface BankFileMessage {
   title: string;
   text: string;
 }
 
-export interface LibraryImportFailure {
+export interface BankImportFailure {
   readonly fileName: string;
   getReason(): string;
 }
 
-abstract class BaseImportFailure implements LibraryImportFailure {
+abstract class BaseImportFailure implements BankImportFailure {
   constructor(readonly fileName: string) {}
 
   abstract getReason(): string;
-}
-
-class UnsupportedImportFailure extends BaseImportFailure {
-  getReason(): string {
-    return "当前模式不支持导入题库。";
-  }
 }
 
 class UnexpectedImportFailure extends BaseImportFailure {
@@ -62,7 +56,8 @@ class InvalidQuestionBankFailure extends BaseImportFailure {
 
   getReason(): string {
     const head = this.errors.slice(0, 3).join("；");
-    const rest = this.errors.length > 3 ? `；还有 ${this.errors.length - 3} 条问题` : "";
+    const rest =
+      this.errors.length > 3 ? `；还有 ${this.errors.length - 3} 条问题` : "";
     return head + rest;
   }
 }
@@ -111,9 +106,9 @@ class OverwriteApplyFailure extends BaseImportFailure {
   }
 }
 
-export type LibraryImportOutcome =
+export type BankImportOutcome =
   | { kind: "success"; fileName: string }
-  | { kind: "failure"; failure: LibraryImportFailure };
+  | { kind: "failure"; failure: BankImportFailure };
 
 export interface OverwriteImportRequest {
   fileName: string;
@@ -123,22 +118,22 @@ export interface OverwriteImportRequest {
 }
 
 type FileImportStep =
-  | { kind: "done"; outcome: LibraryImportOutcome }
+  | { kind: "done"; outcome: BankImportOutcome }
   | { kind: "needs-overwrite"; request: OverwriteImportRequest };
 
-export type LibraryImportPrompt =
+export type BankImportPrompt =
   | { kind: "overwrite"; request: OverwriteImportRequest }
-  | { kind: "summary"; message: LibraryFileMessage };
+  | { kind: "summary"; message: BankFileMessage };
 
-export type LibraryExportResult =
+export type BankExportResult =
   | { ok: true }
-  | { ok: false; message: LibraryFileMessage };
+  | { ok: false; message: BankFileMessage };
 
-function success(fileName: string): LibraryImportOutcome {
+function success(fileName: string): BankImportOutcome {
   return { kind: "success", fileName };
 }
 
-function failure(failure: LibraryImportFailure): LibraryImportOutcome {
+function failure(failure: BankImportFailure): BankImportOutcome {
   return { kind: "failure", failure };
 }
 
@@ -147,10 +142,8 @@ function formatUnknownError(e: unknown): string {
 }
 
 function getBankName(source: QuizSource, hash: string): string {
-  return source.listBanks?.().find((b) => b.hash === hash)?.name ?? "该题库";
+  return source.listBanks().find((b) => b.hash === hash)?.name ?? "该题库";
 }
-
-
 
 function mapImportResult(
   source: QuizSource,
@@ -169,7 +162,9 @@ function mapImportResult(
     case "invalid":
       return {
         kind: "done",
-        outcome: failure(new InvalidQuestionBankFailure(fileName, result.errors)),
+        outcome: failure(
+          new InvalidQuestionBankFailure(fileName, result.errors),
+        ),
       };
     case "duplicate":
       return result.stateStr === undefined
@@ -194,59 +189,41 @@ function mapImportResult(
   }
 }
 
-async function importLibraryText(
+async function importBankText(
   source: QuizSource,
   fileName: string,
   bankName: string,
   rawJson: string,
 ): Promise<FileImportStep> {
-  if (!source.importBank) {
-    return {
-      kind: "done",
-      outcome: failure(new UnsupportedImportFailure(fileName)),
-    };
-  }
-
   const result = await source.importBank(bankName, rawJson);
   return mapImportResult(source, fileName, result);
 }
 
-async function importLibraryFile(
+async function importBankFile(
   source: QuizSource,
   file: File,
 ): Promise<FileImportStep> {
-  if (!source.importBank) {
-    return {
-      kind: "done",
-      outcome: failure(new UnsupportedImportFailure(file.name)),
-    };
-  }
-
   try {
     const text = await file.text();
     const baseName = file.name.replace(/\.json$/i, "");
-    return await importLibraryText(source, file.name, baseName, text);
+    return await importBankText(source, file.name, baseName, text);
   } catch (e) {
     return {
       kind: "done",
       outcome: failure(
-        new UnexpectedImportFailure(file.name, `读取或导入失败：${formatUnknownError(e)}`),
+        new UnexpectedImportFailure(
+          file.name,
+          `读取或导入失败：${formatUnknownError(e)}`,
+        ),
       ),
     };
   }
 }
 
-async function importLibraryClipboard(
+async function importBankClipboard(
   source: QuizSource,
   readText_?: () => Promise<string>,
 ): Promise<FileImportStep> {
-  if (!source.importBank) {
-    return {
-      kind: "done",
-      outcome: failure(new UnsupportedImportFailure(CLIPBOARD_DISPLAY_NAME)),
-    };
-  }
-
   const reader = readText_ ?? readText;
 
   let text: string;
@@ -277,7 +254,7 @@ async function importLibraryClipboard(
   }
 
   try {
-    return await importLibraryText(
+    return await importBankText(
       source,
       CLIPBOARD_DISPLAY_NAME,
       CLIPBOARD_BANK_NAME,
@@ -300,12 +277,9 @@ async function resolveOverwriteImport(
   source: QuizSource,
   request: OverwriteImportRequest,
   overwrite: boolean,
-): Promise<LibraryImportOutcome> {
+): Promise<BankImportOutcome> {
   if (!overwrite) {
     return failure(new OverwriteDeclinedFailure(request.fileName));
-  }
-  if (!source.applyStateToBank) {
-    return failure(new UnsupportedImportFailure(request.fileName));
   }
 
   try {
@@ -324,9 +298,9 @@ async function resolveOverwriteImport(
 }
 
 function createImportSummary(
-  outcomes: LibraryImportOutcome[],
+  outcomes: BankImportOutcome[],
   total: number,
-): LibraryFileMessage {
+): BankFileMessage {
   const failures = outcomes.flatMap((outcome) =>
     outcome.kind === "failure" ? [outcome.failure] : [],
   );
@@ -334,7 +308,8 @@ function createImportSummary(
 
   if (total === 1) {
     if (failures.length === 0) {
-      const fileName = outcomes[0]?.kind === "success" ? outcomes[0].fileName : "题库";
+      const fileName =
+        outcomes[0]?.kind === "success" ? outcomes[0].fileName : "题库";
       return {
         title: "导入成功",
         text: `已导入「${fileName}」。`,
@@ -370,8 +345,9 @@ function createImportSummary(
   };
 }
 
-export class LibraryImportSession {
-  private readonly outcomes: LibraryImportOutcome[] = [];
+/** 一次（可能包含多文件 / 剪贴板）导入会话，逐步产出 UI 需要的提示。 */
+export class BankImportSession {
+  private readonly outcomes: BankImportOutcome[] = [];
   private readonly overwriteRequests: OverwriteImportRequest[] = [];
   private overwriteIndex = 0;
 
@@ -391,11 +367,11 @@ export class LibraryImportSession {
   static async create(
     source: QuizSource,
     files: File[],
-  ): Promise<LibraryImportSession> {
-    const session = new LibraryImportSession(source, files.length);
+  ): Promise<BankImportSession> {
+    const session = new BankImportSession(source, files.length);
 
     for (const file of files) {
-      session.collectStep(await importLibraryFile(source, file));
+      session.collectStep(await importBankFile(source, file));
     }
 
     return session;
@@ -404,13 +380,13 @@ export class LibraryImportSession {
   static async createFromClipboard(
     source: QuizSource,
     readText_?: () => Promise<string>,
-  ): Promise<LibraryImportSession> {
-    const session = new LibraryImportSession(source, 1);
-    session.collectStep(await importLibraryClipboard(source, readText_));
+  ): Promise<BankImportSession> {
+    const session = new BankImportSession(source, 1);
+    session.collectStep(await importBankClipboard(source, readText_));
     return session;
   }
 
-  currentPrompt(): LibraryImportPrompt {
+  currentPrompt(): BankImportPrompt {
     const request = this.overwriteRequests[this.overwriteIndex];
     if (request !== undefined) {
       return { kind: "overwrite", request };
@@ -421,7 +397,7 @@ export class LibraryImportSession {
     };
   }
 
-  async resolveOverwrite(overwrite: boolean): Promise<LibraryImportPrompt> {
+  async resolveOverwrite(overwrite: boolean): Promise<BankImportPrompt> {
     const request = this.overwriteRequests[this.overwriteIndex];
     if (request === undefined) return this.currentPrompt();
 
@@ -445,20 +421,10 @@ function downloadTextFile(filename: string, content: string): void {
   URL.revokeObjectURL(url);
 }
 
-export async function exportLibraryBank(
+export async function exportBank(
   source: QuizSource,
   hash: string,
-): Promise<LibraryExportResult> {
-  if (!source.exportBank) {
-    return {
-      ok: false,
-      message: {
-        title: "导出失败",
-        text: "当前模式不支持导出题库。",
-      },
-    };
-  }
-
+): Promise<BankExportResult> {
   try {
     const result = await source.exportBank(hash);
     if (result === null) {

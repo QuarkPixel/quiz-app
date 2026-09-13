@@ -176,17 +176,20 @@
         filter = next;
     }
 
-    const canExport = source.mode === "library";
+    // 现在只有一种运行形态：任何题库都可以导出为一份新题库。
+    const canExport = true;
 
     async function exportAsNewBank(): Promise<void> {
-        if (!source.importBank) return;
         const description = describeReviewScope(filter, searchTerm);
         const name = description
             ? `${session.bank.name} ${description}`
             : session.bank.name;
         const result = await source.importBank(
             name,
-            JSON.stringify(filteredQuestions),
+            JSON.stringify({
+                mode: session.bank.mode,
+                questions: filteredQuestions,
+            }),
         );
         switch (result.kind) {
             case "ok":

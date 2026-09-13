@@ -1,17 +1,14 @@
-import {
-  STORAGE_KEY_ACTIVE_BANK,
-  STORAGE_KEY_LIBRARY,
-  STORAGE_PREFIX_QUESTIONS,
-  STORAGE_PREFIX_STATE,
-} from "../config";
+import { STORAGE_PREFIX_QUESTIONS, STORAGE_PREFIX_STATE } from "../config";
+import { loadGeneralConfig, updateGeneralConfig } from "../generalConfig";
 import { exportProgress, importProgress } from "../features/importExport";
+import { formatBankFile, parseBankFileJson } from "../lib/bankFile";
 import { hashQuestionsJson } from "../lib/hash";
-import { validateQuestions } from "../lib/validateQuestions";
 import { loadStoredState } from "../store";
-import type { Question } from "../types";
+import type { Question, ReciteQuestion } from "../types";
 import type {
   ApplyStateResult,
   Bank,
+  BankExportFile,
   BankSummary,
   ImportBankResult,
   QuizSource,
@@ -34,75 +31,28 @@ function isQuotaError(e: unknown): boolean {
   );
 }
 
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return fallback;
-    return JSON.parse(raw) as T;
-  } catch (e) {
-    console.warn(`Failed to parse ${key}:`, e);
-    return fallback;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function isBankSummary(value: unknown): value is BankSummary {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.hash === "string" &&
-    value.hash.length > 0 &&
-    typeof value.name === "string" &&
-    isFiniteNumber(value.count) &&
-    isFiniteNumber(value.addedAt)
-  );
-}
-
-function readLibraryIndex(): BankSummary[] {
-  const raw = readJson<unknown>(STORAGE_KEY_LIBRARY, []);
-  if (!Array.isArray(raw)) {
-    console.warn("Failed to load library index: expected an array.");
-    return [];
-  }
-
-  const result: BankSummary[] = [];
-  const seenHashes = new Set<string>();
-  for (const item of raw) {
-    if (!isBankSummary(item) || seenHashes.has(item.hash)) continue;
-    seenHashes.add(item.hash);
-    result.push(item);
-  }
-
-  if (result.length !== raw.length) {
-    console.warn("Ignored invalid entries in library index.");
-  }
-
-  return result;
-}
-
-export class LibrarySource implements QuizSource {
-  readonly mode = "library" as const;
-
+/**
+ * 题库仓库：维护 general 配置里的 library 索引与 activeBank，并负责
+ * 每个题库内容的读写、导入、导出。
+ *
+ * 这是应用唯一的 QuizSource 实现。
+ */
+export class BankStore implements QuizSource {
   private index: BankSummary[];
   private activeHash: string | null;
   private listeners = new Set<() => void>();
 
   /** 已解析的题目缓存，避免每次切换都重新 JSON.parse 大字符串 */
-  private questionsCache = new Map<string, Question[]>();
+  private questionsCache = new Map<
+    string,
+    Question[] | ReciteQuestion[]
+  >();
 
   constructor() {
-    this.index = readLibraryIndex();
-    const savedActive = localStorage.getItem(STORAGE_KEY_ACTIVE_BANK);
-    this.activeHash =
-      savedActive && this.index.some((b) => b.hash === savedActive)
-        ? savedActive
-        : this.index[0]?.hash ?? null;
+    // 初次读取 general 配置里的 library 索引与 activeBank。
+    const config = loadGeneralConfig();
+    this.index = config.library;
+    this.activeHash = config.activeBank;
   }
 
   subscribe(listener: () => void): () => void {
@@ -128,14 +78,28 @@ export class LibrarySource implements QuizSource {
       const raw = localStorage.getItem(questionsKey(this.activeHash));
       if (!raw) return null;
       try {
-        questions = JSON.parse(raw) as Question[];
+        questions = JSON.parse(raw) as Question[] | ReciteQuestion[];
       } catch (e) {
         console.error("Failed to parse cached questions:", e);
         return null;
       }
       this.questionsCache.set(this.activeHash, questions);
     }
-    return { hash: summary.hash, name: summary.name, questions };
+
+    if (summary.mode === "recite") {
+      return {
+        hash: summary.hash,
+        name: summary.name,
+        mode: "recite",
+        questions: questions as ReciteQuestion[],
+      };
+    }
+    return {
+      hash: summary.hash,
+      name: summary.name,
+      mode: "quiz",
+      questions: questions as Question[],
+    };
   }
 
   setActiveBank(hash: string): void {
@@ -143,7 +107,7 @@ export class LibrarySource implements QuizSource {
     if (this.activeHash === hash) return;
     this.activeHash = hash;
     try {
-      localStorage.setItem(STORAGE_KEY_ACTIVE_BANK, hash);
+      updateGeneralConfig({ activeBank: hash });
     } catch (e) {
       console.warn("Failed to persist active bank:", e);
     }
@@ -151,43 +115,18 @@ export class LibrarySource implements QuizSource {
   }
 
   async importBank(name: string, rawJson: string): Promise<ImportBankResult> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawJson);
-    } catch (e) {
-      return { kind: "invalid", errors: [`JSON 解析失败：${(e as Error).message}`] };
-    }
+    const parsed = parseBankFileJson(rawJson);
+    if (!parsed.ok) return { kind: "invalid", errors: parsed.errors };
 
-    // 检测两种形式：
-    //   1. 数组：纯题目
-    //   2. 对象 { state?: string, questions: [...] }：导出文件，带进度备份
-    let questionsData: unknown;
-    let stateStr: string | null = null;
-
-    if (
-      parsed !== null &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      "questions" in parsed
-    ) {
-      questionsData = (parsed as { questions: unknown }).questions;
-      const stateField = (parsed as { state?: unknown }).state;
-      if (typeof stateField === "string") stateStr = stateField;
-    } else {
-      questionsData = parsed;
-    }
-
-    const validation = validateQuestions(questionsData);
-    if (!validation.ok) return { kind: "invalid", errors: validation.errors };
-
-    // 统一规范化（minified）：hash / 存储 / 回灌全用这一份字节
-    const canonical = JSON.stringify(questionsData);
+    // 统一规范化（minified）：hash / 存储 / 回灌全用这一份字节。
+    // hash 只覆盖 questions 数组，和旧版保持一致，进度哈希可继承。
+    const canonical = JSON.stringify(parsed.questions);
     const hash = await hashQuestionsJson(canonical);
 
     if (this.index.some((b) => b.hash === hash)) {
       // 文件里若带进度，把 stateStr 透传给 UI，让用户决定要不要覆盖现有进度
-      return stateStr !== null
-        ? { kind: "duplicate", hash, stateStr }
+      return parsed.state !== undefined
+        ? { kind: "duplicate", hash, stateStr: parsed.state }
         : { kind: "duplicate", hash };
     }
 
@@ -202,12 +141,13 @@ export class LibrarySource implements QuizSource {
     const newSummary: BankSummary = {
       hash,
       name: name || "未命名题库",
-      count: validation.questions.length,
+      mode: parsed.mode,
+      count: parsed.questions.length,
       addedAt: Date.now(),
     };
     const nextIndex = [...this.index, newSummary];
     try {
-      localStorage.setItem(STORAGE_KEY_LIBRARY, JSON.stringify(nextIndex));
+      updateGeneralConfig({ library: nextIndex });
     } catch (e) {
       // 回滚 questions blob，保持原子性
       try {
@@ -220,13 +160,13 @@ export class LibrarySource implements QuizSource {
     }
 
     this.index = nextIndex;
-    this.questionsCache.set(hash, validation.questions);
+    this.questionsCache.set(hash, parsed.questions);
 
     // 首次导入：自动设为 active
     if (this.activeHash === null) {
       this.activeHash = hash;
       try {
-        localStorage.setItem(STORAGE_KEY_ACTIVE_BANK, hash);
+        updateGeneralConfig({ activeBank: hash });
       } catch {
         /* ignore */
       }
@@ -234,9 +174,13 @@ export class LibrarySource implements QuizSource {
 
     // 还原进度（如有）。题库本身已经入库，state 失败用 stateError 让 UI 显式告知用户。
     let stateError: string | undefined;
-    if (stateStr !== null) {
+    if (parsed.state !== undefined) {
       try {
-        const decoded = await importProgress(stateStr, hash, validation.questions);
+        const decoded = await importProgress(
+          parsed.state,
+          hash,
+          parsed.questions,
+        );
         try {
           localStorage.setItem(stateKey(hash), JSON.stringify(decoded));
         } catch (e) {
@@ -260,17 +204,8 @@ export class LibrarySource implements QuizSource {
     if (!this.index.some((b) => b.hash === hash)) {
       return { ok: false, error: "题库不存在" };
     }
-    let questions = this.questionsCache.get(hash);
-    if (!questions) {
-      const rawQuestions = localStorage.getItem(questionsKey(hash));
-      if (!rawQuestions) return { ok: false, error: "题库不存在" };
-      try {
-        questions = JSON.parse(rawQuestions) as Question[];
-      } catch {
-        return { ok: false, error: "题库解析失败" };
-      }
-      this.questionsCache.set(hash, questions);
-    }
+    const questions = await this.readQuestions(hash);
+    if (!questions) return { ok: false, error: "题库不存在" };
 
     let decoded;
     try {
@@ -287,38 +222,26 @@ export class LibrarySource implements QuizSource {
     return { ok: true };
   }
 
-  async exportBank(
-    hash: string,
-  ): Promise<{ filename: string; content: string } | null> {
+  async exportBank(hash: string): Promise<BankExportFile | null> {
     const summary = this.index.find((b) => b.hash === hash);
     if (!summary) return null;
 
-    const rawQuestions = localStorage.getItem(questionsKey(hash));
-    if (!rawQuestions) return null;
-
-    let parsedQuestions: Question[];
-    try {
-      parsedQuestions = JSON.parse(rawQuestions) as Question[];
-    } catch (e) {
-      console.error("Failed to parse questions for export:", e);
-      return null;
-    }
+    const questions = await this.readQuestions(hash);
+    if (!questions) return null;
 
     // 库里存的就是 canonical 形式，bank.hash 就是 canonical hash，直接用即可。
-    const storedState = loadStoredState(hash, {
-      usePersistedDefaultSettings: true,
-    });
-    const stateEncoded = await exportProgress(storedState, hash, parsedQuestions);
+    const storedState = loadStoredState(hash);
+    const stateEncoded = await exportProgress(storedState, hash, questions);
 
     const mastered = storedState.masteredIds.length;
-    const total = parsedQuestions.length;
+    const total = questions.length;
     const filename = `${summary.name} (${mastered} of ${total}).json`;
 
-    const fileContent = JSON.stringify(
-      { state: stateEncoded, questions: parsedQuestions },
-      null,
-      2,
-    );
+    const fileContent = formatBankFile({
+      mode: summary.mode,
+      questions,
+      state: stateEncoded,
+    });
 
     return { filename, content: fileContent };
   }
@@ -328,13 +251,10 @@ export class LibrarySource implements QuizSource {
     if (!trimmed) return;
     const idx = this.index.findIndex((b) => b.hash === hash);
     if (idx === -1) return;
-    const nextIndex = this.index.map((b, i) => (i === idx ? { ...b, name: trimmed } : b));
-    try {
-      localStorage.setItem(STORAGE_KEY_LIBRARY, JSON.stringify(nextIndex));
-    } catch (e) {
-      console.warn("Failed to rename bank:", e);
-      return;
-    }
+    const nextIndex = this.index.map((b, i) =>
+      i === idx ? { ...b, name: trimmed } : b,
+    );
+    if (!this.persistLibrary(nextIndex, "Failed to rename bank:")) return;
     this.index = nextIndex;
     this.emit();
   }
@@ -356,16 +276,14 @@ export class LibrarySource implements QuizSource {
 
     const remainingBanks = this.index.filter((bank) => !selected.has(bank.hash));
     const nextIndex = [...selectedBanks, ...remainingBanks];
-    const isUnchanged = nextIndex.every((bank, index) => bank.hash === this.index[index]?.hash);
+    const isUnchanged = nextIndex.every(
+      (bank, index) => bank.hash === this.index[index]?.hash,
+    );
     if (isUnchanged) return;
 
-    try {
-      localStorage.setItem(STORAGE_KEY_LIBRARY, JSON.stringify(nextIndex));
-    } catch (e) {
-      console.warn("Failed to reorder library index:", e);
+    if (!this.persistLibrary(nextIndex, "Failed to reorder library index:")) {
       return;
     }
-
     this.index = nextIndex;
     this.emit();
   }
@@ -375,10 +293,7 @@ export class LibrarySource implements QuizSource {
     if (idx === -1) return;
 
     const nextIndex = this.index.filter((b) => b.hash !== hash);
-    try {
-      localStorage.setItem(STORAGE_KEY_LIBRARY, JSON.stringify(nextIndex));
-    } catch (e) {
-      console.warn("Failed to update library index:", e);
+    if (!this.persistLibrary(nextIndex, "Failed to update library index:")) {
       return;
     }
 
@@ -400,15 +315,41 @@ export class LibrarySource implements QuizSource {
     if (this.activeHash === hash) {
       this.activeHash = nextIndex[0]?.hash ?? null;
       try {
-        if (this.activeHash !== null) {
-          localStorage.setItem(STORAGE_KEY_ACTIVE_BANK, this.activeHash);
-        } else {
-          localStorage.removeItem(STORAGE_KEY_ACTIVE_BANK);
-        }
+        updateGeneralConfig({ activeBank: this.activeHash });
       } catch {
         /* ignore */
       }
     }
     this.emit();
+  }
+
+  /** 写入 library 索引；失败仅 warn 并返回 false（调用方据此决定是否回滚）。 */
+  private persistLibrary(nextIndex: BankSummary[], warning: string): boolean {
+    try {
+      updateGeneralConfig({ library: nextIndex });
+      return true;
+    } catch (e) {
+      console.warn(warning, e);
+      return false;
+    }
+  }
+
+  /** 读取并缓存某个题库的题目数组。 */
+  private async readQuestions(
+    hash: string,
+  ): Promise<Question[] | ReciteQuestion[] | null> {
+    const cached = this.questionsCache.get(hash);
+    if (cached) return cached;
+
+    const raw = localStorage.getItem(questionsKey(hash));
+    if (!raw) return null;
+    try {
+      const questions = JSON.parse(raw) as Question[] | ReciteQuestion[];
+      this.questionsCache.set(hash, questions);
+      return questions;
+    } catch (e) {
+      console.error("Failed to parse questions:", e);
+      return null;
+    }
   }
 }

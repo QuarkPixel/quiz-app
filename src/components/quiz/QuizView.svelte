@@ -19,18 +19,15 @@
     import IconSettings from "@tabler/icons-svelte/icons/settings";
 
     import { SHORTCUTS } from "@/config";
-    import type { Bank } from "@/source/types";
+    import type { QuizBank } from "@/source/types";
     import { QuizSession } from "@/quiz/session/QuizSession.svelte";
     import { provideQuizSession } from "@/quiz/session/context";
     import { provideQuizUiActions } from "@/quiz/session/uiContext";
     import { createKeyboardHandler } from "@/quiz/session/keyboardHandler";
-    import { createSoundPlayer } from "$sound";
+    import { createSoundPlayer } from "@/sound";
     import { IconArrowBigUpLines } from "@tabler/icons-svelte";
 
-    let {
-        bank,
-        persistDefaultSettings = false,
-    }: { bank: Bank; persistDefaultSettings?: boolean } = $props();
+    let { bank }: { bank: QuizBank } = $props();
 
     let flashContainer: FlashContainer;
     let toast: AlertToast;
@@ -39,18 +36,12 @@
     // session 在挂载前构造 —— 此时 flash/toast 还未 bind，回调里走 ?. 兜底。
     // bank 在外层用 {#key bank.hash} 控制重建，所以这里把 bank 当作不变量处理。
     // svelte-ignore state_referenced_locally
-    const session = new QuizSession(
-        bank,
-        {
-            flash: (correct) => flashContainer?.flash(correct),
-            toast: (title, description, variant) =>
-                toast?.show(title, description, variant),
-            sound: soundPlayer,
-        },
-        {
-            persistDefaultSettings,
-        },
-    );
+    const session = new QuizSession(bank, {
+        flash: (correct) => flashContainer?.flash(correct),
+        toast: (title, description, variant) =>
+            toast?.show(title, description, variant),
+        sound: soundPlayer,
+    });
     provideQuizSession(session);
 
     // dialog 开关：纯 UI flag，留在容器局部

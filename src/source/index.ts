@@ -1,8 +1,18 @@
-import { SourceImpl } from "$quiz-source";
+import { BankStore } from "./bankStore";
 import type { QuizSource } from "./types";
 
 export function createSource(): QuizSource {
-  return new SourceImpl();
+  return new BankStore();
 }
 
-export type { Bank, BankSummary, ImportBankResult, QuizSource } from "./types";
+export { BankStore };
+export type {
+  ApplyStateResult,
+  Bank,
+  BankExportFile,
+  BankSummary,
+  ImportBankResult,
+  QuizBank,
+  QuizSource,
+  ReciteBank,
+} from "./types";

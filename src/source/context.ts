@@ -9,8 +9,8 @@ export function provideQuizSource(source: QuizSource): void {
 }
 
 /**
- * 拿到注入的 source。bundled 模式下同样可用（mode === "bundled"，
- * 无 importBank 等库方法），调用方据此判断能力。
+ * 拿到注入的 source（应用唯一的题库仓库 BankStore）。
+ * 供深层组件（如 ReviewView 另存为新题库）使用。
  */
 export function useQuizSource(): QuizSource {
   const source = getContext<QuizSource | undefined>(KEY);

@@ -1,16 +1,30 @@
-import type { Question } from "../types";
+import type { BankMode, Question, ReciteQuestion } from "../types";
 
-/** 一份激活的题库（含问题数据 + 元信息） */
-export interface Bank {
+/** 刷题模式的激活题库 */
+export interface QuizBank {
   hash: string;
   name: string;
+  mode: "quiz";
   questions: Question[];
 }
+
+/** 背诵模式的激活题库（预留） */
+export interface ReciteBank {
+  hash: string;
+  name: string;
+  mode: "recite";
+  questions: ReciteQuestion[];
+}
+
+/** 一份激活的题库（含题目数据 + 元信息），按 mode 区分题目结构。 */
+export type Bank = QuizBank | ReciteBank;
 
 /** 题库列表项（不含 questions，UI 渲染列表用） */
 export interface BankSummary {
   hash: string;
   name: string;
+  /** 题库模式；旧数据缺失时按 "quiz" 处理 */
+  mode: BankMode;
   count: number;
   addedAt: number;
 }
@@ -35,39 +49,42 @@ export type ImportBankResult =
 /** 进度覆盖结果 */
 export type ApplyStateResult = { ok: true } | { ok: false; error: string };
 
+/** 导出题库的结果：文件名 + 文件内容（{ mode, state?, questions } 对象） */
+export interface BankExportFile {
+  filename: string;
+  content: string;
+}
+
 /**
- * 题库源抽象。Bundled 与 Library 两种实现共用这一接口。
+ * 题库源抽象。应用只有一个实现（`BankStore`），接口保留是为了在测试里
+ * 注入轻量 mock。
  *
- * onChange：监听 active bank 或 library 列表变更。订阅者会在 import / remove /
- * rename / setActive 后被调用，UI 据此重新读取 getActiveBank / listBanks。
+ * onChange：订阅者会在 import / remove / rename / setActive 后被调用，
+ * UI 据此重新读取 getActiveBank / listBanks。
  */
 export interface QuizSource {
-  readonly mode: "bundled" | "library";
-
-  /** 当前激活的 bank。Bundled 模式永远非 null；Library 模式可能为 null（空库或未选）。 */
+  /** 当前激活的 bank。可能为 null（空库或未选）。 */
   getActiveBank(): Bank | null;
 
   subscribe(listener: () => void): () => void;
 
-  /* ── 以下方法仅 Library 实现 ─────────────────────────────────────────── */
-
-  listBanks?(): BankSummary[];
-  setActiveBank?(hash: string): void;
-  importBank?(name: string, rawJson: string): Promise<ImportBankResult>;
-  renameBank?(hash: string, name: string): void;
-  removeBank?(hash: string): void;
-  moveBanksToTop?(hashes: string[]): void;
+  listBanks(): BankSummary[];
+  setActiveBank(hash: string): void;
+  importBank(name: string, rawJson: string): Promise<ImportBankResult>;
+  renameBank(hash: string, name: string): void;
+  removeBank(hash: string): void;
+  moveBanksToTop(hashes: string[]): void;
 
   /**
    * 把进度备份字符串解码后覆盖到指定 bank 的 state。
    * UI 在 importBank 返回 duplicate + stateStr 后让用户确认时调用。
    */
-  applyStateToBank?(hash: string, stateStr: string): Promise<ApplyStateResult>;
+  applyStateToBank(hash: string, stateStr: string): Promise<ApplyStateResult>;
 
   /**
    * 导出一份题库为可下载内容。
-   * 返回 null 表示该 hash 找不到。文件内容是 { state, questions } 对象，
-   * state 为 exportProgress 紧凑字符串，questions 为题目数组。
+   * 返回 null 表示该 hash 找不到。文件内容是 `{ mode, state, questions }`，
+   * state 为 exportProgress 紧凑字符串，questions 为该模式的题目数组。
    */
-  exportBank?(hash: string): Promise<{ filename: string; content: string } | null>;
+  exportBank(hash: string): Promise<BankExportFile | null>;
 }
