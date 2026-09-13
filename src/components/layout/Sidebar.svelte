@@ -7,7 +7,6 @@
     import { Input } from "$lib/components/ui/input";
     import AlertToast from "./AlertToast.svelte";
     import { writeText } from "clipboard-polyfill";
-    import Prompt from "/assets/prompt.md?raw";
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
     import IconAddSquare from "@tabler/icons-svelte/icons/code-variable-plus";
@@ -19,13 +18,16 @@
     import IconTrash from "@tabler/icons-svelte/icons/trash";
     import IconArrowUp from "@tabler/icons-svelte/icons/arrow-big-up-lines";
     import IconBooks from "@tabler/icons-svelte/icons/books";
+    import IconAdjustments from "@tabler/icons-svelte/icons/adjustments";
+    import GlobalSettings from "../settings/GlobalSettings.svelte";
     import {
-        exportLibraryBank,
-        LibraryImportSession,
-        type LibraryFileMessage,
-        type LibraryImportPrompt,
+        exportBank,
+        BankImportSession,
+        type BankFileMessage,
+        type BankImportPrompt,
         type OverwriteImportRequest,
-    } from "@/features/libraryFiles";
+    } from "@/features/bankFiles";
+    import { getBankPrompt } from "@/features/bankPrompts";
     import {
         reconcileSidebarSelection,
         selectSidebarItem,
@@ -38,13 +40,13 @@
 
     // 初始读取 + subscribe；source 自身是稳定引用
     // svelte-ignore state_referenced_locally
-    let banks = $state(source.listBanks?.() ?? []);
+    let banks = $state(source.listBanks());
     // svelte-ignore state_referenced_locally
     let activeHash = $state(source.getActiveBank()?.hash ?? null);
 
     $effect(() => {
         const unsubscribe = source.subscribe(() => {
-            const nextBanks = source.listBanks?.() ?? [];
+            const nextBanks = source.listBanks();
             banks = nextBanks;
             activeHash = source.getActiveBank()?.hash ?? null;
             applySelection(
@@ -68,8 +70,9 @@
 
     let fileInput: HTMLInputElement | null = $state(null);
     let isImporting = $state(false);
-    let importSession = $state<LibraryImportSession | null>(null);
-    let importMessage = $state<LibraryFileMessage | null>(null);
+    let showGlobalSettings = $state(false);
+    let importSession = $state<BankImportSession | null>(null);
+    let importMessage = $state<BankFileMessage | null>(null);
     let overwriteRequest = $state<OverwriteImportRequest | null>(null);
     let toast: AlertToast;
 
@@ -183,8 +186,10 @@
     }
 
     async function copyPrompt(): Promise<void> {
+        const prompt = getBankPrompt("quiz");
+        if (prompt === null) return;
         try {
-            await writeText(Prompt);
+            await writeText(prompt);
             toast?.show(
                 "Prompt 已复制",
                 "已复制到剪贴板。把它粘贴到与 AI 的对话中，再在后面附上原始题目内容，让 AI 按格式生成题库 JSON。",
@@ -199,7 +204,7 @@
         }
     }
 
-    function showImportPrompt(prompt: LibraryImportPrompt): void {
+    function showImportPrompt(prompt: BankImportPrompt): void {
         if (prompt.kind === "overwrite") {
             overwriteRequest = prompt.request;
             importMessage = null;
@@ -219,7 +224,7 @@
 
         isImporting = true;
         try {
-            const session = await LibraryImportSession.create(source, files);
+            const session = await BankImportSession.create(source, files);
             importSession = session;
             showImportPrompt(session.currentPrompt());
         } finally {
@@ -249,7 +254,7 @@
         isImporting = true;
         try {
             const session =
-                await LibraryImportSession.createFromClipboard(source);
+                await BankImportSession.createFromClipboard(source);
             importSession = session;
             showImportPrompt(session.currentPrompt());
         } finally {
@@ -264,7 +269,7 @@
     }
 
     function commitRename(): void {
-        if (!renameTarget || !source.renameBank) return;
+        if (!renameTarget) return;
         const trimmed = renameInput.trim();
         if (trimmed && trimmed !== renameTarget.name) {
             source.renameBank(renameTarget.hash, trimmed);
@@ -281,7 +286,7 @@
     }
 
     function commitDelete(): void {
-        if (!deleteTarget || !source.removeBank) return;
+        if (!deleteTarget) return;
         const hashes = deleteTarget.hashes;
         deleteTarget = null;
         closeMenus(true);
@@ -296,7 +301,7 @@
     }
 
     function pickBank(hash: string): void {
-        source.setActiveBank?.(hash);
+        source.setActiveBank(hash);
     }
 
     function handleBankClick(event: MouseEvent, hash: string): void {
@@ -365,12 +370,12 @@
 
     function moveSelectionToTop(hash: string): void {
         closeMenus(true);
-        source.moveBanksToTop?.(selectionScopeFor(hash));
+        source.moveBanksToTop(selectionScopeFor(hash));
     }
 
     async function handleExport(hash: string): Promise<void> {
         closeMenus(true);
-        const result = await exportLibraryBank(source, hash);
+        const result = await exportBank(source, hash);
         if (!result.ok) importMessage = result.message;
     }
 
@@ -684,8 +689,26 @@
         </Sidebar.Group>
     </Sidebar.Content>
 
+    <Sidebar.Footer>
+        <Sidebar.Menu>
+            <Sidebar.MenuItem>
+                <Sidebar.MenuButton
+                    tooltipContent="全局设置"
+                    onclick={() => (showGlobalSettings = true)}
+                >
+                    <IconAdjustments size={18} stroke={1.75} />
+                    <span class="group-data-[collapsible=icon]:hidden"
+                        >全局设置</span
+                    >
+                </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+        </Sidebar.Menu>
+    </Sidebar.Footer>
+
     <Sidebar.Rail />
 </Sidebar.Root>
+
+<GlobalSettings bind:open={showGlobalSettings} />
 
 <AlertToast bind:this={toast} />
 
