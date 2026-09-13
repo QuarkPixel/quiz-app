@@ -42,7 +42,7 @@
         题库
     </h3>
     <div class="flex items-center justify-between gap-3">
-        <Label for="bank-name" class="text-sm font-normal">修改名称</Label>
+        <Label for="bank-name" class="text-sm font-normal">名称</Label>
         <Input
             id="bank-name"
             bind:value={draft}
