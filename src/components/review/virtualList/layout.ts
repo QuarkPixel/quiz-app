@@ -27,6 +27,7 @@ export function estimateQuestionHeight(question: Question): number {
     }
     case "judgment":
     case "blank":
+    case "memory":
       return 86;
   }
 }

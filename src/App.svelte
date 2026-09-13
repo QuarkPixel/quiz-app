@@ -3,6 +3,7 @@
     import "./app.css";
 
     import QuizView from "./components/quiz/QuizView.svelte";
+    import MemoryView from "./components/memory/MemoryView.svelte";
     import AppShell from "./components/layout/AppShell.svelte";
     import Sidebar from "./components/layout/Sidebar.svelte";
     import HeaderSidebarTrigger from "./components/layout/HeaderSidebarTrigger.svelte";
@@ -12,7 +13,6 @@
     import { provideQuizSource } from "./source/context";
     import type { Bank } from "./source/types";
     import { IconFishBoneFilled } from "@tabler/icons-svelte";
-    import IconBooks from "@tabler/icons-svelte/icons/books";
 
     const source = createSource();
     provideQuizSource(source);
@@ -25,10 +25,10 @@
         }),
     );
 
-    // 按题库模式收窄：quiz 走完整答题流；recite 是预留分支。
+    // 按题库模式收窄：quiz 走刷题模式答题流；memory 走记忆模式的卡片流。
     const quizBank = $derived(activeBank?.mode === "quiz" ? activeBank : null);
-    const reciteBank = $derived(
-        activeBank?.mode === "recite" ? activeBank : null,
+    const memoryBank = $derived(
+        activeBank?.mode === "memory" ? activeBank : null,
     );
 </script>
 
@@ -42,19 +42,10 @@
             {#key quizBank.hash}
                 <QuizView bank={quizBank} />
             {/key}
-        {:else if reciteBank}
-            <!-- 背诵模式入口预留：实现后替换为 ReciteView -->
-            <main class="flex flex-1 flex-col items-center justify-center px-6">
-                <div class="flex max-w-md flex-col items-center gap-4 text-center">
-                    <IconBooks size={64} class="text-muted-foreground" />
-                    <p class="text-foreground text-lg font-medium">
-                        「{reciteBank.name}」是背诵模式题库
-                    </p>
-                    <p class="text-muted-foreground text-sm leading-relaxed">
-                        背诵模式尚未实现，敬请期待。
-                    </p>
-                </div>
-            </main>
+        {:else if memoryBank}
+            {#key memoryBank.hash}
+                <MemoryView bank={memoryBank} />
+            {/key}
         {:else}
             <main class="flex flex-1 flex-col items-center justify-center px-6">
                 <div class="flex max-w-md flex-col items-center gap-4 text-center">

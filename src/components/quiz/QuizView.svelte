@@ -396,7 +396,7 @@
     </div>
 </div>
 
-<Settings bind:open={showSettings} />
+<Settings bind:open={showSettings} hash={bank.hash} bankName={bank.name} />
 
 <ReviewView
     open={showReview}
