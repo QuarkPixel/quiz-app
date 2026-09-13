@@ -74,7 +74,7 @@ export function createKeyboardHandler(
         session.toggleAutoNext();
         return;
       }
-      if (__QUIZ_MODE__ === "library" && key === SHORTCUTS.toggleSound) {
+      if (key === SHORTCUTS.toggleSound) {
         event.preventDefault();
         session.toggleSound();
         return;
@@ -111,7 +111,7 @@ export function createKeyboardHandler(
       {
         question,
         showResult: session.showResult,
-        autoSubmitOnSelection: session.appState.settings.autoSubmitOnSelection,
+        autoSubmitOnSelection: session.globalSettings.autoSubmitOnSelection,
         shuffledOptions: session.shuffledOptions,
         selectedAnswers: session.selectedAnswers,
         blankAnswerInputs: session.blankAnswerInputs,

@@ -82,7 +82,7 @@
                     showResult={session.showResult}
                     isCorrect={session.isCorrect}
                     autoSubmitOnSelection={
-                        session.appState.settings.autoSubmitOnSelection
+                        session.globalSettings.autoSubmitOnSelection
                     }
                     shuffledOptions={session.shuffledOptions}
                     selectedAnswers={session.selectedAnswers}

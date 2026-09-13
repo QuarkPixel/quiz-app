@@ -18,7 +18,7 @@ export type {
   Correctness,
   LearningStatus,
 } from "./questionClassification";
-export { reconcileAfterSettingsChange, sanitizeUserSettings } from "./settings";
+export { reconcileAfterSettingsChange, sanitizeBankSettings } from "./settings";
 export {
   applyAnswer,
   computeLearningSegments,

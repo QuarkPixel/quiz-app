@@ -1,43 +1,17 @@
 import { fillActivePool } from "@/algorithm";
 import { buildRuntimeState, shouldRequeueActivePoolItem } from "@/store";
+import { sanitizeBankSettings } from "@/bankSettings";
 import type {
   ActivePoolItem,
   Question,
   RuntimeState,
   StoredState,
-  UserSettings,
+  BankSettings,
 } from "@/types";
-import {
-  ACTIVE_POOL_SIZE,
-  CORRECT_STREAK_AFTER_MISTAKE,
-  CORRECT_STREAK_TO_MASTER,
-} from "@/config";
-import { sanitizeSoundSettings } from "$sound";
-
-const SETTINGS_BOUNDS = {
-  activePoolSize: { min: 5, max: 100 },
-  correctStreakToMaster: { min: 1, max: 10 },
-  correctStreakAfterMistake: { min: 1, max: 20 },
-} as const;
 
 interface ReconcileSettingsResult {
   state: RuntimeState;
   shouldSelectNext: boolean;
-}
-
-function toBoundedInt(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const numberValue = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numberValue)) return fallback;
-
-  const rounded = Math.round(numberValue);
-  if (rounded < min) return min;
-  if (rounded > max) return max;
-  return rounded;
 }
 
 function toStoredStateLike(runtimeState: RuntimeState): StoredState {
@@ -76,7 +50,7 @@ function applyThresholds(
   activePool: ActivePoolItem[],
   masteredIds: string[],
   masteredMistakes: Record<string, boolean>,
-  settings: UserSettings,
+  settings: BankSettings,
 ): {
   activePool: ActivePoolItem[];
   masteredIds: string[];
@@ -107,50 +81,14 @@ function applyThresholds(
   };
 }
 
-export function sanitizeUserSettings(settings: UserSettings): UserSettings {
-  const legacyAutoSubmitOnAnswer = (settings as UserSettings & {
-    autoSubmitOnAnswer?: unknown;
-  }).autoSubmitOnAnswer;
-
-  return {
-    autoNextOnCorrect: !!settings.autoNextOnCorrect,
-    autoSubmitOnSelection:
-      typeof settings.autoSubmitOnSelection === "boolean"
-        ? settings.autoSubmitOnSelection
-        : typeof legacyAutoSubmitOnAnswer === "boolean"
-          ? legacyAutoSubmitOnAnswer
-        : true,
-    activePoolSize: toBoundedInt(
-      settings.activePoolSize,
-      ACTIVE_POOL_SIZE,
-      SETTINGS_BOUNDS.activePoolSize.min,
-      SETTINGS_BOUNDS.activePoolSize.max,
-    ),
-    correctStreakToMaster: toBoundedInt(
-      settings.correctStreakToMaster,
-      CORRECT_STREAK_TO_MASTER,
-      SETTINGS_BOUNDS.correctStreakToMaster.min,
-      SETTINGS_BOUNDS.correctStreakToMaster.max,
-    ),
-    correctStreakAfterMistake: toBoundedInt(
-      settings.correctStreakAfterMistake,
-      CORRECT_STREAK_AFTER_MISTAKE,
-      SETTINGS_BOUNDS.correctStreakAfterMistake.min,
-      SETTINGS_BOUNDS.correctStreakAfterMistake.max,
-    ),
-    selectionMode:
-      settings.selectionMode === "sequential" ? "sequential" : "random",
-    notifyNewQuestionInPool: !!settings.notifyNewQuestionInPool,
-    ...sanitizeSoundSettings(settings),
-  };
-}
+export { sanitizeBankSettings };
 
 export function reconcileAfterSettingsChange(
   questions: Question[],
   runtimeState: RuntimeState,
   currentQuestionId?: string,
 ): ReconcileSettingsResult {
-  const sanitizedSettings = sanitizeUserSettings(runtimeState.settings);
+  const sanitizedSettings = sanitizeBankSettings(runtimeState.settings);
   const shownActivePool = runtimeState.activePool.filter(
     (item) => !shouldRequeueActivePoolItem(item),
   );

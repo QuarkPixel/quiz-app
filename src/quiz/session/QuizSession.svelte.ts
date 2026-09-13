@@ -11,13 +11,18 @@ import { writeText } from "clipboard-polyfill";
 import { tick } from "svelte";
 import type {
   ActivePoolItem,
+  GlobalSettings,
   Option,
   Question,
   QuestionType,
   RuntimeState,
   StoredState,
 } from "@/types";
-import type { Bank } from "@/source/types";
+import type { QuizBank } from "@/source/types";
+import {
+  GlobalSettingsStore,
+  globalSettingsStore,
+} from "@/features/globalSettings.svelte";
 import {
   applyAnswer,
   buildFilterOptions,
@@ -34,7 +39,7 @@ import {
   rebuildRuntimeState,
   rebuildRuntimeStateForFilterChange,
   reconcileAfterSettingsChange,
-  sanitizeUserSettings,
+  sanitizeBankSettings,
   saveState,
   selectNextFromPool,
   shuffle,
@@ -56,11 +61,10 @@ import {
   type QuestionCopyContext,
 } from "../types/types";
 import {
-  initializeSoundPreference,
   maybePlayAnswerSound,
   maybePlaySuccessSound,
   setSoundEnabledPreference,
-} from "$sound";
+} from "@/sound";
 import type { SoundPlayer } from "@/sound/types";
 
 export type ExportStatus = "idle" | "copied" | "error";
@@ -74,13 +78,8 @@ export interface QuizSessionDeps {
   flash(isCorrect: boolean): void;
   /** 显示 toast 提示 */
   toast(title: string, description?: string, variant?: ToastVariant): void;
-  /** 播放音效。bundled 模式下是空实现。 */
+  /** 播放音效 */
   sound: SoundPlayer;
-}
-
-export interface QuizSessionOptions {
-  /** Library 模式：设置变更同步写入本地默认设置，新题库加载时使用。 */
-  persistDefaultSettings?: boolean;
 }
 
 export interface CopyQuestionOptions {
@@ -97,7 +96,7 @@ const EMPTY_COPY_CONTEXT: QuestionCopyContext = {
 };
 
 export class QuizSession {
-  readonly bank: Bank;
+  readonly bank: QuizBank;
   // 这些 readonly 字段在 constructor body 中赋值；TS 静态分析认为它们在
   // 下面的 $derived 字段初始化时 "尚未赋值"，但 $derived 表达式是惰性的
   // （只在外部访问时求值），那时 constructor body 已执行完，赋值已完成。
@@ -167,18 +166,20 @@ export class QuizSession {
   );
 
   constructor(
-    bank: Bank,
+    bank: QuizBank,
     private readonly deps: QuizSessionDeps,
-    private readonly options: QuizSessionOptions = {},
+    private readonly globalSettingsRef: GlobalSettingsStore = globalSettingsStore,
   ) {
     this.bank = bank;
     this.questions = bank.questions;
     this.hash = bank.hash;
     this.filterOptions = buildFilterOptions(this.questions);
-    this.appState = loadRuntimeState(this.questions, this.hash, {
-      usePersistedDefaultSettings: this.options.persistDefaultSettings === true,
-    });
-    initializeSoundPreference(this.appState);
+    this.appState = loadRuntimeState(this.questions, this.hash);
+  }
+
+  /** 全局设置（跨题库共享，和侧边栏「全局设置」是同一个实例）。 */
+  get globalSettings(): GlobalSettings {
+    return this.globalSettingsRef.value;
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -249,7 +250,7 @@ export class QuizSession {
     this.showResult = true;
     this.isCorrect = nextIsCorrect;
     this.deps.flash(nextIsCorrect);
-    maybePlayAnswerSound(this.appState, this.deps.sound, nextIsCorrect);
+    maybePlayAnswerSound(this.globalSettings, this.deps.sound, nextIsCorrect);
     const poolIdsBeforeAnswer = this.activePoolIdSet();
     this.appState = applyAnswer(
       this.appState,
@@ -259,7 +260,7 @@ export class QuizSession {
     this.enqueueNewlyPooled(poolIdsBeforeAnswer);
     this.save();
 
-    if (nextIsCorrect && this.appState.settings.autoNextOnCorrect) {
+    if (nextIsCorrect && this.globalSettings.autoNextOnCorrect) {
       this.advanceQuestionFlow();
     }
   }
@@ -282,7 +283,7 @@ export class QuizSession {
     this.save();
     this.isCorrect = true;
     this.deps.flash(true);
-    maybePlayAnswerSound(this.appState, this.deps.sound, true);
+    maybePlayAnswerSound(this.globalSettings, this.deps.sound, true);
   }
 
   /**
@@ -392,16 +393,15 @@ export class QuizSession {
   }
 
   reset(): void {
-    this.appState = createResetRuntimeState(this.questions, this.hash, {
-      usePersistedDefaultSettings: this.options.persistDefaultSettings === true,
-    });
+    this.appState = createResetRuntimeState(this.questions, this.hash);
     this.initialize();
   }
 
+  // ── 全局设置（写入共享 store） ────────────────────────────────────
+
   toggleAutoNext(): void {
-    const next = !this.appState.settings.autoNextOnCorrect;
-    this.appState.settings.autoNextOnCorrect = next;
-    this.saveSettingsChange();
+    const next = !this.globalSettings.autoNextOnCorrect;
+    this.globalSettingsRef.update({ autoNextOnCorrect: next });
     this.deps.toast(
       next ? "答对自动下一题已开启" : "答对自动下一题已关闭",
       next
@@ -410,15 +410,20 @@ export class QuizSession {
     );
   }
 
+  setAutoSubmitOnSelection(next: boolean): void {
+    if (this.globalSettings.autoSubmitOnSelection === next) return;
+    this.globalSettingsRef.update({ autoSubmitOnSelection: next });
+  }
+
   toggleSound(): void {
-    this.setSoundEnabled(!this.appState.settings.soundEnabled);
+    this.setSoundEnabled(!this.globalSettings.soundEnabled);
   }
 
   setSoundEnabled(next: boolean): void {
     setSoundEnabledPreference(
-      this.appState,
+      this.globalSettings,
       next,
-      () => this.saveSettingsChange(),
+      () => this.globalSettingsRef.persist(),
       this.deps.toast,
       this.deps.sound,
     );
@@ -521,7 +526,7 @@ export class QuizSession {
     }
   }
 
-  /** 非算法偏好变更（如 autoNextOnCorrect）：持久化当前题库与默认设置 */
+  /** 按库偏好变更（如 notifyNewQuestionInPool）：持久化当前题库与默认模板 */
   handlePreferenceChange(): void {
     this.saveSettingsChange();
   }
@@ -535,7 +540,7 @@ export class QuizSession {
     const stateWithPending: RuntimeState = {
       ...newState,
       masteredMistakes: newState.masteredMistakes ?? {},
-      settings: sanitizeUserSettings(newState.settings),
+      settings: sanitizeBankSettings(newState.settings),
       pendingIds: [],
     };
     this.appState = rebuildRuntimeState(
@@ -565,7 +570,7 @@ export class QuizSession {
         "粘贴到任意位置即可备份。",
         "success",
       );
-      maybePlaySuccessSound(this.appState, this.deps.sound);
+      maybePlaySuccessSound(this.globalSettings, this.deps.sound);
     } else {
       this.exportStatus = "error";
       setTimeout(
@@ -600,7 +605,7 @@ export class QuizSession {
     }
     this.applyImportedState(parsed.state);
     this.deps.toast("进度已导入", "已覆盖当前进度。", "success");
-    maybePlaySuccessSound(this.appState, this.deps.sound);
+    maybePlaySuccessSound(this.globalSettings, this.deps.sound);
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -609,9 +614,7 @@ export class QuizSession {
 
   private save(options: { updateDefaultSettings?: boolean } = {}): void {
     saveState(this.hash, this.appState, {
-      updateDefaultSettings:
-        this.options.persistDefaultSettings === true &&
-        options.updateDefaultSettings === true,
+      updateDefaultSettings: options.updateDefaultSettings === true,
     });
   }
 

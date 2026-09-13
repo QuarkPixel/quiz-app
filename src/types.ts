@@ -7,13 +7,23 @@ export interface Option {
   text: string;
 }
 
-/** 题目类型 */
+/** 刷题模式的题型 */
 export type QuestionType = "judgment" | "single" | "multiple" | "blank";
+
+/**
+ * 题库模式。
+ *
+ * - `quiz`：刷题模式（唯一已实现）。题目带 type / options / answer，参与间隔重复算法。
+ * - `recite`：背诵模式（预留，尚未实现）。题目只有 id / question / answer，
+ *   用户自评「记得 / 不记得」。解析、总览、答题流的具体接入点见
+ *   `src/quiz/modes/` 与 AGENTS.md。
+ */
+export type BankMode = "quiz" | "recite";
 
 /** 新题入池顺序 */
 export type QuestionOrder = "random" | "sequential";
 
-/** 题目 */
+/** 刷题模式题目 */
 export interface Question {
   id: string;
   type: QuestionType;
@@ -21,6 +31,30 @@ export interface Question {
   options?: Option[];
   answer: boolean | number[] | string | string[];
 }
+
+/**
+ * 背诵模式题目（预留）。
+ *
+ * 与刷题模式不同：没有 type / options，只有题目与答案。
+ * 用户看完答案后自评「记得 / 不记得」，不走判分逻辑。
+ */
+export interface ReciteQuestion {
+  id: string;
+  question: string;
+  answer: string;
+}
+
+/** 各题库模式对应的题目类型映射。 */
+export interface BankQuestionMap {
+  quiz: Question;
+  recite: ReciteQuestion;
+}
+
+/** 取出某种模式下的题目类型。 */
+export type BankQuestionOf<M extends BankMode> = BankQuestionMap[M];
+
+/** 任意一种模式的题目。 */
+export type BankQuestion = BankQuestionMap[BankMode];
 
 /** 活动池中的题目 */
 export interface ActivePoolItem {
@@ -35,12 +69,25 @@ export interface ActivePoolItem {
   lastSelectedRound: number;
 }
 
-/** 用户设置 */
-export interface UserSettings {
-  /** 答题正确时自动下一题 */
-  autoNextOnCorrect: boolean;
+/**
+ * 全局偏好：跨题库共享，与具体题库无关。
+ * 存于 general 配置（`quiz_app_general`）的 `globalSettings`。
+ */
+export interface GlobalSettings {
+  /** 是否启用音效 */
+  soundEnabled: boolean;
   /** 单选 / 判断题选择答案后是否自动提交 */
   autoSubmitOnSelection: boolean;
+  /** 答题正确时自动下一题 */
+  autoNextOnCorrect: boolean;
+}
+
+/**
+ * 按题库的学习设置。
+ * 存于每个题库的 `StoredState.settings`；新题库的初始值来自
+ * general 配置里的 `defaultSettings`。
+ */
+export interface BankSettings {
   /** 活动题目池大小 */
   activePoolSize: number;
   /** 首次掌握所需连续正确次数 */
@@ -51,8 +98,6 @@ export interface UserSettings {
   selectionMode: QuestionOrder;
   /** 新题进入活动池后，在下一步前插入一次题目预览（适合初次了解题库） */
   notifyNewQuestionInPool: boolean;
-  /** 是否启用音效（仅 library 模式使用） */
-  soundEnabled?: boolean;
 }
 
 /** UI 偏好（按 bank 持久化，但和「学习算法」分开） */
@@ -79,8 +124,8 @@ export interface StoredState {
   currentRound: number;
   /** 题型筛选 */
   filterType: QuestionType | "all";
-  /** 用户设置（学习算法相关） */
-  settings: UserSettings;
+  /** 用户设置（学习算法相关，按题库） */
+  settings: BankSettings;
   /** UI 偏好（不影响学习算法） */
   ui: UiPreferences;
 }

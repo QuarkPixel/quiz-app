@@ -16,32 +16,37 @@
  *     bit=1 表示该已掌握题目在掌握前曾答错
  *   - activePool 每项：[questionIndex, consecutiveCorrect, hasEverMistaken(0|1), lastSelectedRound, hasBeenShown(0|1)]
  *   - filterTypeCode：all=0, single=1, multiple=2, judgment=3, blank=4
- *   - settings：[
- *       autoNextOnCorrect(0|1),
- *       autoSubmitOnSelection(0|1),
+ *   - settings（v8 起只编码「按题库」的设置；音效等全局偏好不进进度备份）：[
  *       activePoolSize,
  *       correctStreakToMaster,
  *       correctStreakAfterMistake,
  *       selectionMode,
- *       soundEnabled(0|1),
  *       notifyNewQuestionInPool(0|1),
  *     ]
+ *   - v7 及更早的 settings 里混有 autoNextOnCorrect / autoSubmitOnSelection /
+ *     soundEnabled 等全局字段，解码时会忽略它们（全局设置由 general 配置负责）。
  */
 
 import BitSet from "bitset";
-import { SOUND_ENABLED_BY_DEFAULT } from "../config";
 import type {
   ActivePoolItem,
-  Question,
+  BankSettings,
   QuestionType,
   StoredState,
   UiPreferences,
-  UserSettings,
 } from "../types";
+
+/**
+ * 进度编解码只依赖题目的 id，因此刷题模式（Question）与背诵模式
+ * （ReciteQuestion）的题目都可以直接传入。
+ */
+export interface ProgressQuestion {
+  id: string;
+}
 
 // ── filterType 编解码 ──────────────────────────────────────────────────────────
 
-const FORMAT_VERSION = 7;
+const FORMAT_VERSION = 8;
 const MIN_SUPPORTED_FORMAT_VERSION = 4;
 
 const FILTER_TO_CODE: Record<string, number> = {
@@ -59,16 +64,6 @@ const CODE_TO_FILTER: Array<QuestionType | "all"> = [
   "judgment",
   "blank",
 ];
-
-function encodeSoundEnabled(settings: UserSettings): 0 | 1 {
-  return settings.soundEnabled === true ? 1 : 0;
-}
-
-function decodeSoundEnabled(raw: unknown): boolean {
-  if (raw === 1 || raw === true) return true;
-  if (raw === 0 || raw === false) return false;
-  return SOUND_ENABLED_BY_DEFAULT;
-}
 
 function requireNonNegativeInteger(raw: unknown, message: string): number {
   if (
@@ -94,7 +89,7 @@ interface QuestionIndex {
   idToIndex: Map<string, number>;
 }
 
-function buildQuestionIndex(questions: readonly Question[]): QuestionIndex {
+function buildQuestionIndex(questions: readonly ProgressQuestion[]): QuestionIndex {
   const ids = questions.map((q) => q.id);
   const idToIndex = new Map<string, number>();
 
@@ -349,7 +344,7 @@ function fromBase64url(str: string): Uint8Array {
 export async function exportProgress(
   state: StoredState,
   hash: string,
-  questions: readonly Question[],
+  questions: readonly ProgressQuestion[],
 ): Promise<string> {
   const { ids, idToIndex } = buildQuestionIndex(questions);
   const filterCode = FILTER_TO_CODE[state.filterType] ?? 0;
@@ -363,13 +358,10 @@ export async function exportProgress(
     state.currentRound,
     filterCode,
     [
-      state.settings.autoNextOnCorrect ? 1 : 0,
-      state.settings.autoSubmitOnSelection ? 1 : 0,
       state.settings.activePoolSize,
       state.settings.correctStreakToMaster,
       state.settings.correctStreakAfterMistake,
       state.settings.selectionMode,
-      encodeSoundEnabled(state.settings),
       state.settings.notifyNewQuestionInPool ? 1 : 0,
     ],
     [
@@ -388,13 +380,71 @@ export async function exportProgress(
 }
 
 /**
+ * 解码 settings 数组，只还原「按题库」的设置。
+ *
+ * v8 起布局：[activePoolSize, correctStreakToMaster, correctStreakAfterMistake,
+ *            selectionMode, notifyNewQuestionInPool]
+ * v4-v7 的旧布局里混有 autoNextOnCorrect / autoSubmitOnSelection / soundEnabled，
+ * 这些已成为全局设置，这里直接忽略（不会覆盖用户当前的全局偏好）。
+ */
+function decodeBankSettings(raw: unknown[], version: number): BankSettings {
+  if (version >= 8) {
+    return {
+      activePoolSize: requireNonNegativeInteger(
+        raw[0],
+        "数据格式无效：活动池大小设置格式错误。",
+      ),
+      correctStreakToMaster: requireNonNegativeInteger(
+        raw[1],
+        "数据格式无效：掌握次数设置格式错误。",
+      ),
+      correctStreakAfterMistake: requireNonNegativeInteger(
+        raw[2],
+        "数据格式无效：错题掌握次数设置格式错误。",
+      ),
+      selectionMode: raw[3] === "sequential" ? "sequential" : "random",
+      notifyNewQuestionInPool: decodeFlag(
+        raw[4],
+        "数据格式无效：新题提示设置格式错误。",
+      ),
+    };
+  }
+
+  const activePoolSizeIndex = version >= 6 ? 2 : 1;
+  const correctStreakToMasterIndex = version >= 6 ? 3 : 2;
+  const correctStreakAfterMistakeIndex = version >= 6 ? 4 : 3;
+  const selectionModeIndex = version >= 6 ? 5 : 4;
+
+  return {
+    activePoolSize: requireNonNegativeInteger(
+      raw[activePoolSizeIndex],
+      "数据格式无效：活动池大小设置格式错误。",
+    ),
+    correctStreakToMaster: requireNonNegativeInteger(
+      raw[correctStreakToMasterIndex],
+      "数据格式无效：掌握次数设置格式错误。",
+    ),
+    correctStreakAfterMistake: requireNonNegativeInteger(
+      raw[correctStreakAfterMistakeIndex],
+      "数据格式无效：错题掌握次数设置格式错误。",
+    ),
+    selectionMode:
+      raw[selectionModeIndex] === "sequential" ? "sequential" : "random",
+    notifyNewQuestionInPool:
+      version >= 7
+        ? decodeFlag(raw[7], "数据格式无效：新题提示设置格式错误。")
+        : false,
+  };
+}
+
+/**
  * 从编码字符串导入学习进度（异步）
  * 成功返回 StoredState，失败抛出 Error（message 为中文，可直接展示给用户）
  */
 export async function importProgress(
   encoded: string,
   hash: string,
-  questions: readonly Question[],
+  questions: readonly ProgressQuestion[],
 ): Promise<StoredState> {
   const { ids } = buildQuestionIndex(questions);
   const dotIndex = encoded.indexOf(".");
@@ -481,15 +531,6 @@ export async function importProgress(
   }
 
   // 还原数据
-  const activePoolSizeIndex = version >= 6 ? 2 : 1;
-  const correctStreakToMasterIndex = version >= 6 ? 3 : 2;
-  const correctStreakAfterMistakeIndex = version >= 6 ? 4 : 3;
-  const selectionModeIndex = version >= 6 ? 5 : 4;
-  const soundEnabledIndex = version >= 6 ? 6 : 5;
-  const activePoolSize = requireNonNegativeInteger(
-    settingsRaw[activePoolSizeIndex],
-    "数据格式无效：活动池大小设置格式错误。",
-  );
   const currentRoundValue = requireNonNegativeInteger(
     currentRound,
     "数据格式无效：当前轮次格式错误。",
@@ -508,40 +549,7 @@ export async function importProgress(
   const filterType: QuestionType | "all" =
     CODE_TO_FILTER[filterCodeValue] ?? "all";
 
-  const settings: UserSettings = {
-    autoNextOnCorrect: decodeFlag(
-      settingsRaw[0],
-      "数据格式无效：答对自动下一题设置格式错误。",
-    ),
-    autoSubmitOnSelection:
-      version >= 6
-        ? decodeFlag(
-            settingsRaw[1],
-            "数据格式无效：选择后自动提交设置格式错误。",
-          )
-        : true,
-    activePoolSize,
-    correctStreakToMaster: requireNonNegativeInteger(
-      settingsRaw[correctStreakToMasterIndex],
-      "数据格式无效：掌握次数设置格式错误。",
-    ),
-    correctStreakAfterMistake: requireNonNegativeInteger(
-      settingsRaw[correctStreakAfterMistakeIndex],
-      "数据格式无效：错题掌握次数设置格式错误。",
-    ),
-    selectionMode:
-      settingsRaw[selectionModeIndex] === "sequential"
-        ? "sequential"
-        : "random",
-    notifyNewQuestionInPool:
-      version >= 7
-        ? decodeFlag(
-            settingsRaw[7],
-            "数据格式无效：新题提示设置格式错误。",
-          )
-        : false,
-    soundEnabled: decodeSoundEnabled(settingsRaw[soundEnabledIndex]),
-  };
+  const settings = decodeBankSettings(settingsRaw, version);
 
   const ui: UiPreferences = {
     progressFocused: decodeFlag(

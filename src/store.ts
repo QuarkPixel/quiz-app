@@ -1,9 +1,8 @@
 /**
- * 状态存储模块
+ * 每个题库的状态存储模块
  *
- * 所有函数均按 bank 的 hash 分 key 存储。hash 由调用方提供：
- *   - Bundled 模式：来自编译期注入的 __QUESTIONS_HASH__
- *   - Library 模式：来自当前 active bank
+ * 所有函数均按 bank 的 hash 分 key 存储。hash 由调用方提供（来自当前 active bank）。
+ * 按库设置的默认模板来自 general 配置的 `defaultSettings`。
  */
 
 import type {
@@ -12,54 +11,44 @@ import type {
   ActivePoolItem,
   Question,
   QuestionType,
-  UserSettings,
+  BankSettings,
   UiPreferences,
 } from "./types";
 
+import { STORAGE_PREFIX_STATE } from "./config";
 import {
-  STORAGE_PREFIX_STATE,
-  STORAGE_KEY_DEFAULT_SETTINGS,
-  ACTIVE_POOL_SIZE,
-  CORRECT_STREAK_TO_MASTER,
-  CORRECT_STREAK_AFTER_MISTAKE,
-} from "./config";
-
-export interface LoadStoredStateOptions {
-  /** 使用本地持久化的默认设置作为缺省值（library 模式使用）。 */
-  usePersistedDefaultSettings?: boolean;
-}
+  createDefaultBankSettings,
+  sanitizeBankSettings,
+} from "./bankSettings";
+import { loadGeneralConfig, updateGeneralConfig } from "./generalConfig";
 
 export interface SaveStateOptions {
-  /** 保存当前 bank 状态时，同步把 settings 写入默认设置。 */
+  /** 保存当前 bank 状态时，同步把 settings 写入 general 配置的默认模板。 */
   updateDefaultSettings?: boolean;
 }
 
-/** 创建默认的用户设置 */
-export function createDefaultSettings(): UserSettings {
-  return {
-    autoNextOnCorrect: false,
-    autoSubmitOnSelection: true,
-    activePoolSize: ACTIVE_POOL_SIZE,
-    correctStreakToMaster: CORRECT_STREAK_TO_MASTER,
-    correctStreakAfterMistake: CORRECT_STREAK_AFTER_MISTAKE,
-    selectionMode: "random",
-    notifyNewQuestionInPool: false,
-  };
+/** 创建按库设置的默认值（代码内置）。 */
+export function createDefaultSettings(): BankSettings {
+  return createDefaultBankSettings();
+}
+
+/** 从 general 配置读取「新题库默认设置」；缺失时回落到代码默认值。 */
+export function loadDefaultSettings(): BankSettings {
+  const config = loadGeneralConfig();
+  return sanitizeBankSettings(config.defaultSettings);
+}
+
+/** 把设置写入 general 配置的默认模板。失败仅 warn，不打断当前题库设置保存流程。 */
+export function saveDefaultSettings(settings: BankSettings): void {
+  try {
+    updateGeneralConfig({ defaultSettings: sanitizeBankSettings(settings) });
+  } catch (e) {
+    console.warn("Failed to save default settings:", e);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
-}
-
-function mergeSettings(
-  defaults: UserSettings,
-  settings: unknown,
-): UserSettings {
-  if (!isRecord(settings)) return { ...defaults };
-  return {
-    ...defaults,
-    ...(settings as Partial<UserSettings>),
-  };
 }
 
 function normalizeMasteredMistakes(value: unknown): Record<string, boolean> {
@@ -72,30 +61,6 @@ function normalizeMasteredMistakes(value: unknown): Record<string, boolean> {
     }
   }
   return result;
-}
-
-/** 从 localStorage 加载用户默认设置；不存在时回落到代码默认配置。 */
-export function loadDefaultSettings(): UserSettings {
-  const codeDefaults = createDefaultSettings();
-
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY_DEFAULT_SETTINGS);
-    if (saved === null) return codeDefaults;
-    return mergeSettings(codeDefaults, JSON.parse(saved));
-  } catch (e) {
-    console.error("Failed to load default settings:", e);
-    return codeDefaults;
-  }
-}
-
-/** 保存用户默认设置。失败仅 warn，不打断当前题库设置保存流程。 */
-export function saveDefaultSettings(settings: UserSettings): void {
-  try {
-    const toStore = mergeSettings(createDefaultSettings(), settings);
-    localStorage.setItem(STORAGE_KEY_DEFAULT_SETTINGS, JSON.stringify(toStore));
-  } catch (e) {
-    console.warn("Failed to save default settings:", e);
-  }
 }
 
 /** 创建默认的 UI 偏好 */
@@ -130,18 +95,14 @@ export function shouldRequeueActivePoolItem(item: ActivePoolItem): boolean {
 }
 
 /** 创建默认的存储状态 */
-function createDefaultStoredState(
-  options: LoadStoredStateOptions = {},
-): StoredState {
+function createDefaultStoredState(): StoredState {
   return {
     masteredIds: [],
     masteredMistakes: {},
     activePool: [],
     currentRound: 0,
     filterType: "all",
-    settings: options.usePersistedDefaultSettings
-      ? loadDefaultSettings()
-      : createDefaultSettings(),
+    settings: loadDefaultSettings(),
     ui: createDefaultUiPreferences(),
   };
 }
@@ -151,11 +112,8 @@ function stateKey(hash: string): string {
 }
 
 /** 从 localStorage 加载指定 bank 的状态 */
-export function loadStoredState(
-  hash: string,
-  options: LoadStoredStateOptions = {},
-): StoredState {
-  const defaultState = createDefaultStoredState(options);
+export function loadStoredState(hash: string): StoredState {
+  const defaultState = createDefaultStoredState();
 
   try {
     const saved = localStorage.getItem(stateKey(hash));
@@ -170,7 +128,7 @@ export function loadStoredState(
         masteredMistakes: normalizeMasteredMistakes(
           parsedState.masteredMistakes,
         ),
-        settings: mergeSettings(defaultState.settings, parsedState.settings),
+        settings: sanitizeBankSettings(parsedState.settings, defaultState.settings),
         ui: {
           ...defaultState.ui,
           ...(isRecord(parsedState.ui) ? parsedState.ui : {}),
@@ -212,13 +170,10 @@ export function saveState(
   }
 }
 
-/** 重置指定 bank 的进度（保留 filterType 和 settings 和 ui） */
-export function resetStoredState(
-  hash: string,
-  options: LoadStoredStateOptions = {},
-): StoredState {
-  const previous = loadStoredState(hash, options);
-  const defaultState = createDefaultStoredState(options);
+/** 重置指定 bank 的进度（保留 filterType / settings / ui） */
+export function resetStoredState(hash: string): StoredState {
+  const previous = loadStoredState(hash);
+  const defaultState = createDefaultStoredState();
 
   try {
     localStorage.removeItem(stateKey(hash));

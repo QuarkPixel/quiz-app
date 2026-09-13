@@ -21,11 +21,7 @@ import {
 } from "@/store";
 import type { Question, QuestionType, RuntimeState } from "@/types";
 import { normalizeFilterType } from "./filters";
-import { sanitizeUserSettings } from "./settings";
-
-export interface RuntimePersistenceOptions {
-  usePersistedDefaultSettings?: boolean;
-}
+import { sanitizeBankSettings } from "@/bankSettings";
 
 export type FilterChangeActivePoolPolicy = "keep-shown" | "clear-active-pool";
 
@@ -62,11 +58,10 @@ export function hasShownActivePoolOutsideFilter(
 export function loadRuntimeState(
   questions: Question[],
   hash: string,
-  options: RuntimePersistenceOptions = {},
 ): RuntimeState {
-  const storedState = loadStoredState(hash, options);
+  const storedState = loadStoredState(hash);
   storedState.filterType = normalizeFilterType(storedState.filterType, questions);
-  storedState.settings = sanitizeUserSettings(storedState.settings);
+  storedState.settings = sanitizeBankSettings(storedState.settings);
   return buildRuntimeState(questions, storedState);
 }
 
@@ -111,10 +106,9 @@ export function rebuildRuntimeStateForFilterChange(
 export function createResetRuntimeState(
   questions: Question[],
   hash: string,
-  options: RuntimePersistenceOptions = {},
 ): RuntimeState {
-  const resetState = resetStoredState(hash, options);
+  const resetState = resetStoredState(hash);
   resetState.filterType = normalizeFilterType(resetState.filterType, questions);
-  resetState.settings = sanitizeUserSettings(resetState.settings);
+  resetState.settings = sanitizeBankSettings(resetState.settings);
   return buildRuntimeState(questions, resetState);
 }

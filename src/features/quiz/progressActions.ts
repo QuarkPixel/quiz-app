@@ -1,13 +1,17 @@
 import { writeText, readText } from "clipboard-polyfill";
-import { exportProgress, importProgress } from "../importExport";
-import type { Question, RuntimeState, StoredState } from "@/types";
+import {
+  exportProgress,
+  importProgress,
+  type ProgressQuestion,
+} from "../importExport";
+import type { RuntimeState, StoredState } from "@/types";
 
 export type CopyResult = { ok: true } | { ok: false; error: string };
 
 export async function copyProgressToClipboard(
   state: RuntimeState,
   hash: string,
-  questions: readonly Question[],
+  questions: readonly ProgressQuestion[],
 ): Promise<CopyResult> {
   try {
     const encoded = await exportProgress(state, hash, questions);
@@ -43,7 +47,7 @@ export type ParseResult =
 export async function parseImportedProgress(
   text: string,
   hash: string,
-  questions: readonly Question[],
+  questions: readonly ProgressQuestion[],
 ): Promise<ParseResult> {
   try {
     const state = await importProgress(text, hash, questions);
