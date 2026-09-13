@@ -1,9 +1,10 @@
-import type { QuestionType } from "../../types";
+import type { QuizQuestionType } from "../../types";
 import type { QuestionTypeLogic } from "./types";
 import { judgmentLogic } from "./judgment/logic";
 import { singleLogic } from "./single/logic";
 import { multipleLogic } from "./multiple/logic";
 import { blankLogic } from "./blank/logic";
+import { memoryLogic } from "./memory/logic";
 
 /**
  * 题型「逻辑层」注册表。
@@ -18,22 +19,37 @@ import { blankLogic } from "./blank/logic";
  */
 export type { QuestionTypeLogic };
 
-export const QUESTION_TYPES_LOGIC: Record<QuestionType, QuestionTypeLogic> = {
+/**
+ * 刷题模式的四种题型。
+ *
+ * 记忆题型（`memory`）是第五种题型，但校验走 `memoryModeDef.validateQuestions`，
+ * 也不参与刷题模式的题型筛选 / 总览分组，所以这里不登记它。
+ */
+export const QUIZ_QUESTION_TYPES_LOGIC: Record<
+  QuizQuestionType,
+  QuestionTypeLogic
+> = {
   judgment: judgmentLogic,
   single: singleLogic,
   multiple: multipleLogic,
   blank: blankLogic,
 };
 
-/** 题型显示顺序（题库筛选器、总览分组等都用这个序）。 */
-export const QUESTION_TYPE_ORDER: QuestionType[] = [
+/** 全部题型的逻辑（含记忆题型），按 id 查找。 */
+export const QUESTION_TYPES_LOGIC: Record<string, QuestionTypeLogic> = {
+  ...QUIZ_QUESTION_TYPES_LOGIC,
+  memory: memoryLogic,
+};
+
+/** 刷题模式的题型显示顺序（题库筛选器、总览分组等都用这个序）。 */
+export const QUESTION_TYPE_ORDER: QuizQuestionType[] = [
   "judgment",
   "single",
   "multiple",
   "blank",
 ];
 
-/** 所有 QuestionTypeLogic，按 ORDER 排列。 */
+/** 所有刷题题型逻辑，按 ORDER 排列。 */
 export function listQuestionTypesLogic(): QuestionTypeLogic[] {
-  return QUESTION_TYPE_ORDER.map((id) => QUESTION_TYPES_LOGIC[id]);
+  return QUESTION_TYPE_ORDER.map((id) => QUIZ_QUESTION_TYPES_LOGIC[id]);
 }

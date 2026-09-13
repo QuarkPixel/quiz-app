@@ -169,3 +169,4 @@ describe("bank file import session", () => {
     expect(prompt.message.text).toContain("读取剪贴板失败：permission denied");
   });
 });
+

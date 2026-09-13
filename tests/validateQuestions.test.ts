@@ -164,7 +164,9 @@ describe("validateQuizQuestions question 校验", () => {
     ]);
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.errors.some((e) => e.includes("question 不是字符串"))).toBe(true);
+      expect(
+        r.errors.some((e) => e.includes("question 必须是非空字符串")),
+      ).toBe(true);
     }
   });
 });
@@ -486,11 +488,36 @@ describe("parseBankFile 统一题库格式", () => {
     }
   });
 
-  it("recite 模式 → 接口已预留但尚未实现", () => {
-    const r = parseBankFile({ mode: "recite", questions: [] });
+  it("可选的 title 透传，并去除首尾空白", () => {
+    const r = parseBankFile({
+      questions: validBank(),
+      title: "  我的题库  ",
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.title).toBe("我的题库");
+  });
+
+  it("title 缺失 / 空串 / null 时视为没有", () => {
+    for (const title of [undefined, "", "   ", null]) {
+      const r = parseBankFile({ questions: validBank(), title });
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.title).toBeUndefined();
+    }
+  });
+
+  it("title 不是字符串 → 报错", () => {
+    const r = parseBankFile({ questions: validBank(), title: 123 });
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.errors.some((e) => e.includes("背诵模式尚未实现"))).toBe(true);
+      expect(r.errors.some((e) => e.includes("title 必须是字符串"))).toBe(true);
+    }
+  });
+
+  it("memory 模式空题库 → 报错", () => {
+    const r = parseBankFile({ mode: "memory", questions: [] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.includes("题库为空"))).toBe(true);
     }
   });
 
@@ -517,6 +544,31 @@ describe("formatBankFile 序列化", () => {
   it("没有 state 时不输出 state 字段", () => {
     const content = formatBankFile({
       mode: "quiz",
+      questions: [{ id: "j1" }],
+    });
+    expect(JSON.parse(content)).toEqual({
+      mode: "quiz",
+      questions: [{ id: "j1" }],
+    });
+  });
+
+  it("有 title 时输出 title（并去除首尾空白）", () => {
+    const content = formatBankFile({
+      mode: "memory",
+      title: "  英语短语  ",
+      questions: [{ id: "m1" }],
+    });
+    expect(JSON.parse(content)).toEqual({
+      mode: "memory",
+      title: "英语短语",
+      questions: [{ id: "m1" }],
+    });
+  });
+
+  it("title 为空串时不输出 title 字段", () => {
+    const content = formatBankFile({
+      mode: "quiz",
+      title: "   ",
       questions: [{ id: "j1" }],
     });
     expect(JSON.parse(content)).toEqual({

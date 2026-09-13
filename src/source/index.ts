@@ -14,5 +14,5 @@ export type {
   ImportBankResult,
   QuizBank,
   QuizSource,
-  ReciteBank,
+  MemoryBank,
 } from "./types";

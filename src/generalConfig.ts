@@ -58,7 +58,7 @@ function normalizeBankSummary(value: unknown): BankSummary | null {
   if (!isFiniteNumber(value.count)) return null;
   if (!isFiniteNumber(value.addedAt)) return null;
 
-  const mode: BankMode = value.mode === "recite" ? "recite" : "quiz";
+  const mode: BankMode = value.mode === "memory" ? "memory" : "quiz";
   return {
     hash: value.hash,
     name: value.name,

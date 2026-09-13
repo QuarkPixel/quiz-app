@@ -4,7 +4,7 @@ import { exportProgress, importProgress } from "../features/importExport";
 import { formatBankFile, parseBankFileJson } from "../lib/bankFile";
 import { hashQuestionsJson } from "../lib/hash";
 import { loadStoredState } from "../store";
-import type { Question, ReciteQuestion } from "../types";
+import type { Question, MemoryQuestion } from "../types";
 import type {
   ApplyStateResult,
   Bank,
@@ -45,7 +45,7 @@ export class BankStore implements QuizSource {
   /** 已解析的题目缓存，避免每次切换都重新 JSON.parse 大字符串 */
   private questionsCache = new Map<
     string,
-    Question[] | ReciteQuestion[]
+    Question[] | MemoryQuestion[]
   >();
 
   constructor() {
@@ -78,7 +78,7 @@ export class BankStore implements QuizSource {
       const raw = localStorage.getItem(questionsKey(this.activeHash));
       if (!raw) return null;
       try {
-        questions = JSON.parse(raw) as Question[] | ReciteQuestion[];
+        questions = JSON.parse(raw) as Question[] | MemoryQuestion[];
       } catch (e) {
         console.error("Failed to parse cached questions:", e);
         return null;
@@ -86,12 +86,12 @@ export class BankStore implements QuizSource {
       this.questionsCache.set(this.activeHash, questions);
     }
 
-    if (summary.mode === "recite") {
+    if (summary.mode === "memory") {
       return {
         hash: summary.hash,
         name: summary.name,
-        mode: "recite",
-        questions: questions as ReciteQuestion[],
+        mode: "memory",
+        questions: questions as MemoryQuestion[],
       };
     }
     return {
@@ -140,7 +140,9 @@ export class BankStore implements QuizSource {
 
     const newSummary: BankSummary = {
       hash,
-      name: name || "未命名题库",
+      // 优先用题库文件里的标题；没有才回退到调用方给的名称
+      // （文件名 / 剪贴板题库 / 另存为新题库时传入的名称）。
+      name: parsed.title ?? (name.trim() || "未命名题库"),
       mode: parsed.mode,
       count: parsed.questions.length,
       addedAt: Date.now(),
@@ -239,6 +241,7 @@ export class BankStore implements QuizSource {
 
     const fileContent = formatBankFile({
       mode: summary.mode,
+      title: summary.name,
       questions,
       state: stateEncoded,
     });
@@ -337,14 +340,14 @@ export class BankStore implements QuizSource {
   /** 读取并缓存某个题库的题目数组。 */
   private async readQuestions(
     hash: string,
-  ): Promise<Question[] | ReciteQuestion[] | null> {
+  ): Promise<Question[] | MemoryQuestion[] | null> {
     const cached = this.questionsCache.get(hash);
     if (cached) return cached;
 
     const raw = localStorage.getItem(questionsKey(hash));
     if (!raw) return null;
     try {
-      const questions = JSON.parse(raw) as Question[] | ReciteQuestion[];
+      const questions = JSON.parse(raw) as Question[] | MemoryQuestion[];
       this.questionsCache.set(hash, questions);
       return questions;
     } catch (e) {

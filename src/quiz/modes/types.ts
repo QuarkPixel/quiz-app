@@ -10,11 +10,10 @@ export type BankQuestionsValidation<Q> =
   | { ok: false; errors: string[] };
 
 /**
- * 总览（ReviewView）分组模型（预留）。
+ * 总览（ReviewView / MemoryOverview）分组模型。
  *
- * 刷题模式目前沿用 ReviewView 内置的「按题型分组」逻辑，因此
- * `buildOverview` 返回 null；背诵模式接入时返回自己的分组，
- * ReviewView 再按 `bank.mode` 分支渲染。
+ * 刷题模式沿用 ReviewView 内置的「按题型分组」逻辑，因此 `buildOverview`
+ * 返回 null；记忆模式返回自己的状态分组，由 `MemoryOverview.svelte` 渲染。
  */
 export interface BankOverviewGroup {
   key: string;
@@ -29,7 +28,7 @@ export interface BankOverviewModel {
 /**
  * 一种题库模式的能力声明。
  *
- * 新增模式（例如未来的背诵模式）的步骤：
+ * 新增模式（例如未来的记忆模式）的步骤：
  *   1. 在 `src/quiz/modes/<mode>.ts` 实现本接口
  *   2. 在 `registry.ts` 注册
  *   3. 在 `src/types.ts` 的 BankMode union 与 BankQuestionMap 里登记

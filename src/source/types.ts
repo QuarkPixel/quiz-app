@@ -1,4 +1,4 @@
-import type { BankMode, Question, ReciteQuestion } from "../types";
+import type { BankMode, Question, MemoryQuestion } from "../types";
 
 /** 刷题模式的激活题库 */
 export interface QuizBank {
@@ -8,16 +8,16 @@ export interface QuizBank {
   questions: Question[];
 }
 
-/** 背诵模式的激活题库（预留） */
-export interface ReciteBank {
+/** 记忆模式的激活题库（正在实现） */
+export interface MemoryBank {
   hash: string;
   name: string;
-  mode: "recite";
-  questions: ReciteQuestion[];
+  mode: "memory";
+  questions: MemoryQuestion[];
 }
 
 /** 一份激活的题库（含题目数据 + 元信息），按 mode 区分题目结构。 */
-export type Bank = QuizBank | ReciteBank;
+export type Bank = QuizBank | MemoryBank;
 
 /** 题库列表项（不含 questions，UI 渲染列表用） */
 export interface BankSummary {
@@ -49,7 +49,7 @@ export type ImportBankResult =
 /** 进度覆盖结果 */
 export type ApplyStateResult = { ok: true } | { ok: false; error: string };
 
-/** 导出题库的结果：文件名 + 文件内容（{ mode, state?, questions } 对象） */
+/** 导出题库的结果：文件名 + 文件内容（`{ mode, title?, state?, questions }` 对象） */
 export interface BankExportFile {
   filename: string;
   content: string;
@@ -83,7 +83,7 @@ export interface QuizSource {
 
   /**
    * 导出一份题库为可下载内容。
-   * 返回 null 表示该 hash 找不到。文件内容是 `{ mode, state, questions }`，
+   * 返回 null 表示该 hash 找不到。文件内容是 `{ mode, title?, state?, questions }`，
    * state 为 exportProgress 紧凑字符串，questions 为该模式的题目数组。
    */
   exportBank(hash: string): Promise<BankExportFile | null>;

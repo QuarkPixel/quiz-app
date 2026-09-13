@@ -4,6 +4,7 @@ import { judgmentType } from "./judgment";
 import { singleType } from "./single";
 import { multipleType } from "./multiple";
 import { blankType } from "./blank";
+import { memoryType } from "./memory";
 import { QUESTION_TYPE_ORDER } from "./registry-logic";
 
 /**
@@ -18,12 +19,16 @@ import { QUESTION_TYPE_ORDER } from "./registry-logic";
  *   2. src/quiz/types/<name>/index.ts 合并 logic + icon
  *   3. 在 registry-logic.ts 注册 logic；在这里 import index.ts
  *   4. 在 src/types.ts 的 QuestionType union 添加该 id
+ *
+ * 注：`QUESTION_TYPE_ORDER` 只列刷题模式的四种题型；记忆题型（`memory`）
+ * 不参与刷题模式的题型筛选与总览分组。
  */
 export const QUESTION_TYPES: Record<QuestionType, QuestionTypeDef> = {
   judgment: judgmentType,
   single: singleType,
   multiple: multipleType,
   blank: blankType,
+  memory: memoryType,
 };
 
 export { QUESTION_TYPE_ORDER };
@@ -33,7 +38,7 @@ export function getQuestionType(id: QuestionType): QuestionTypeDef {
   return QUESTION_TYPES[id];
 }
 
-/** 所有 QuestionTypeDef，按 ORDER 排列。 */
+/** 所有 QuestionTypeDef，按 ORDER 排列（刷题四型）。 */
 export function listQuestionTypes(): QuestionTypeDef[] {
   return QUESTION_TYPE_ORDER.map((id) => QUESTION_TYPES[id]);
 }
