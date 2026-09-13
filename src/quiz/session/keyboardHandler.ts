@@ -144,6 +144,9 @@ export function createKeyboardHandler(
       return;
     }
 
+    // 记忆模式专用的「记错了」在刷题模式里没有意义，忽略即可
+    if (action.kind === "mark-wrong") return;
+
     session.selectedAnswers = action.value;
     if (action.autoSubmit) {
       session.submit();

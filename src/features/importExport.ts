@@ -6,8 +6,20 @@
  *
  * 最终格式：{16字符hash}.{Base64url压缩数据}
  *
- * 紧凑格式说明：
- *   [version, questionCount, masteredBitmapHex, activePool[][], currentRound, filterTypeCode, settings[], ui[], masteredMistakesBitmapHex]
+ * 紧凑格式说明（v9 起按题库模式分叉）：
+ *
+ *   刷题模式：[version, questionCount, masteredBitmapHex, activePool[][], currentRound,
+ *              filterTypeCode, settings[], ui[], masteredMistakesBitmapHex]
+ *
+ *   记忆模式：[version, questionCount, 0, [], currentRound, 0, defaultSettings[],
+ *              ui[], masteredMistakesBitmapHex, memoryPayload]
+ *     - 前 9 项保持同一套结构（刷题专属字段填空值），这样两种模式可以共用
+ *       `StoredState` 的骨架，也方便将来加第三种模式
+ *     - memoryPayload = [progress[][], memorySettings[], trailing]
+ *       - progress 每项：[questionIndex, stateCode(0=learning/1=reviewing/2=mastered),
+ *                         level, streak, nextDue, lapses]
+ *       - memorySettings：[graduateLevel, roundTarget]
+ *       - trailing：预留的追加字段（当前为 []）
  *
  *   - 题目 id 按当前题库顺序映射为 index
  *   - masteredBitmapHex：BitSet 的十六进制字符串，bit=1 表示已掌握；
@@ -31,14 +43,19 @@ import BitSet from "bitset";
 import type {
   ActivePoolItem,
   BankSettings,
+  MemoryProgress,
+  MemoryProgressMap,
+  MemoryStoredState,
   QuestionType,
   StoredState,
   UiPreferences,
 } from "../types";
+import { sanitizeMemorySettings } from "./memory/settings";
+import { MAX_DUE_TIMESTAMP } from "./memory/normalize";
 
 /**
- * 进度编解码只依赖题目的 id，因此刷题模式（Question）与背诵模式
- * （ReciteQuestion）的题目都可以直接传入。
+ * 进度编解码只依赖题目的 id，因此刷题模式（Question）与记忆模式
+ * （MemoryQuestion）的题目都可以直接传入。
  */
 export interface ProgressQuestion {
   id: string;
@@ -46,8 +63,21 @@ export interface ProgressQuestion {
 
 // ── filterType 编解码 ──────────────────────────────────────────────────────────
 
-const FORMAT_VERSION = 8;
+const FORMAT_VERSION = 9;
 const MIN_SUPPORTED_FORMAT_VERSION = 4;
+
+/** 记忆模式每条进度的状态编码 */
+const MEMORY_STATE_TO_CODE: Record<MemoryProgress["state"], number> = {
+  learning: 0,
+  reviewing: 1,
+  mastered: 2,
+};
+
+const CODE_TO_MEMORY_STATE: Array<MemoryProgress["state"]> = [
+  "learning",
+  "reviewing",
+  "mastered",
+];
 
 const FILTER_TO_CODE: Record<string, number> = {
   all: 0,
@@ -70,6 +100,23 @@ function requireNonNegativeInteger(raw: unknown, message: string): number {
     typeof raw !== "number" ||
     !Number.isInteger(raw) ||
     raw < 0
+  ) {
+    throw new Error(message);
+  }
+  return raw;
+}
+
+/**
+ * 到期时间戳：非负的安全整数，且不超过 `Date` 能表示的上界。
+ * 只查 `Number.isInteger` 会放过 `1e30`，那种值会让 `startOfDay` 得到
+ * Invalid Date——卡片永远不到期，UI 还会显示「NaN 天后复习」。
+ */
+function requireTimestamp(raw: unknown, message: string): number {
+  if (
+    typeof raw !== "number" ||
+    !Number.isSafeInteger(raw) ||
+    raw < 0 ||
+    raw > MAX_DUE_TIMESTAMP
   ) {
     throw new Error(message);
   }
@@ -267,8 +314,10 @@ function decodeActivePool(
 async function deflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const cs = new CompressionStream("deflate-raw");
   const writer = cs.writable.getWriter();
-  writer.write(data);
-  writer.close();
+  // 必须 await：write / close 失败时（配额、非法输入）不 await 会产生
+  // 未处理的 promise rejection，而调用方只会看到「解压失败」的提示
+  await writer.write(data);
+  await writer.close();
 
   const chunks: Uint8Array[] = [];
   const reader = cs.readable.getReader();
@@ -291,8 +340,8 @@ async function deflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<Arr
 async function inflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const ds = new DecompressionStream("deflate-raw");
   const writer = ds.writable.getWriter();
-  writer.write(data);
-  writer.close();
+  await writer.write(data);
+  await writer.close();
 
   const chunks: Uint8Array[] = [];
   const reader = ds.readable.getReader();
@@ -340,6 +389,9 @@ function fromBase64url(str: string): Uint8Array {
 /**
  * 将学习进度导出为紧凑编码字符串（异步，因为压缩是异步的）
  * 返回格式：{16字符hash}.{Base64url压缩数据}
+ *
+ * 记忆模式题库（state.memory 有内容）会走 v9 的记忆分支，把刷题专属字段填成空值，
+ * 这样解码端只需要看数组长度就能区分两种模式。
  */
 export async function exportProgress(
   state: StoredState,
@@ -349,6 +401,14 @@ export async function exportProgress(
   const { ids, idToIndex } = buildQuestionIndex(questions);
   const filterCode = FILTER_TO_CODE[state.filterType] ?? 0;
   const exportedMasteredIds = getExportedMasteredIds(state, ids, idToIndex);
+  const memory = state.memory;
+
+  // 有 memory 段 = 记忆模式题库（刷题模式题库不会有这一段）。这里不能按
+  // 「progress 非空」判断：一张卡都还没学过的记忆题库会掉进刷题分支，
+  // 导入时 graduateLevel / roundTarget 就丢了。
+  if (memory) {
+    return encodeMemoryProgress(state, memory, hash, ids, idToIndex);
+  }
 
   const compact: unknown[] = [
     FORMAT_VERSION,
@@ -369,6 +429,66 @@ export async function exportProgress(
       state.ui.showPool ? 1 : 0,
     ],
     encodeMasteredMistakesBitmap(state, exportedMasteredIds),
+  ];
+
+  const json = JSON.stringify(compact);
+  const bytes = new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>;
+  const compressed = await deflateRaw(bytes);
+  const encoded = toBase64url(compressed);
+
+  return `${hash}.${encoded}`;
+}
+
+/** 记忆模式的紧凑格式（见文件头 v9 说明）。 */
+async function encodeMemoryProgress(
+  state: StoredState,
+  memory: MemoryStoredState,
+  hash: string,
+  ids: readonly string[],
+  idToIndex: Map<string, number>,
+): Promise<string> {
+  const settings = sanitizeMemorySettings(memory.settings);
+
+  const progress = Object.entries(memory.progress)
+    .map(([id, item]) => {
+      const index = idToIndex.get(id);
+      if (index === undefined) {
+        throw new Error(`导出失败：进度包含题库中不存在的题目 id：${id}`);
+      }
+      return [item, index] as const;
+    })
+    .sort((a, b) => a[1] - b[1])
+    .map(([item, index]) => [
+      index,
+      MEMORY_STATE_TO_CODE[item.state] ?? 0,
+      item.level,
+      item.streak,
+      item.nextDue,
+      item.lapses,
+    ]);
+
+  // 记忆分支用不上的刷题字段填空值：mastered bitmap 空串、活动池空数组。
+  const compact: unknown[] = [
+    FORMAT_VERSION,
+    ids.length,
+    "",
+    [],
+    state.currentRound,
+    0,
+    [
+      state.settings.activePoolSize,
+      state.settings.correctStreakToMaster,
+      state.settings.correctStreakAfterMistake,
+      state.settings.selectionMode,
+      state.settings.notifyNewQuestionInPool ? 1 : 0,
+    ],
+    [state.ui.progressFocused ? 1 : 0, state.ui.showPool ? 1 : 0],
+    "",
+    [
+      progress,
+      [settings.graduateLevel, settings.roundTarget],
+      [],
+    ],
   ];
 
   const json = JSON.stringify(compact);
@@ -488,7 +608,7 @@ export async function importProgress(
   }
 
   // 结构校验
-  if (!Array.isArray(compact) || ![8, 9].includes(compact.length)) {
+  if (!Array.isArray(compact) || ![8, 9, 10].includes(compact.length)) {
     throw new Error("数据格式无效：结构不符合预期。");
   }
 
@@ -502,6 +622,7 @@ export async function importProgress(
     settingsRaw,
     uiRaw,
     masteredMistakesRaw,
+    memoryRaw,
   ] = compact as unknown[];
 
   if (typeof version !== "number" || !Number.isInteger(version)) {
@@ -510,10 +631,14 @@ export async function importProgress(
   if (version < MIN_SUPPORTED_FORMAT_VERSION || version > FORMAT_VERSION) {
     throw new Error("数据格式无效：进度格式版本不支持。");
   }
-  if (version >= 5 && compact.length !== 9) {
+  if (version >= 5 && version < 9 && compact.length !== 9) {
     throw new Error("数据格式无效：结构不符合预期。");
   }
   if (version === MIN_SUPPORTED_FORMAT_VERSION && compact.length !== 8) {
+    throw new Error("数据格式无效：结构不符合预期。");
+  }
+  const isMemoryPayload = version >= 9 && memoryRaw !== undefined;
+  if (version >= 9 && compact.length !== (isMemoryPayload ? 10 : 9)) {
     throw new Error("数据格式无效：结构不符合预期。");
   }
   const decodedQuestionCount = requireNonNegativeInteger(
@@ -539,17 +664,6 @@ export async function importProgress(
     filterCode,
     "数据格式无效：筛选类型格式错误。",
   );
-  const masteredIds = decodeMasteredBitmap(masteredBitmapRaw, ids);
-  const masteredMistakes =
-    version >= 5
-      ? decodeMasteredMistakesBitmap(masteredMistakesRaw, masteredIds)
-      : {};
-  const activePool = decodeActivePool(activeRaw, ids);
-
-  const filterType: QuestionType | "all" =
-    CODE_TO_FILTER[filterCodeValue] ?? "all";
-
-  const settings = decodeBankSettings(settingsRaw, version);
 
   const ui: UiPreferences = {
     progressFocused: decodeFlag(
@@ -562,6 +676,33 @@ export async function importProgress(
     ),
   };
 
+  // ── 记忆模式分支：只还原记忆进度段，刷题专属字段填空值 ──
+  if (isMemoryPayload) {
+    const memory = decodeMemoryPayload(memoryRaw, ids);
+    return {
+      masteredIds: [],
+      masteredMistakes: {},
+      activePool: [],
+      currentRound: currentRoundValue,
+      filterType: "all",
+      settings: decodeBankSettings(settingsRaw, version),
+      ui,
+      memory,
+    };
+  }
+
+  const masteredIds = decodeMasteredBitmap(masteredBitmapRaw, ids);
+  const masteredMistakes =
+    version >= 5
+      ? decodeMasteredMistakesBitmap(masteredMistakesRaw, masteredIds)
+      : {};
+  const activePool = decodeActivePool(activeRaw, ids);
+
+  const filterType: QuestionType | "all" =
+    CODE_TO_FILTER[filterCodeValue] ?? "all";
+
+  const settings = decodeBankSettings(settingsRaw, version);
+
   return {
     masteredIds,
     masteredMistakes,
@@ -570,5 +711,78 @@ export async function importProgress(
     filterType,
     settings,
     ui,
+  };
+}
+
+/** 解码记忆模式的 memoryPayload（见文件头 v9 说明）。 */
+function decodeMemoryPayload(
+  raw: unknown,
+  questionIds: readonly string[],
+): MemoryStoredState {
+  if (!Array.isArray(raw) || raw.length < 3) {
+    throw new Error("数据格式无效：记忆模式进度格式错误。");
+  }
+
+  const [progressRaw, settingsRaw] = raw as unknown[];
+
+  if (!Array.isArray(progressRaw)) {
+    throw new Error("数据格式无效：记忆模式进度格式错误。");
+  }
+  if (!Array.isArray(settingsRaw) || settingsRaw.length < 2) {
+    throw new Error("数据格式无效：记忆模式设置格式错误。");
+  }
+
+  const progress: MemoryProgressMap = {};
+  for (const entry of progressRaw) {
+    if (!Array.isArray(entry) || entry.length !== 6) {
+      throw new Error("数据格式无效：记忆模式进度条目格式错误。");
+    }
+    const [indexRaw, stateRaw, levelRaw, streakRaw, nextDueRaw, lapsesRaw] =
+      entry as unknown[];
+
+    if (
+      typeof indexRaw !== "number" ||
+      !Number.isInteger(indexRaw) ||
+      indexRaw < 0 ||
+      indexRaw >= questionIds.length
+    ) {
+      throw new Error("数据格式无效：记忆模式题目索引错误。");
+    }
+    const stateCode = requireNonNegativeInteger(
+      stateRaw,
+      "数据格式无效：记忆模式状态格式错误。",
+    );
+    const state = CODE_TO_MEMORY_STATE[stateCode];
+    if (!state) {
+      throw new Error("数据格式无效：记忆模式状态不支持。");
+    }
+
+    progress[questionIds[indexRaw]] = {
+      state,
+      level: requireNonNegativeInteger(
+        levelRaw,
+        "数据格式无效：记忆模式复习等级格式错误。",
+      ),
+      streak: requireNonNegativeInteger(
+        streakRaw,
+        "数据格式无效：记忆模式连对次数格式错误。",
+      ),
+      nextDue: requireTimestamp(
+        nextDueRaw,
+        "数据格式无效：记忆模式到期时间格式错误。",
+      ),
+      lapses: requireNonNegativeInteger(
+        lapsesRaw,
+        "数据格式无效：记忆模式错误次数格式错误。",
+      ),
+    };
+  }
+
+  return {
+    progress,
+    settings: sanitizeMemorySettings({
+      graduateLevel: settingsRaw[0],
+      roundTarget: settingsRaw[1],
+    }),
   };
 }

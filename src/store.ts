@@ -20,6 +20,7 @@ import {
   createDefaultBankSettings,
   sanitizeBankSettings,
 } from "./bankSettings";
+import { normalizeMemoryState } from "./features/memory/normalize";
 import { loadGeneralConfig, updateGeneralConfig } from "./generalConfig";
 
 export interface SaveStateOptions {
@@ -107,6 +108,40 @@ function createDefaultStoredState(): StoredState {
   };
 }
 
+/** 净化「本轮已掌握几题」：非负整数，缺失/非法时返回 undefined。 */
+function normalizeRoundMastered(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.floor(value);
+}
+
+function toNonNegativeInt(value: unknown): number {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue) || numberValue < 0) return 0;
+  return Math.floor(numberValue);
+}
+
+/**
+ * 净化记忆模式暂存的学习池。缺失 / 结构非法时返回 undefined，
+ * 免得给刷题模式题库凭空加一个字段。
+ */
+function normalizeLearningPool(value: unknown): ActivePoolItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items: ActivePoolItem[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw) || typeof raw.id !== "string") continue;
+    items.push({
+      id: raw.id,
+      consecutiveCorrect: toNonNegativeInt(raw.consecutiveCorrect),
+      hasEverMistaken: raw.hasEverMistaken === true,
+      hasBeenShown: raw.hasBeenShown === true,
+      lastSelectedRound: toNonNegativeInt(raw.lastSelectedRound),
+    });
+  }
+  return items;
+}
+
 function stateKey(hash: string): string {
   return STORAGE_PREFIX_STATE + hash;
 }
@@ -133,6 +168,14 @@ export function loadStoredState(hash: string): StoredState {
           ...defaultState.ui,
           ...(isRecord(parsedState.ui) ? parsedState.ui : {}),
         },
+        // 记忆模式的段只有在文件里真的存在时才保留；否则保持 undefined，
+        // 免得刷题模式题库的状态里凭空多出一个空段。
+        memory: normalizeMemoryState(parsedState.memory),
+        // 记忆模式「本轮已掌握几题」：学到一半退出时要能续上
+        roundMastered: normalizeRoundMastered(parsedState.roundMastered),
+        roundGoal: normalizeRoundMastered(parsedState.roundGoal),
+        // 记忆模式复习期间暂存的学习轮活动池
+        learningPool: normalizeLearningPool(parsedState.learningPool),
       };
     }
   } catch (e) {
@@ -147,7 +190,7 @@ export function loadStoredState(hash: string): StoredState {
  */
 export function saveState(
   hash: string,
-  state: RuntimeState,
+  state: StoredState,
   options: SaveStateOptions = {},
 ): void {
   const toStore: StoredState = {
@@ -158,6 +201,13 @@ export function saveState(
     filterType: state.filterType,
     settings: state.settings,
     ui: state.ui,
+    // 记忆模式题库的状态：`saveState` 是唯一出口，必须原样带出去，
+    // 否则刷题流的保存会把记忆进度抹掉（同一个 hash 键）。
+    memory: state.memory,
+    roundMastered: state.roundMastered,
+    roundGoal: state.roundGoal,
+    // 复习期间暂存的学习轮活动池（成员与顺序都要保住）
+    learningPool: state.learningPool,
   };
   try {
     localStorage.setItem(stateKey(hash), JSON.stringify(toStore));
@@ -186,6 +236,7 @@ export function resetStoredState(hash: string): StoredState {
     filterType: previous.filterType,
     settings: previous.settings,
     ui: previous.ui,
+    memory: previous.memory,
   };
 }
 
@@ -234,6 +285,10 @@ export function buildRuntimeState(
     ...storedState,
     masteredMistakes: cleanedMasteredMistakes,
     activePool: cleanedActivePool,
+    // 暂存的学习池同样要丢掉已经不在题库里的题
+    learningPool: storedState.learningPool?.filter((item) =>
+      questionIds.has(item.id),
+    ),
   };
 
   return {

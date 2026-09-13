@@ -239,7 +239,7 @@ describe("bitmap / index 编码", () => {
     const payload = await decodePayload(encoded);
 
     expect(payload).toEqual([
-      8,
+      9,
       QUESTIONS.length,
       "3",
       [
