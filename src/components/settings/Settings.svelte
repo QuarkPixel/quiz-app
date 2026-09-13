@@ -16,14 +16,19 @@
     import * as Tooltip from "$lib/components/ui/tooltip";
     import { useQuizSession } from "@/quiz/session/context";
     import QuestionOrder from "./QuestionOrder.svelte";
+    import BankNameSetting from "./BankNameSetting.svelte";
     import { IconInfoCircle } from "@tabler/icons-svelte";
     import { getLearningLevelColor } from "@/features/quiz/learningProgress";
 
     interface Props {
         open?: boolean;
+        /** 当前题库 hash（用于修改名称） */
+        hash: string;
+        /** 当前题库名称 */
+        bankName: string;
     }
 
-    let { open = $bindable(false) }: Props = $props();
+    let { open = $bindable(false), hash, bankName }: Props = $props();
 
     const session = useQuizSession();
     let resetButton: ConfirmActionButton;
@@ -53,6 +58,8 @@
         </Dialog.Header>
 
         <div class="flex flex-col gap-4 overflow-y-auto px-5 py-4">
+            <BankNameSetting {hash} name={bankName} />
+
             <!-- ── 当前题库设置：跟着题库走。全局设置在侧边栏左下角 ── -->
             <section class="flex flex-col gap-2.5">
                 <h3

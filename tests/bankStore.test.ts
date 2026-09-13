@@ -98,6 +98,55 @@ describe("BankStore", () => {
     expect(source.getActiveBank()?.mode).toBe("quiz");
   });
 
+  it("题库文件里的 title 优先于传入的名称", async () => {
+    const source = new BankStore();
+    const raw = JSON.stringify({
+      title: "文件里的标题",
+      questions: [
+        { id: "j1", type: "judgment", question: "q", answer: true },
+      ],
+    });
+
+    await source.importBank("文件名", raw);
+
+    expect(source.listBanks()[0].name).toBe("文件里的标题");
+  });
+
+  it("没有 title 时回退到传入的名称（文件名 / 剪贴板名）", async () => {
+    const source = new BankStore();
+    const raw = JSON.stringify({
+      questions: [
+        { id: "j1", type: "judgment", question: "q", answer: true },
+      ],
+    });
+
+    await source.importBank("文件名", raw);
+
+    expect(source.listBanks()[0].name).toBe("文件名");
+  });
+
+  it("导出的题库带 title，重新解析后能取回名称", async () => {
+    const source = new BankStore();
+    await source.importBank(
+      "导出用题库",
+      JSON.stringify({
+        questions: [
+          { id: "j1", type: "judgment", question: "q", answer: true },
+        ],
+      }),
+    );
+    const hash = source.listBanks()[0].hash;
+
+    const exported = await source.exportBank(hash);
+    expect(exported).not.toBeNull();
+    const parsed = JSON.parse(exported!.content);
+    expect(parsed.title).toBe("导出用题库");
+
+    const fresh = new BankStore();
+    await fresh.importBank("别的名字", exported!.content);
+    expect(fresh.listBanks()[0].name).toBe("导出用题库");
+  });
+
   it("rejects a bare array bank file", async () => {
     const source = new BankStore();
     const raw = JSON.stringify([

@@ -27,7 +27,13 @@
         type BankImportPrompt,
         type OverwriteImportRequest,
     } from "@/features/bankFiles";
-    import { getBankPrompt } from "@/features/bankPrompts";
+    import {
+        BANK_PROMPT_META,
+        BANK_PROMPT_MODES,
+        getBankPrompt,
+    } from "@/features/bankPrompts";
+    import { BANK_MODE_META } from "@/features/bankModeMeta";
+    import type { BankMode } from "@/types";
     import {
         reconcileSidebarSelection,
         selectSidebarItem,
@@ -70,6 +76,10 @@
 
     let fileInput: HTMLInputElement | null = $state(null);
     let isImporting = $state(false);
+    /** 正有文件被拖到窗口上（用于显示投放提示） */
+    let isDraggingFile = $state(false);
+    /** dragenter / dragleave 计数，避免在子元素间移动时闪烁 */
+    let dragDepth = 0;
     let showGlobalSettings = $state(false);
     let importSession = $state<BankImportSession | null>(null);
     let importMessage = $state<BankFileMessage | null>(null);
@@ -185,14 +195,14 @@
         return `确定删除已选中的 ${deleteTarget.hashes.length} 个题库？这些题库的题目内容和学习进度都会被清除，无法撤销。`;
     }
 
-    async function copyPrompt(): Promise<void> {
-        const prompt = getBankPrompt("quiz");
-        if (prompt === null) return;
+    /** 复制指定模式的题库生成 Prompt（两个入口在导入菜单的「复制 Prompt」子菜单）。 */
+    async function copyPrompt(mode: BankMode): Promise<void> {
+        const prompt = getBankPrompt(mode);
         try {
             await writeText(prompt);
             toast?.show(
-                "Prompt 已复制",
-                "已复制到剪贴板。把它粘贴到与 AI 的对话中，再在后面附上原始题目内容，让 AI 按格式生成题库 JSON。",
+                `已复制「${BANK_PROMPT_META[mode].label}」Prompt`,
+                "粘贴到与 AI 的对话中，在后面附上原始内容，让 AI 按格式生成题库 JSON。",
                 "success",
             );
         } catch {
@@ -216,10 +226,8 @@
         importMessage = prompt.message;
     }
 
-    async function onFileChosen(e: Event): Promise<void> {
-        const input = e.currentTarget as HTMLInputElement;
-        const files = Array.from(input.files ?? []);
-        input.value = "";
+    /** 走一次导入会话：文件选择与拖拽投放共用同一套逻辑。 */
+    async function importFiles(files: File[]): Promise<void> {
         if (files.length === 0 || isImporting || importSession !== null) return;
 
         isImporting = true;
@@ -230,6 +238,60 @@
         } finally {
             isImporting = false;
         }
+    }
+
+    async function onFileChosen(e: Event): Promise<void> {
+        const input = e.currentTarget as HTMLInputElement;
+        const files = Array.from(input.files ?? []);
+        input.value = "";
+        await importFiles(files);
+    }
+
+    // ── 拖入文件导入 ──────────────────────────────────────────────────
+    // 监听挂在 window 上：拖到应用任意位置都能导入，不要求命中某个 UI。
+
+    function hasDraggedFiles(event: DragEvent): boolean {
+        const types = event.dataTransfer?.types;
+        return types ? Array.from(types).includes("Files") : false;
+    }
+
+    function onWindowDragEnter(event: DragEvent): void {
+        if (!hasDraggedFiles(event)) return;
+        dragDepth += 1;
+        if (!isImporting && importSession === null) {
+            isDraggingFile = true;
+        }
+    }
+
+    function onWindowDragOver(event: DragEvent): void {
+        if (!hasDraggedFiles(event)) return;
+        // 必须 preventDefault，否则浏览器会直接打开文件
+        event.preventDefault();
+        if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = "copy";
+        }
+    }
+
+    function onWindowDragLeave(event: DragEvent): void {
+        // 拖出窗口时 relatedTarget 为 null，直接收起提示（有些浏览器此时 types 已清空）
+        if (event.relatedTarget === null) {
+            dragDepth = 0;
+            isDraggingFile = false;
+            return;
+        }
+        if (!hasDraggedFiles(event)) return;
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) {
+            isDraggingFile = false;
+        }
+    }
+
+    async function onWindowDrop(event: DragEvent): Promise<void> {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        dragDepth = 0;
+        isDraggingFile = false;
+        await importFiles(Array.from(event.dataTransfer?.files ?? []));
     }
 
     async function answerOverwrite(overwrite: boolean): Promise<void> {
@@ -253,8 +315,7 @@
 
         isImporting = true;
         try {
-            const session =
-                await BankImportSession.createFromClipboard(source);
+            const session = await BankImportSession.createFromClipboard(source);
             importSession = session;
             showImportPrompt(session.currentPrompt());
         } finally {
@@ -490,15 +551,53 @@
             <span>从剪贴板导入</span>
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
-        <DropdownMenu.Item
-            class="text-muted-foreground justify-end text-right text-xs"
-            onSelect={() => void copyPrompt()}
-        >
-            <span>复制「给 LLM 的生成题库 Prompt」</span>
-            <IconPromptCopy size={12} stroke={1.75} />
-        </DropdownMenu.Item>
+        <DropdownMenu.Sub>
+            <DropdownMenu.SubTrigger
+                class="text-muted-foreground justify-end text-right text-xs"
+                disabled={isImporting || importSession !== null}
+            >
+                <span>复制 Prompt</span>
+                <IconPromptCopy size={12} stroke={1.75} />
+            </DropdownMenu.SubTrigger>
+            <DropdownMenu.SubContent class="w-56">
+                {#each BANK_PROMPT_MODES as mode (mode)}
+                    {@const meta = BANK_PROMPT_META[mode]}
+                    <DropdownMenu.Item
+                        class="gap-2"
+                        onSelect={() => void copyPrompt(mode)}
+                    >
+                        <meta.icon size={14} stroke={1.75} />
+                        <span class="flex min-w-0 flex-col">
+                            <span>{meta.label}</span>
+                            <span class="text-muted-foreground text-[11px]">
+                                {meta.description}
+                            </span>
+                        </span>
+                    </DropdownMenu.Item>
+                {/each}
+            </DropdownMenu.SubContent>
+        </DropdownMenu.Sub>
     </DropdownMenu.Content>
 {/snippet}
+
+<svelte:window
+    ondragenter={onWindowDragEnter}
+    ondragover={onWindowDragOver}
+    ondragleave={onWindowDragLeave}
+    ondrop={onWindowDrop}
+/>
+
+{#if isDraggingFile}
+    <!-- 拖入文件时的投放提示：纯提示层，不拦截鼠标事件 -->
+    <div
+        class="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-background/70 backdrop-blur-[2px]"
+    >
+        <div class="text-center">
+            <p class="text-foreground text-lg font-semibold">松开以导入题库</p>
+            <p class="text-muted-foreground mt-1 text-sm">可一次拖入多个文件</p>
+        </div>
+    </div>
+{/if}
 
 <Sidebar.Root collapsible="icon">
     {#if activeMenu !== null || menuDismissGuard}
@@ -562,6 +661,7 @@
             <Sidebar.GroupContent>
                 <Sidebar.Menu class="gap-1">
                     {#each banks as bank (bank.hash)}
+                        {@const modeMeta = BANK_MODE_META[bank.mode]}
                         <ContextMenu.Root
                             open={isMenuOpen("context", bank.hash)}
                             onOpenChange={(open) =>
@@ -580,9 +680,12 @@
                                     >
                                         <Sidebar.MenuButton
                                             isActive={bank.hash === activeHash}
-                                            class={isSelected(bank.hash)
-                                                ? "ring-sidebar-ring/50 bg-sidebar-accent/60 text-sidebar-accent-foreground ring-1"
-                                                : undefined}
+                                            class={[
+                                                "group/btn",
+                                                isSelected(bank.hash)
+                                                    ? "ring-sidebar-ring/50 bg-sidebar-accent/60 text-sidebar-accent-foreground ring-1"
+                                                    : undefined,
+                                            ]}
                                             onclick={(event) =>
                                                 handleBankClick(
                                                     event,
@@ -591,11 +694,26 @@
                                             tooltipContent={bank.name}
                                         >
                                             <span
-                                                class="hidden w-full text-center text-sm font-medium group-data-[collapsible=icon]:inline-block"
+                                                class="hidden group-data-[collapsible=icon]:inline-flex"
                                                 aria-hidden="true"
                                             >
-                                                {bank.name.charAt(0)}
+                                                <!-- 收起态：首字母 + 右下角模式小图标 -->
+                                                <span
+                                                    class="relative inline-flex size-4 items-center justify-center text-sm font-medium"
+                                                >
+                                                    {bank.name.charAt(0)}
+                                                    <modeMeta.icon
+                                                        stroke={2.25}
+                                                        class="text-sidebar-foreground absolute left-0 top-0 size-8! group-hover/btn:opacity-10 opacity-0 duration-300"
+                                                    />
+                                                </span>
                                             </span>
+                                            <!-- 展开态：模式前缀图标 -->
+                                            <modeMeta.icon
+                                                size={14}
+                                                stroke={1.75}
+                                                class="text-muted-foreground shrink-0 group-data-[collapsible=icon]:hidden"
+                                            />
                                             <span
                                                 class="flex-1 truncate text-left group-data-[collapsible=icon]:hidden"
                                             >
