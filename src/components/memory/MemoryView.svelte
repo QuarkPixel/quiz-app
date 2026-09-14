@@ -239,33 +239,6 @@
     class="relative flex min-h-0 flex-1 flex-col"
     data-shell-scrollable={isScrollable ? "true" : "false"}
 >
-    <!-- 本轮操作的入口：放在全局「展开侧边栏」正下方，体现层级 -->
-    {#if session.run !== "idle"}
-        <div
-            class="absolute left-5 top-[calc(env(safe-area-inset-top)+3.25rem)] z-30 sm:left-8 sm:top-[calc(env(safe-area-inset-top)+3.5rem)]"
-        >
-            <Tooltip.Root>
-                <Tooltip.Trigger>
-                    {#snippet child({ props })}
-                        <Button
-                            {...props}
-                            variant="ghost"
-                            size="icon-sm"
-                            class="-ml-1"
-                            aria-label="结束本轮"
-                            onclick={() => session.exitSession()}
-                        >
-                            <IconArrowLeft size={16} stroke={1.75} />
-                        </Button>
-                    {/snippet}
-                </Tooltip.Trigger>
-                <Tooltip.Content side="bottom">
-                    <span>结束本轮</span>
-                </Tooltip.Content>
-            </Tooltip.Root>
-        </div>
-    {/if}
-
     <div
         bind:this={scrollViewport}
         class="min-h-0 flex-1 overflow-y-auto px-4 scrollbar-none sm:px-6 scroll-pt-[calc(env(safe-area-inset-top)+6rem)] pb-[calc(5rem+env(safe-area-inset-bottom))] sm:pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-(--app-shell-content-top)"
@@ -284,6 +257,33 @@
                         ? "my-auto flex w-full flex-col gap-5"
                         : "my-auto flex w-full max-w-2xl flex-col gap-5"}
                 >
+                    <div
+                        class="z-30 sm:left-8 sm:top-[calc(env(safe-area-inset-top)+3.5rem)]"
+                    >
+                        <Tooltip.Root>
+                            <Tooltip.Trigger>
+                                {#snippet child({ props })}
+                                    <Button
+                                        {...props}
+                                        variant="ghost"
+                                        size="icon-sm"
+                                        class="-ml-1"
+                                        aria-label="结束本轮"
+                                        onclick={() => session.exitSession()}
+                                    >
+                                        <IconArrowLeft
+                                            size={16}
+                                            stroke={1.75}
+                                        />
+                                    </Button>
+                                {/snippet}
+                            </Tooltip.Trigger>
+                            <Tooltip.Content side="bottom">
+                                <span>结束本轮</span>
+                            </Tooltip.Content>
+                        </Tooltip.Root>
+                    </div>
+
                     <MemoryQuestionArea />
 
                     {#if session.run === "learning"}
