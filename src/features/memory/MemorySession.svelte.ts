@@ -158,12 +158,6 @@ export class MemorySession {
   /** 「复制题目」按钮的状态（和 QuizSession 同名同语义） */
   copyQuestionStatus: "idle" | "copied" | "error" = $state("idle");
   private copyQuestionResetTimer: ReturnType<typeof setTimeout> | null = null;
-  /**
-   * 上一次结束的会话类型（null = 还没跑过）。
-   * 首页用它区分「今天已经学习完了」和「本来就没有要学的内容」。
-   */
-  lastFinishedRun: "learning" | "reviewing" | null = $state(null);
-
   // ── 与 QuestionArea 对齐的会话状态 ─────────────────────────────────
   currentQuestion: Question | null = $state(null);
   showResult = $state(false);
@@ -357,6 +351,16 @@ export class MemorySession {
   /** 学到一半（活动池里还有没学完的卡），下次点「学习新的题目」接着这一轮继续 */
   get hasOngoingRound(): boolean {
     return this.learningPool.length > 0;
+  }
+
+  /**
+   * 今天是否已经学完过一轮（`memory.learnedDay` 是不是今天）。
+   *
+   * 首页据此把「学习」按钮降一档颜色：今天学过一轮之后按钮不再是加重色，
+   * 但仍然可以点（点了就是再学一轮）。跨过凌晨 5 点自然失效。
+   */
+  get learnedToday(): boolean {
+    return this.appState.memory?.learnedDay === studyDay(this.now);
   }
 
   /** 「学习新的题目」还能学几张：没学过的 + 学到一半的 */
@@ -574,13 +578,14 @@ export class MemorySession {
 
     const targets = { ...retry.targets };
     delete targets[id];
-    const { retry: _dropped, ...rest } = memory;
     this.appState = {
       ...this.appState,
-      memory:
-        Object.keys(targets).length === 0
-          ? rest
-          : { ...rest, retry: { day: retry.day, targets } },
+      memory: this.memorySection(this.appState, {
+        retry:
+          Object.keys(targets).length === 0
+            ? undefined
+            : { day: retry.day, targets },
+      }),
     };
   }
 
@@ -805,9 +810,14 @@ export class MemorySession {
     this.queue = [];
     this.showResult = false;
     this.selectedAnswers = [];
-    this.appState = { ...this.appState, activePool: this.endRoundPool() };
-    // 首页靠它区分「今天已经学习完」和「本来就没有要学的卡片」
-    this.lastFinishedRun = "learning";
+    this.appState = {
+      ...this.appState,
+      memory: this.memorySection(this.appState, {
+        // 首页靠它把学习按钮降一档颜色（今天学过一轮了）
+        learnedDay: studyDay(this.now),
+      }),
+      activePool: this.endRoundPool(),
+    };
     this.save();
 
     if (exhausted && mastered < target) {
@@ -989,16 +999,35 @@ export class MemorySession {
     return { ...state, masteredIds };
   }
 
+  /**
+   * 生成一份新的 `memory` 段：patch 里没写到的字段原样保留。
+   *
+   * `memory` 段每次都是整体重建的，漏掉哪个字段就会在下次 `save()` 时把它抹掉
+   * （设置、本轮待办、今天学过一轮的标记都踩过这个坑），所以只走这一个出口。
+   */
+  private memorySection(
+    base: RuntimeState,
+    patch: Partial<MemoryStoredState>,
+  ): MemoryStoredState {
+    const current = base.memory;
+    return {
+      progress: patch.progress ?? current?.progress ?? {},
+      settings:
+        patch.settings ?? current?.settings ?? createDefaultMemorySettings(),
+      retry: "retry" in patch ? patch.retry : current?.retry,
+      learnedDay: "learnedDay" in patch ? patch.learnedDay : current?.learnedDay,
+    };
+  }
+
+  /** 写一条进度，并原样保住 `memory` 段里的其它字段。 */
   private writeProgress(
     base: RuntimeState,
     id: string,
     progress: MemoryProgress,
   ): MemoryStoredState {
-    return {
+    return this.memorySection(base, {
       progress: { ...(base.memory?.progress ?? {}), [id]: progress },
-      settings: base.memory?.settings ?? createDefaultMemorySettings(),
-      retry: base.memory?.retry,
-    };
+    });
   }
 
   private finishSession(): void {
@@ -1013,7 +1042,6 @@ export class MemorySession {
       return;
     }
 
-    this.lastFinishedRun = run === "idle" ? this.lastFinishedRun : run;
     this.run = "idle";
     this.currentQuestion = null;
     this.showResult = false;
@@ -1064,12 +1092,7 @@ export class MemorySession {
     });
     this.appState = {
       ...this.appState,
-      memory: {
-        progress: { ...this.progress },
-        settings: next,
-        // 改设置不该顺手把本轮的「重新连对」待办抹掉
-        retry: this.appState.memory?.retry,
-      },
+      memory: this.memorySection(this.appState, { settings: next }),
     };
     this.save();
   }
@@ -1289,8 +1312,10 @@ export class MemorySession {
     // 本轮的「重新连对」待办只保留今天的：昨天写下的要求今天已经没意义
     // （那张卡今天本来就会到期，答对一次即过）
     const today = studyDay(this.now);
+    // 展开原段再覆盖要净化的字段：以后 `memory` 加字段时不会被这里悄悄抹掉
     const memory = stored.memory
       ? {
+          ...stored.memory,
           progress: normalizeMemoryProgressMap(stored.memory.progress),
           settings: sanitizeMemorySettings(stored.memory.settings),
           retry: normalizeMemoryRetry(stored.memory.retry, today),

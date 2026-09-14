@@ -121,10 +121,12 @@ export function normalizeMemoryState(
 ): MemoryStoredState | undefined {
   if (!isRecord(raw)) return undefined;
   const retry = normalizeMemoryRetry(raw.retry, today);
+  const learnedDay = toNonNegativeIntOrNull(raw.learnedDay);
   return {
     progress: normalizeMemoryProgressMap(raw.progress),
     settings: sanitizeMemorySettings(raw.settings),
     ...(retry === undefined ? {} : { retry }),
+    ...(learnedDay === null ? {} : { learnedDay }),
   };
 }
 

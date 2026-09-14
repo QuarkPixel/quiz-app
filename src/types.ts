@@ -198,6 +198,14 @@ export interface MemoryStoredState {
   settings: MemoryBankSettings;
   /** 本轮还没补完的「重新连对」要求；没有待办时不存在 */
   retry?: MemoryRetryState;
+  /**
+   * 最近一次「学完一轮」发生在哪个学习日（`studyDay` 锚点）。
+   *
+   * 首页据此把学习入口降一档颜色：今天已经学过一轮 → 按钮不再是加重色，
+   * 但**仍然可以点**（点了就是加学一轮）。跨过凌晨 5 点自然失效，
+   * 不需要额外清理（和 `retry.day` 一样只做「是不是今天」的比较）。
+   */
+  learnedDay?: number;
 }
 
 /** 持久化存储的状态 */

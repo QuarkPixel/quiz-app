@@ -9,6 +9,7 @@
     import IconRosetteDiscountCheck from "@tabler/icons-svelte/icons/rosette-discount-check";
     import MemoryStatsCards from "./MemoryStatsCards.svelte";
     import IconConfetti from "@tabler/icons-svelte/icons/confetti";
+    import IconPlus from "@tabler/icons-svelte/icons/plus";
 
     /**
      * 记忆模式首页。只用现有 Button / Card 组件，不写自定义样式。
@@ -31,13 +32,26 @@
     // 学到一半但一张都没掌握的卡也算「有得学」：这一轮还留着，点进去接着继续
     const hasAnythingToLearn = $derived(session.learnableCount > 0);
 
-    /** 学习入口的三种状态 */
+    /**
+     * 学习入口的四种状态：
+     *   due   —— 今天还没学过一轮，还有得学 → 加重色按钮（黑底）
+     *   extra —— 今天已经学过一轮，但还有得学 → 普通按钮（白底），**仍可点**，点了就是加学
+     *   done  —— 今天学过一轮、而且没有更多新卡了 → 灰掉
+     *   empty —— 本来就没有要学的新卡 → 灰掉
+     */
     const learnState = $derived(
         hasAnythingToLearn
-            ? "due"
-            : session.lastFinishedRun === "learning"
+            ? session.learnedToday
+                ? "extra"
+                : "due"
+            : session.learnedToday
               ? "done"
               : "empty",
+    );
+
+    /** 只有「还有得学」的两态可点：学过一轮之后按钮降色但不失效 */
+    const learnClickable = $derived(
+        learnState === "due" || learnState === "extra",
     );
 
     /** 复习入口的三种状态：到期的 + 答错后还没补完连对的都算「今天要复习」 */
@@ -60,6 +74,15 @@
                     ? `接着上一轮 · 已掌握 ${session.roundCompletedCount} / ${session.targetPerRound}`
                     : `还有 ${session.learnableCount} 张没学完 · 这次 ${session.nextBatchSize} 张`,
                 watermark: IconCircleDashedCheck,
+            };
+        }
+        if (learnState === "extra") {
+            // 今天已经学过一轮：按钮降成白底，但点进去照样能再学一轮（加学）
+            return {
+                icon: IconSchool,
+                title: "再学一轮",
+                hint: `今天已经学过一轮 · 还有 ${session.learnableCount} 张没学完`,
+                watermark: IconPlus,
             };
         }
         if (learnState === "done") {
@@ -115,11 +138,17 @@
 
     <!-- 两个入口 -->
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <!-- 可点击时用 Button 的默认（primary）variant：黑底白字，颜色全部来自主题变量 -->
+        <!-- 颜色全部来自主题变量：今天还没学 → 加重色（黑底白字）；
+             今天学过一轮但还有得学 → 白底 outline，仍然可点；
+             没得学（学完了）→ ghost + disabled，和复习入口一致 -->
         <Button
-            variant={learnState === "due" ? "default" : "ghost"}
+            variant={learnState === "due"
+                ? "default"
+                : learnState === "extra"
+                  ? "outline"
+                  : "ghost"}
             class="h-auto w-full justify-start overflow-hidden px-4 py-3 text-left"
-            disabled={learnState !== "due"}
+            disabled={!learnClickable}
             onclick={() => session.startLearning()}
         >
             <learnCard.watermark

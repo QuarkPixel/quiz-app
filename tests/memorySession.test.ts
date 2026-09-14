@@ -1144,8 +1144,9 @@ describe("记忆模式：本轮收尾", () => {
     expect(session.roundMastered).toBe(0);
     expect(session.roundGoal).toBe(0);
     expect(session.newCount).toBe(0);
-    // 首页靠它把学习入口显示成「今天已经学习完」而不是「没有需要学习的卡片」
-    expect(session.lastFinishedRun).toBe("learning");
+    // 首页靠它把「学习」按钮降一档颜色（今天学过一轮了），并且要落盘
+    expect(session.learnedToday).toBe(true);
+    expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
 
     const finish = toasts.find((t) => t.title === "这一轮学完了");
     expect(finish).toBeTruthy();
@@ -1363,3 +1364,78 @@ describe("记忆模式：净化", () => {
 
 // 保证 MemoryProgressMap 类型被用到（避免 lint 报未使用）
 export type _MemoryProgressMap = MemoryProgressMap;
+
+describe("记忆模式：今天是否学过一轮（首页学习按钮的配色依据）", () => {
+  it("学完一轮 → learnedToday 为真并落盘；中途退出不算", () => {
+    const hash = "memory_learned_day_hash";
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    const session = makeSession(ids, { hash });
+    session.updateBankSettings({ selectionMode: "sequential" });
+    session.updateMemorySettings({ roundTarget: 2 });
+    session.startLearning();
+
+    // 学到一半退出：这一轮还没学完，按钮不该降色
+    answer(session, true);
+    session.exitSession();
+    expect(session.learnedToday).toBe(false);
+    expect(loadStoredState(hash).memory?.learnedDay).toBeUndefined();
+
+    // 学满这一轮（roundTarget = 2）
+    session.startLearning();
+    let guard = 0;
+    while (
+      session.run === "learning" &&
+      session.currentQuestion &&
+      guard++ < 40
+    ) {
+      answer(session, true);
+    }
+    expect(session.roundMastered).toBe(0);
+    expect(session.newCount).toBeGreaterThan(0);
+
+    expect(session.learnedToday).toBe(true);
+    expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
+  });
+
+  it("昨天的学习日不算今天（跨过凌晨 5 点自然失效）", () => {
+    const hash = "memory_learned_day_stale_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {},
+        settings: createDefaultMemorySettings(),
+        learnedDay: addDays(studyDay(BASE_TIME), -1),
+      },
+    });
+
+    const session = makeSession(["a", "b"], { hash });
+    expect(session.learnedToday).toBe(false);
+  });
+
+  it("改设置 / 复习答对都不会把 learnedDay 抹掉", () => {
+    const hash = "memory_learned_day_keep_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        // 今天到期，方便验证「复习一遍也不会把 learnedDay 抹掉」
+        progress: {
+          a: { ...createReviewProgress(BASE_TIME), nextDue: startOfDay(BASE_TIME) },
+        },
+        settings: createDefaultMemorySettings(),
+        learnedDay: studyDay(BASE_TIME),
+      },
+    });
+
+    const session = makeSession(["a", "b"], { hash });
+    expect(session.learnedToday).toBe(true);
+
+    session.updateMemorySettings({ roundTarget: 7 });
+    session.updateBankSettings({ correctStreakToMaster: 4 });
+    expect(session.learnedToday).toBe(true);
+
+    session.startReview();
+    answer(session, true);
+    expect(session.learnedToday).toBe(true);
+    expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
+  });
+});
