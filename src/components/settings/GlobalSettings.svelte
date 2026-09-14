@@ -6,10 +6,11 @@
     import { Label } from "$lib/components/ui/label";
     import logoRaw from "/assets/icons/logo.svg?raw";
 
-    // import { Separator } from "$lib/components/ui/separator";
+    import { Separator } from "$lib/components/ui/separator";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import AlertToast from "../layout/AlertToast.svelte";
+    import SyncSettings from "./SyncSettings.svelte";
     import { IconInfoCircle } from "@tabler/icons-svelte";
     import { globalSettingsStore } from "@/features/globalSettings.svelte";
     import { createSoundPlayer, setSoundEnabledPreference } from "@/sound";
@@ -154,14 +155,26 @@
                         size="sm"
                     />
                 </div>
+            </section>
 
+            <Separator />
+
+            <SyncSettings />
+
+            <Separator />
+
+            <!-- 水印式落款：压到面板最底部，只做装饰，不参与阅读顺序 -->
+            <div
+                class="text-muted-foreground/50 flex flex-col items-center gap-2 pt-1 pb-2 select-none"
+                aria-hidden="true"
+            >
                 <div
-                    class="text-muted-foreground mx-auto mt-16 my-8 [&_svg]:h-4 [&_svg]:w-auto"
+                    class="[&_svg]:h-3.5 [&_svg]:w-auto"
                     aria-label="Quiz! aPP."
                 >
                     {@html logoRaw}
                 </div>
-            </section>
+            </div>
         </div>
     </Dialog.Content>
 </Dialog.Root>
