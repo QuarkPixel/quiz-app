@@ -1,163 +1,171 @@
-# 云同步（Supabase）配置指南
+# 云同步（Gitee Gist）配置指南
 
-这套东西的定位：**把 localStorage 当成一个私有 gist** —— 题库和进度同步到你自己的
-Supabase 项目，用来换设备时恢复。
+定位：**把你浏览器的 localStorage 同步成 Gitee 上的一条私有 Gist**，
+换设备时点一下就能恢复。不需要服务器、不需要数据库、不需要注册任何云服务。
 
 ## 整体结构
 
 ```text
-你的浏览器 ──► 你的 Vercel 域名 /api/sync ──► Supabase ──► PostgreSQL
-    │                    （哑管道）                  （public.quiz_app_sync）
-    │
-    └── 持有 Supabase 项目地址 + 密钥，每次请求都带上
+你的浏览器 ──► gitee.com/api/v5/gists
+                  └── Authorization: Bearer <你的私人令牌>
 ```
 
-- **浏览器**持有两样连接信息（存在 `localStorage["quiz_app_sync_config"]` 里），**不上传**。
-  地址走 `?url=`，密钥走 `apikey` 头。
-- **Vercel 那台函数是哑管道**：**没有任何环境变量、不持有任何密钥、不落盘**。
-  它只做三件事：补 CORS、把 `apikey` 注入转发请求、去够 Supabase。
-  所以换项目 / 换 key 都不用重新部署，这个部署被别人看到也无所谓（他填他自己的库）。
-- **为什么要这一层**：Supabase 的域名在国内直连不稳，而 Vercel 稳定。
-  浏览器只访问自己的域名，由这台函数替它去够 Supabase。
+**没有中转层，也没有任何第三方**：Gitee 的 CORS 放行任意源
+（`access-control-allow-origin: *`，预检允许 `authorization` 头），
+所以浏览器可以直接读写 Gist，令牌走请求头、不进 URL。
 
-## 一、Supabase 侧（一次性）
+> 这条路径是实测出来的，不是推测：`scripts/gitee-cors-probe.mjs` 负责验证 CORS，
+> `scripts/gitee-probe.mjs` 负责验证增删改查。Gitee 改接口时先跑这两个脚本。
 
-### 1. 建表
+## 数据怎么组织
 
-建表 SQL 已经在仓库里：
+**一条 Gist（代码片段）、最多 10 个文件**（Gitee 的硬限制是「最多 10 个文件」，
+实测 11 个就报 `文件不能超过 10 个`）：
 
-```
-supabase/migrations/20260101000000_quiz_app_sync.sql
-```
-
-- **连过 GitHub 集成**（Dashboard → Project Settings → Integrations → GitHub）：
-  push 到 `main` 就自动应用，Database → Migrations 里能看到执行记录。
-- **没连过**：把文件内容粘到 Dashboard 的 SQL Editor 执行，效果一样。
-
-表结构就三列：
-
-| 列 | 说明 |
-|---|---|
-| `id` | localStorage 的键名，如 `quiz_app_general` |
-| `data` | 原样保存的 JSON |
-| `updated_at` | 服务器写入时间，由触发器维护（冲突检测用） |
-
-> 迁移里**刻意没有 RLS 策略**，原因写在文件的注释里：secret key 对应 `service_role`，
-> 它带 `BYPASSRLS`，任何策略对它都不生效——写了反而给人「数据被策略保护着」的错觉。
-
-### 2. 拿到地址和密钥
-
-Dashboard → 你的项目 → 左下角 **Project Settings → API Keys**：
-
-| 要的东西 | 长什么样 |
-|---|---|
-| Project URL | `https://xxxxxxxx.supabase.co` |
-| **secret key** | `sb_secret_xxxxxxxx` |
-
-这两样回头分别填进应用设置里的**两个输入框**。
-
-> ⚠️ **用 secret key 的代价**：任何拿到它的人都能**完整读写你的整个 Supabase 项目**，
-> 不只是这张表。所以不要提交进仓库、不要贴进公开的地方、不要在截图里露出来。
->
-> 想让「密钥可以公开」的话，得改用 publishable key + 一个只有自己知道的 `sync_id` 列
-> + RLS 策略（见迁移文件末尾的说明）。那是更安全但更麻烦的路。
-
-## 二、Vercel 侧（一次性）
-
-仓库里已经有 `api/sync/[...path].ts` 和 `vercel.json`，**直接部署即可，不需要配任何环境变量**。
-
-部署完验证一下这台函数活着：
-
-```bash
-curl https://<你的域名>/api/sync/_ping
-# {"ok":true,"service":"quiz-app-sync-relay"}
+```text
+Gitee Gist（私有，描述 "quiz-app sync"）
+├── _general.json     题库列表 + 顺序 + 激活题库 + 全局设置
+├── banks-0.json      { banks: { <hash>: {mode, name, questions, state}, … } }
+├── banks-1.json      同上
+├── …
+└── banks-8.json      9 个分片，题库按 hash 归类到其中一片
 ```
 
-## 三、应用侧（每台设备一次）
+**怎么认出哪条片段是本应用的**：描述是固定的 `quiz-app sync`，**并且**里面含
+`_general.json`。两个条件都满足才会出现在设置面板的候选列表里。
+
+题库落在哪一片由 `shardIndexOf(hash)` 决定（稳定的字符串哈希取模）。于是：
+
+- **文件数永远不超过 10**，题库再多也撞不到上限。空的分片不占文件（那一片一个题库
+  都没有就没有这个文件），所以「云端 M 个文件」是动态的；
+- **合并 / 冲突 / 删除都是逐题库判定的**（比内容哈希），同片的题库不会互相牵连；
+- **上传时同片的题库会一起传**——这是分片唯一的代价。实测 200 张卡约 5 KB，
+  20 个题库全打包也才 94 KB，可以接受。
+
+每个文件的内容是压缩过的（`deflateRaw` + base64url，带版本号）：
+
+```json
+{ "v": 1, "d": "3q2+7wAAAAB..." }
+```
+
+实测 200 张卡的题库：**44.2 KB → 5.6 KB**。
+
+**为什么不做字典树**：实测按 hash 归并只省 13.6% 的原始体积，而 deflate 之后
+两者只差 0.1 KB（deflate 本来就是靠引用前面出现过的字符串工作的）。
+
+**为什么是 9 片**：1 个 `_general.json` + 9 个分片 = 10 个文件，正好卡在上限。
+改这个数会让已同步的云端判定成「文件全变了」——不是不能改，但要知道代价。
+
+## 一、Gitee 侧（一次性）
+
+在 [gitee.com/profile/personal_access_tokens](https://gitee.com/profile/personal_access_tokens)
+生成一个私人令牌，**只勾 `gists` 权限**即可（不要勾 repo 之类）。
+
+复制那串令牌（形如 `35fe6113451a4e4a17b98e8a79264af6`）。
+
+Gist 不用你建——第一次同步时自动创建一条私有的，并把 ID 存在本地。
+
+## 二、应用侧（每台设备一次）
 
 1. 打开应用 → 侧边栏左下角 **全局设置**（滑块图标）→ 底部 **云同步**。
-2. 把第 2 步拿到的两样分别填进两个框：
-   - **项目地址**：`https://xxxxxxxx.supabase.co`
-   - **密钥**：`sb_secret_xxxxxxxx`（默认打码显示，点右侧眼睛图标可临时看清）
-3. 点 **保存并测试**。它会分两段告诉你结果：
-   - `后端 /api/sync：可达` —— 你的 Vercel 函数在跑
-   - `数据表 quiz_app_sync：可读，云端现有 N 项` —— 地址、密钥、表都没问题
-4. 点 **立即同步**。第一次会按情况自动决定方向；如果本地和云端**都有数据且内容不同**，
-   它不会猜，会列出冲突让你选「保留本地 / 保留云端」。
+2. 把令牌填进唯一的那个输入框（默认打码，点右侧眼睛图标可临时看清）。
+3. 点 **保存并测试**。应该看到：
+   - `接口：https://gitee.com/api/v5`
+   - `连接正常 · 云端还空着，第一次同步会创建`
+4. 点 **保存**（会自动同步一次）。第一次会把云端已有的题库拉下来、把本地独有的推上去
+   （两边取并集）；只有**同一个题库两边都改过**时才会停下来让你选「保留本地 / 保留云端」。
+   选「新建一条」的话，Gist 会在这一步建出来，「更多操作 → 同步到」里随即显示它的 id。
 
-换设备时重复第 1–3 步，点「立即同步」就会把云端整份拉下来（拉完自动刷新一次页面）。
+换设备时重复第 1–3 步，点「立即同步」就会把云端那份拉下来（拉完自动刷新一次页面）。
+之后每次**打开 / 刷新页面都会自动对一次账**，不需要再手点。
 
 ## 同步的是什么
 
-| 本地存储键 | 内容 |
+| 本地存储键 | 进哪个文件 |
 |---|---|
-| `quiz_app_general` | 题库列表与顺序、当前激活题库、全局设置 |
-| `quiz_app_questions_<hash>` | 某个题库的题目数组 |
-| `quiz_app_state_<hash>` | 某个题库的进度 + 按库设置 + UI 偏好 |
+| `quiz_app_general` | `_general.json` |
+| `quiz_app_questions_<hash>` | `banks-<shardIndexOf(hash)>.json` |
+| `quiz_app_state_<hash>` | 同上（和题目在同一个分片里） |
 
 **不上传**的：
 
 | 本地存储键 | 为什么 |
 |---|---|
-| `quiz_app_sync_config` | 里面是 Supabase 地址和密钥，传上去会出现「拉下来把自己连到错地方」 |
-| `quiz_app_sync_meta` | 本地同步元数据（每一行上次同步到哪），传上去没有意义 |
-| `quiz_app_sync_mtime:*` | 每一行的本地修改时间，同上 |
+| `quiz_app_sync_config` | 里面是 Gitee 令牌和 Gist ID，传上去等于把令牌公开 |
+| `quiz_app_sync_meta` | 本地同步元数据（每个**题库**上次同步到哪），传上去没有意义 |
+| `quiz_app_sync_mtime:*` | 每个键的本地修改时间，同上 |
 
 ## 同步语义
 
-- **本地改动**：2 秒防抖后自动上传（按行比对，只传变的行）。
-- **拉取时机**：页面重新可见 / 窗口获得焦点（30 秒节流）/ 每 3 分钟轮询 / 点「立即同步」。
-- **冲突**（同一行两边都改过）：**绝不自动选边**。冲突的那一行谁都不动，其余行照常同步，
-  由你在设置面板里选「保留本地」或「保留云端」。
-- **首次同步**：云端为空 → 上传本地；本地为空 → 下载云端；两边一致 → 只记基准线；
-  两边都有且不同 → 列出冲突让你选。
-- **删除**：本地删掉一个题库后，云端那一行会在下次同步时回收。判据是「这台设备见过这一行」，
-  **别的设备新增的行不会被误删**。
+- **本地改动**：停手 20 秒后自动上传（防抖；只重建改动题库所在的那几个**分片**；
+  分片是整体上传的，所以同片的题库会一起传，但判定仍按题库逐条算）。
+- **拉取时机**：**打开 / 刷新页面时先对一次账**、页面重新可见 / 窗口获得焦点
+  （30 秒节流）/ 每 3 分钟轮询 / 点「立即同步」。
+- **冲突**（同一个**题库**两边都改过）：**绝不自动选边**，而且**在你做出选择之前，
+  这一轮同步什么都不做**——不拉、不推、不改本地（所以页面也不会自己刷新）。
+  这是有意的：早期版本会「冲突的题库不动、其余照常同步」，拉到别的题库之后整页刷新，
+  内存里的冲突提示跟着消失，看起来就像「没等我选就自己同步过去了」。
+  面板里列的是**题库名**，选「保留本地」或「保留云端」之后才会继续。
+- **怎么判断两边谁改了**：
+  - 本地改过没有 → 比「上次同步时间」和这个键的本地修改时间
+  - 云端改过没有 → 比「上次同步时云端的内容哈希」和这次读回来的哈希
+  用内容哈希而不是 Gitee 的 `updated_at`，是因为那个时间戳只在 Gist 级别：
+  你改了题库 A，整个 Gist 的时间就变，题库 B 不该被误判成冲突。
+- **新设备不会清空云端**：刚打开应用时本地那份配置是个空壳（题库列表为空），
+  它只参与「拉」，绝不会被推上去覆盖云端的题库列表。题库列表本身是**合并后的题库集合**：
+  两台设备各自导入的都在，删掉的消失。
+- **第一次接上一条已有的云端**：两边各自独有的题库互相传过去（取并集）；
+  同一份题库两边都有但进度不同时，看哪边有进度——只有一边有过就直接听那边的，
+  两边都改过才停下来问你。
+- **顺序与名称**：侧边栏的顺序（含「置顶」）和题库名都会同步——顺序按「谁动过听谁的」判定，
+  只改动顺序也能传过去。
+- **删除**：在一边删掉一个题库，另一边下次同步会跟着删（少掉最后一个题库时，
+  那个分片文件也会从云端回收）。判据是「这台设备见过它」，
+  **别的设备新增的题库不会被误删**。不想要删除传播就用「用本地覆盖云端 / 用云端覆盖本地」
+  明确指定方向。
 - **拉取后整页刷新**：题目和进度在内存里有好几份缓存，刷新是唯一不会漏掉某一处、
-  也不会把「答题到一半」搞成状态撕裂的做法。只有真的写入了不同内容才刷新，
-  所以不会出现「刷新 → 同步 → 刷新」的死循环。
+  也不会把「答题到一半」搞成状态撕裂的做法。只有真的写入了不同内容才刷新。
 
 ## 手动操作（设置面板 →「更多操作」）
 
-- **用本地覆盖云端**（二次确认）：把本地整份推上去，云端多出来的行删掉。慎用。
+- **用本地覆盖云端**（二次确认）：把本地整份推上去，云端多出来的分片删掉。慎用。
 - **用云端覆盖本地**（二次确认）：把云端整份拉下来覆盖本地。慎用。
-- **忘记同步记录**：清掉本地同步元数据（不动云端数据），下次同步按「首次同步」处理。
-  **不知道选哪边时的逃生口**。
+- **断开云端**：丢掉本地记的 Gist ID 与同步元数据。下次同步会**新建**一条；
+  旧的那条还在你的 Gitee 上，需要的话自己去删。
 
 ## 故障排查
 
 | 现象 | 原因 | 怎么办 |
 |---|---|---|
-| `后端 /api/sync：不可达` | 没部署到 Vercel / 本地开发没起 dev server | 确认是从 Vercel 域名打开的；本地开发见下 |
-| `密钥被 Supabase 拒绝了` | 密钥不属于这个项目，或没复制完整 | 回 Settings → API Keys 重新复制整段 |
-| `云端没有这张表` | 迁移没部署 | 把 `supabase/migrations` 推到 `main`，或手动执行 SQL |
-| `项目地址应该形如 …` | 地址栏里填的不是项目地址 | 应该形如 `https://xxxx.supabase.co`，不要带 `/rest/v1` 之类的路径 |
-| 一直在「冲突」 | 两台设备改了同一个题库 | 在设置面板里选一边；实在不确定就先「忘记同步记录」 |
+| 换设备后同步了但本地没变 | 选成了「新建一条」 | 重新进编辑态，改选原来那条（文件最多的） |
+| 列表里看不见我原来那条 | 描述被手改过，或里面没有 `_general.json` | 去 Gitee 把描述改回 `quiz-app sync` |
+| `Gitee 令牌无效或过期` | 令牌抄错 / 被撤销 / 没勾 gists 权限 | 重新生成一个，只勾 gists |
+| `Gitee 拒绝了这次请求` | 令牌权限不够 | 确认勾了 gists |
+| `云端那条 Gist 不见了` | 你在 Gitee 上把它删了 | 「断开云端」后重新同步一次会新建 |
+| `连不上 Gitee` | 网络问题 | 确认浏览器能打开 gitee.com |
+| 一直在「冲突」 | 两台设备都改了**同一个**题库（比如同一份题库两边都刷了题） | 在设置面板里选一边（面板会列出题库名） |
 | 换了题库后进度对不上 | 冲突时选了「保留云端」 | 预期行为，云端那份覆盖了本地 |
-
-### 本地开发时怎么用云同步
-
-`vite.config.ts` 里已经把 `/api/sync` 代理到线上部署，所以 `pnpm dev` 下浏览器看到的
-仍是同源，前端一行代码都不用改：
-
-```bash
-pnpm dev                                            # 代理到仓库里写死的线上地址
-SYNC_DEV_ORIGIN=https://别的域名 pnpm dev            # 换一个后端
-VITE_SYNC_RELAY=https://别的域名/api/sync pnpm dev   # 直接用某个后端地址（跨域）
-```
 
 ## 相关代码
 
 ```
-supabase/migrations/20260101000000_quiz_app_sync.sql   建表 + updated_at 触发器
-api/sync/[...path].ts                                  Vercel 哑管道（零环境变量 + /_ping）
-src/features/sync/types.ts                             常量与类型
-src/features/sync/config.svelte.ts                     地址 / 密钥的净化、校验与掩码展示
-src/features/sync/relay.ts                             配置 + 同源路径 → 同步目标（纯本地）
-src/features/sync/storage.ts                           收集本地快照、同步元数据、localStorage 钩子
-src/features/sync/plan.ts                              逐行三方合并（纯函数，易测）
-src/features/sync/remote.ts                            PostgREST 客户端（只抓 fetch，不引 supabase-js）
-src/features/sync/engine.svelte.ts                     同步引擎（防抖 / 轮询 / 冲突 / 换设备）
-src/components/settings/SyncSettings.svelte            全局设置里的同步区块
-tests/sync.test.ts                                     配置校验 / 合并判定 / 孤儿行 / 首次同步取向
+src/features/sync/types.ts             常量与类型（文件名约定、压缩格式、元数据结构）
+src/features/sync/config.svelte.ts     令牌 / Gist ID 的读写与净化
+src/features/sync/target.ts            Gitee API 地址 + 掩码展示
+src/features/sync/storage.ts           可同步键白名单、mtime、同步元数据、localStorage 钩子
+src/features/sync/payload.ts           压缩编解码（deflateRaw + base64url）
+src/features/sync/collect.ts           键 → 逐题库 + 分片文件的组装
+src/features/sync/merge.ts             逐题库三方合并 / general 逐字段合并（纯函数，重点测试对象）
+src/features/sync/gitee.ts             Gitee Gists API 客户端
+src/features/sync/engine.svelte.ts     同步引擎（打开页面即对账 / 防抖 / 轮询 / 冲突 / 换设备）
+src/components/settings/SyncSettings.svelte   全局设置里的同步区块（含逐题库的冲突选择）
+scripts/gitee-probe.mjs                Gitee 增删改查探针（要真实令牌）
+scripts/gitee-cors-probe.mjs           Gitee CORS 探针（要真实令牌）
+scripts/gitee-limits-probe.mjs         探 Gitee 各硬限制（文件数 / 文件名 / 大小）
+tests/sync.test.ts                     逐题库合并判定 / general 合并 / 压缩往返 / 配置净化
+tests/syncSupport.ts                   同步测试脚手架（内存 Gitee 替身 + 多设备 + 可控时钟）
+tests/giteeClient.test.ts              Gitee 客户端契约测试（内存替身，不碰网络）
+tests/syncShards.test.ts               分片收集：文件数永不超 10、题库不漏、片内命名
+tests/syncEngine.test.ts               单设备端到端（推 / 拉 / 覆盖 / 删除回收）
+tests/syncTwoDevice.test.ts            双设备来回（A ↔ B、冲突裁决、删除传播）
 ```
