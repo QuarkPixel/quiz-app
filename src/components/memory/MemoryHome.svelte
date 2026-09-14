@@ -9,7 +9,7 @@
     import IconRosetteDiscountCheck from "@tabler/icons-svelte/icons/rosette-discount-check";
     import MemoryStatsCards from "./MemoryStatsCards.svelte";
     import IconConfetti from "@tabler/icons-svelte/icons/confetti";
-    import IconPlus from "@tabler/icons-svelte/icons/plus";
+    import { IconBounceRightFilled } from "@tabler/icons-svelte";
 
     /**
      * 记忆模式首页。只用现有 Button / Card 组件，不写自定义样式。
@@ -72,31 +72,30 @@
                 title: "学习新的题目",
                 hint: resuming
                     ? `接着上一轮 · 已掌握 ${session.roundCompletedCount} / ${session.targetPerRound}`
-                    : `还有 ${session.learnableCount} 道没学完 · 这次 ${session.nextBatchSize} 道`,
+                    : `还有 ${session.learnableCount} 道 · 每轮 ${session.nextBatchSize} 道`,
                 watermark: IconCircleDashedCheck,
             };
         }
         if (learnState === "extra") {
-            // 今天已经学过一轮：按钮降成白底，但点进去照样能再学一轮（加学）
             return {
                 icon: IconSchool,
                 title: "再学一轮",
-                hint: `今天已经学过一轮 · 还有 ${session.learnableCount} 道没学完`,
-                watermark: IconPlus,
+                hint: `今日目标已完成 · 还有 ${session.learnableCount} 道`,
+                watermark: IconBounceRightFilled,
             };
         }
         if (learnState === "done") {
             return {
                 icon: IconCircleDashedCheck,
-                title: "今天已经学习完",
-                hint: "过几天再来复习这些卡片",
+                title: "今日已学习",
+                hint: "今日目标已学完",
                 watermark: IconConfetti,
             };
         }
         return {
             icon: IconRosetteDiscountCheck,
             title: "没有需要学习的卡片",
-            hint: "所有卡片都已经学过一轮了",
+            hint: "所有卡片都已学完",
             watermark: IconRosetteDiscountCheck,
         };
     });
@@ -114,14 +113,14 @@
             return {
                 icon: IconCircleDashedCheck,
                 title: "今日已复习完",
-                hint: "到期的卡片都过了一遍",
+                hint: "所有卡片都已复习",
                 watermark: IconConfetti,
             };
         }
         return {
             icon: IconCircleDashedX,
             title: "没有到期的卡片",
-            hint: "还没有进入复习的卡片",
+            hint: "今天没有需要复习的卡片",
             watermark: IconCards,
         };
     });
@@ -152,7 +151,7 @@
             onclick={() => session.startLearning()}
         >
             <learnCard.watermark
-                class="absolute -top-3 right-0 opacity-20 size-30"
+                class="absolute -bottom-3 right-0 opacity-20 size-25"
             />
             <learnCard.icon stroke={1.5} class="shrink-0 size-8" />
             <span class="flex min-w-0 flex-col items-start">
@@ -168,7 +167,7 @@
             onclick={() => session.startReview()}
         >
             <reviewCard.watermark
-                class="absolute -top-3 right-0 opacity-20 size-30"
+                class="absolute -bottom-3 right-0 opacity-20 size-25"
             />
             <reviewCard.icon stroke={1.5} class="shrink-0 size-8" />
             <span class="flex min-w-0 flex-col items-start">

@@ -17,7 +17,8 @@ export interface Option {
  * 所以 `QuestionArea` / `QuestionPreview` / `ReviewView` / 判分逻辑都能直接复用。
  * 只做刷题的地方用 `QuizQuestionType`（排除 `memory`）。
  */
-export type QuestionType = "judgment" | "single" | "multiple" | "blank" | "memory";
+export type QuestionType =
+  "judgment" | "single" | "multiple" | "blank" | "memory";
 
 /** 刷题模式的四种题型（不含记忆题型）。 */
 export type QuizQuestionType = Exclude<QuestionType, "memory">;
