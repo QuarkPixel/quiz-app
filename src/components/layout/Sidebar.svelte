@@ -20,6 +20,9 @@
     import IconBooks from "@tabler/icons-svelte/icons/books";
     import IconAdjustments from "@tabler/icons-svelte/icons/adjustments";
     import GlobalSettings from "../settings/GlobalSettings.svelte";
+    import { syncEngine } from "@/features/sync/engine.svelte";
+    import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
+    import { syncConfigStore } from "@/features/sync/config.svelte";
     import {
         exportBank,
         BankImportSession,
@@ -80,7 +83,25 @@
     let isDraggingFile = $state(false);
     /** dragenter / dragleave 计数，避免在子元素间移动时闪烁 */
     let dragDepth = 0;
-    let showGlobalSettings = $state(false);
+
+
+    /**
+     * 需要用户操心的同步问题：**有冲突**或**同步报错**时在「全局设置」上点一个红点
+     * （不然用户根本不知道要去看）。点那个按钮本来就是打开全局设置，正好对上。
+     *
+     * 「离线」不算问题（联网后自己会好）；总开关关掉就一律不显示——关掉云同步之后
+     * 引擎也已经把内存里的冲突 / 错误状态清空了，这里再按 `enabled` 兜一道，
+     * 免得出现「云同步都关了还在提示待处理」。
+     */
+    const syncIssue = $derived.by(() => {
+        if (!syncConfigStore.value.enabled) return "";
+        const status = syncEngine.status;
+        if (status.conflicts.length > 0) {
+            return `云同步有 ${status.conflicts.length} 个题库冲突待处理`;
+        }
+        if (status.phase === "error") return `云同步出错：${status.message}`;
+        return "";
+    });
     let importSession = $state<BankImportSession | null>(null);
     let importMessage = $state<BankFileMessage | null>(null);
     let overwriteRequest = $state<OverwriteImportRequest | null>(null);
@@ -815,10 +836,18 @@
         <Sidebar.Menu>
             <Sidebar.MenuItem>
                 <Sidebar.MenuButton
-                    tooltipContent="全局设置"
-                    onclick={() => (showGlobalSettings = true)}
+                    tooltipContent={syncIssue || "全局设置"}
+                    onclick={() => globalSettingsDialog.show()}
                 >
-                    <IconAdjustments size={18} stroke={1.75} />
+                    <span class="relative inline-flex">
+                        <IconAdjustments size={18} stroke={1.75} />
+                        {#if syncIssue}
+                            <span
+                                class="bg-destructive absolute -end-0.5 -top-0.5 size-2 rounded-full"
+                                aria-hidden="true"
+                            ></span>
+                        {/if}
+                    </span>
                     <span class="group-data-[collapsible=icon]:hidden"
                         >全局设置</span
                     >
@@ -830,7 +859,7 @@
     <Sidebar.Rail />
 </Sidebar.Root>
 
-<GlobalSettings bind:open={showGlobalSettings} />
+<GlobalSettings bind:open={globalSettingsDialog.open} />
 
 <AlertToast bind:this={toast} />
 

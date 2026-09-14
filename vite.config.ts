@@ -9,16 +9,6 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const isTest = process.env.NODE_ENV === "test";
 const isCheck = process.env.npm_lifecycle_event === "check";
 
-/**
- * 本地开发时把 `/api/sync` 代理到线上部署，这样云同步在 `pnpm dev` 下
- * 也能直接用（浏览器看到的仍是同源，前端一行代码都不用改）。
- *
- * 换项目时：`SYNC_DEV_ORIGIN=https://你的域名 pnpm dev`
- */
-const syncDevOrigin = (
-  process.env.SYNC_DEV_ORIGIN ?? "https://quiz-app-blond-phi.vercel.app"
-).replace(/\/+$/, "");
-
 const faviconPath = resolve(__dirname, "assets/icons/icon.svg");
 const appleTouchIconPath = resolve(
   __dirname,
@@ -208,15 +198,9 @@ export default defineConfig(async () => ({
       "@": resolve(__dirname, "src"),
       $lib: resolve(__dirname, "src/lib"),
     },
-  },
-  server: {
-    proxy: {
-      "/api/sync": {
-        target: syncDevOrigin,
-        changeOrigin: true,
-        secure: true,
-      },
-    },
+    // 测试里要 mount 组件，必须解析到 Svelte 的**浏览器**构建
+    // （默认的 node 条件会拿到 index-server.js，`mount()` 在那儿直接报错）。
+    ...(isTest ? { conditions: ["browser"] } : {}),
   },
   preview: {
     open: "/",

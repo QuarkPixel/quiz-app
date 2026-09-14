@@ -3,10 +3,10 @@
 interface ImportMetaEnv {
   readonly DEV: boolean;
   /**
-   * 可选：把云同步指向另一个兼容后端。默认是**同源** `/api/sync`
-   * （本地开发时由 `vite.config.ts` 的 server.proxy 转发到线上部署）。
+   * 可选：云同步指向另一个 Gitee API 地址。
+   * 默认就是官方 `https://gitee.com/api/v5`；指向本地 mock 可以不改线上数据地测同步逻辑。
    */
-  readonly VITE_SYNC_RELAY?: string;
+  readonly VITE_GITEE_API_BASE?: string;
 }
 
 interface ImportMeta {

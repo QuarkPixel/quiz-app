@@ -1,47 +1,83 @@
 /**
- * 同步引擎：把「本地改了什么 / 云端改了什么」跑成实际动作。
+ * 同步引擎：把「本地改了什么 / 云端改了什么」跑成实际的 Gitee 读写。
  *
  * 触发时机：
- *   - 本地任何 `quiz_app_*` 写入 → 防抖 2 秒后上传
+ *   - **打开 / 刷新页面**（配好之后）立刻对一次账
+ *   - 本地任何 `quiz_app_*` 写入 → 防抖 20 秒后同步（连续写入会一直推后）
  *   - 页面重新可见 / 窗口获得焦点（30 秒节流）→ 静默检查云端有没有新东西
  *   - 定时轮询（3 分钟，只在页面可见时）
  *   - 设置面板里的「立即同步 / 上传 / 下载」
  *
- * 连接信息（Supabase 地址与密钥）不在前端：每次同步先问自己的后端要一份
- * （`resolveSyncTarget`，进程内缓存），前端只持有同步口令。
+ * **不需要任何服务器**：直接请求 gitee.com 的 API，令牌走 `Authorization` 头。
  *
- * 冲突（同一行两边都改过）**绝不自动选一边**：进入 conflict 状态，
- * 在设置面板里让用户决定，决定前那一行谁都不动。
+ * ── 同步单元是「题库」──────────────────────────────────────────────────────
  *
- * 拉取到实际变化后会整页刷新一次，而不是逐个去刷新内存里的会话状态——
- * 题目 / 进度在内存里有好几份缓存（BankStore 的解析缓存、两个 Session 的
- * runtime state），刷新是唯一不会漏掉某一处、也不会把「答题到一半」搞成
- * 状态撕裂的做法。只拉到「和本地一样的内容」时不刷新，避免无谓地闪一下。
+ * 分片文件（`_general.json` + `banks-0..8.json`）只是绕开 Gitee「一条 Gist 最多
+ * 10 个文件」的容器。合并、冲突、删除全部按题库逐条判定（见 `merge.ts`），
+ * 所以同一片里的题库互不牵连。
+ *
+ * ── 几条不能违反的规矩 ─────────────────────────────────────────────────────
+ *
+ * 1. **推上去的内容必须是「应用完拉取之后」重新收集的**，不能拿同步开始时
+ *    收集的旧快照去推——线上真出过：新设备把「空壳 general」推上云端，
+ *    于是所有设备的题库列表都被清空了。
+ * 2. **冲突（同一个题库两边都改过）绝不自动选一边**：进入 conflict 状态，
+ *    在设置面板里让用户决定，决定前那个题库（连同它所在的分片）都不动。
+ * 3. 拉取到实际变化后会整页刷新一次，而不是逐个去刷新内存里的会话状态——
+ *    题目 / 进度在内存里有好几份缓存（BankStore 的解析缓存、两个 Session 的
+ *    runtime state），刷新是唯一不会漏掉某一处、也不会把「答题到一半」搞成
+ *    状态撕裂的做法。只拉到「和本地一样的内容」时不刷新。
  */
 
-import { syncConfigStore, type SyncConfigStore } from "./config.svelte";
-import { buildSyncPlan, decideBootstrap, type SyncPlan } from "./plan";
-import { resolveSyncTarget } from "./relay";
-import { SyncClient, SyncError, type SyncPingResult } from "./remote";
+import { STORAGE_KEY_GENERAL } from "@/config";
 import {
-  applyRemoteRow,
+  buildShardSnapshot,
+  collectLocalState,
+  filesOfState,
+  stableHash,
+  type CollectedState,
+  type LocalFile,
+} from "./collect";
+import { syncConfigStore, type SyncConfigStore } from "./config.svelte";
+import { GiteeClient, GiteeError, type GistSummary } from "./gitee";
+import {
+  applyResolution,
+  buildRemoteState,
+  buildSyncPlan,
+  forcePullPlan,
+  forcePushPlan,
+  type BankAction,
+  type RemoteState,
+  type SyncPlan,
+} from "./merge";
+import { decodePayload, encodePayload } from "./payload";
+import {
+  applyRemoteValue,
+  clearMtime,
   clearSyncMeta,
-  collectLocalEntries,
   installStorageHook,
   loadSyncMeta,
+  mtimeOf,
   onLocalChange,
-  readLocal,
+  pruneStaleMtimes,
   removeLocal,
   saveSyncMeta,
-  type LocalEntry,
 } from "./storage";
+import { resolveSyncTarget } from "./target";
 import {
+  GIST_GENERAL_FILE,
   SYNC_FOCUS_THROTTLE_MS,
   SYNC_POLL_INTERVAL_MS,
   SYNC_PUSH_DEBOUNCE_MS,
+  bankRowKey,
+  shardFileName,
+  shardIndexOf,
   type ConflictResolution,
-  type RemoteRowMeta,
+  type RemoteFile,
+  type SyncConflict,
   type SyncMeta,
+  type SyncRowMeta,
+  type SyncConfig,
   type SyncStatus,
   type SyncTarget,
   type SyncTransferResult,
@@ -56,8 +92,11 @@ export interface SyncEvent {
 }
 
 export interface SyncOutcome {
+  /** 上传的题库数 */
   pushed: number;
+  /** 下载的题库数 */
   pulled: number;
+  /** 没能自动解决的冲突（题库 hash） */
   conflicts: string[];
   /** 拉取是否真的改动了本地内容（决定要不要刷新页面） */
   changedLocal: boolean;
@@ -70,25 +109,83 @@ const IDLE_OUTCOME: SyncOutcome = {
   changedLocal: false,
 };
 
+/**
+ * SHA-1 十六进制。
+ *
+ * 只用于「不是我们格式的文件」那种兜底哈希——正常路径统一用 `stableHash`
+ * （比的是**内容**，不受对象键序影响）。
+ */
+function sha1Hex(text: string): Promise<string> {
+  return crypto.subtle
+    .digest("SHA-1", new TextEncoder().encode(text))
+    .then((buf) =>
+      [...new Uint8Array(buf)]
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(""),
+    );
+}
+
 export class SyncEngine {
   status: SyncStatus = $state({
     phase: "idle",
     message: "还没同步过",
     at: 0,
     remoteCount: 0,
+    remoteBanks: 0,
     conflicts: [],
   });
 
-  /** 用户在下一次同步里对冲突的选择（一次性）。 */
-  private conflictResolution: ConflictResolution | null = null;
+  /**
+   * 本地有没有还没推上去的东西（头部那个指示点靠它区分黄/绿）。
+   *
+   * 默认 `true`：没验证过之前一律说「还没同步」，绝不上来就报「已同步」。
+   * 本地一写入就置 `true`（便宜），每次同步成功后按真实数据重算
+   * （`computePendingChanges`）。
+   */
+  pendingChanges: boolean = $state(true);
+
+  /**
+   * 用户已经答过的冲突裁决：题库 hash → 保留哪一边。
+   *
+   * 按题库记账而不是「一次性开关」，是因为两次同步之间可能又冒出新的冲突：
+   * 一刀切会把用户没见过的冲突也顺手裁决掉，而用户只对他**看见过**的负责。
+   */
+  private resolutions = new Map<string, ConflictResolution>();
   private running: Promise<SyncOutcome> | null = null;
   private pushTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private unlisten: Array<() => void> = [];
   private lastFocusCheck = 0;
   private listeners = new Set<(event: SyncEvent) => void>();
+  /** 上一次报过的冲突 / 错误：一样就不再重复弹提示（轮询每 3 分钟一次，会刷屏） */
+  private lastConflictSignature = "";
+  private lastErrorSignature = "";
 
-  constructor(private readonly config: SyncConfigStore = syncConfigStore) {}
+  /**
+   * Gitee API 基地址。默认取 `giteeApiBase()`；测试里可以指向本地替身，
+   * 这样同一套引擎代码能在不打真网络的情况下跑完整流程。
+   */
+  private readonly apiBase: string | undefined;
+
+  /** 配置订阅的取消函数；`dispose()` 之后可以重新 `init()` 再订上。 */
+  private unsubscribeConfig: (() => void) | null = null;
+
+  constructor(
+    private readonly config: SyncConfigStore = syncConfigStore,
+    apiBase?: string,
+  ) {
+    this.apiBase = apiBase;
+    // 总开关被关掉 / 重新打开时要立刻收拾内存状态（见 onConfigChanged）。
+    // 这件事不依赖 DOM，所以放在构造函数里——测试里造一个引擎就能用。
+    this.watchConfig();
+  }
+
+  private watchConfig(): void {
+    if (this.unsubscribeConfig !== null) return;
+    this.unsubscribeConfig = this.config.subscribe((config) =>
+      this.onConfigChanged(config),
+    );
+  }
 
   // ── 生命周期 ──────────────────────────────────────────────────────────────
 
@@ -97,8 +194,13 @@ export class SyncEngine {
     if (typeof window === "undefined") return;
 
     installStorageHook();
+    this.watchConfig();
+
     this.unlisten.push(
       onLocalChange(() => {
+        // 本地一有写入就先标成「还没同步」（这里不做全量比对：每次答题都会
+        // 走到这儿，扫一遍所有题库太贵）。同步成功之后再按真实数据重算。
+        this.pendingChanges = true;
         this.schedulePush();
       }),
     );
@@ -122,20 +224,42 @@ export class SyncEngine {
     this.unlisten.push(() => window.removeEventListener("online", onOnline));
 
     this.pollTimer = setInterval(() => {
+      if (!this.isOn()) return;
       if (document.visibilityState !== "visible") return;
       void this.sync();
     }, SYNC_POLL_INTERVAL_MS);
 
-    this.setStatus("idle", "点「测试连接」开始");
+    this.setStatus("idle", this.idleMessage());
+    // 装在钩子之后按真实数据算一次：应用启动时那几次写入（配置规范化 / 迁移）
+    // 不该被当成「有改动没同步」——比的是内容，不是 mtime。
+    this.pendingChanges = this.computePendingChanges();
+
+    // 打开 / 刷新页面就先对一次账（这就是「每次打开网页都会自动检查」）。
+    // 只在真的配好了（令牌 + 自动同步）时才跑，免得白白发请求。
+    if (this.isOn() && this.config.value.token.length > 0 && this.config.value.autoSync) {
+      void this.sync();
+    }
   }
 
   dispose(): void {
     for (const off of this.unlisten) off();
     this.unlisten = [];
+    this.unsubscribeConfig?.();
+    this.unsubscribeConfig = null;
     if (this.pushTimer !== null) clearTimeout(this.pushTimer);
     this.pushTimer = null;
     if (this.pollTimer !== null) clearInterval(this.pollTimer);
     this.pollTimer = null;
+  }
+
+  /**
+   * 「现在和云端一致吗」——头部指示点用。
+   *
+   * 两个条件都要满足：上一次同步是正常收尾的（`idle`，而不是正在跑 / 报错 /
+   * 离线 / 有冲突），而且本地没有还没推上去的改动。
+   */
+  get inSync(): boolean {
+    return this.status.phase === "idle" && !this.pendingChanges;
   }
 
   /** 订阅同步结果（UI 用来弹提示）。 */
@@ -146,8 +270,9 @@ export class SyncEngine {
 
   // ── 对外动作 ──────────────────────────────────────────────────────────────
 
-  /** 本地改动后的防抖上传。关掉自动同步时是空操作。 */
+  /** 本地改动后的防抖上传。云同步关掉、或关掉自动同步时是空操作。 */
   schedulePush(): void {
+    if (!this.isOn()) return;
     if (!this.config.value.autoSync) return;
     if (this.pushTimer !== null) clearTimeout(this.pushTimer);
     this.pushTimer = setTimeout(() => {
@@ -163,80 +288,160 @@ export class SyncEngine {
     return this.run("merge");
   }
 
-  /** 强制上传：本地覆盖云端，包括冲突的行。 */
+  /** 强制上传：本地覆盖云端，包括冲突的题库。 */
   pushLocal(): Promise<SyncOutcome> {
     return this.run("push");
   }
 
-  /** 强制下载：云端覆盖本地，包括冲突的行。 */
+  /** 强制下载：云端覆盖本地，包括冲突的题库。 */
   pullRemote(): Promise<SyncOutcome> {
     return this.run("pull");
   }
 
-  /** 冲突时选择「保留本地」。 */
+  /** 冲突时选择「保留本地」（只针对面板上列出来的那些题库）。 */
   keepLocal(): Promise<SyncOutcome> {
-    this.conflictResolution = "keepLocal";
-    return this.run("merge");
+    return this.resolveConflicts("keepLocal");
   }
 
-  /** 冲突时选择「保留云端」。 */
+  /** 冲突时选择「保留云端」（只针对面板上列出来的那些题库）。 */
   keepRemote(): Promise<SyncOutcome> {
-    this.conflictResolution = "keepRemote";
+    return this.resolveConflicts("keepRemote");
+  }
+
+  /**
+   * 记下用户的选择，然后**重新**跑一次同步。
+   *
+   * 如果此刻正好有一次同步在跑，它已经读过裁决表了——必须先等它结束再跑，
+   * 否则用户点了按钮却什么都没发生（裁决还躺在表里等下一轮）。
+   */
+  private async resolveConflicts(kind: ConflictResolution): Promise<SyncOutcome> {
+    for (const conflict of this.status.conflicts) {
+      this.resolutions.set(conflict.hash, kind);
+    }
+    const running = this.running;
+    if (running !== null) await running.catch(() => {});
     return this.run("merge");
   }
 
-  /** 连接自检：后端 → Supabase → 表，整条链路一次验完。 */
-  async testConnection(): Promise<SyncPingResult> {
-    this.setStatus("checking", "正在检查连接…");
-    const target = this.ensureTarget();
-    if (!target) {
-      return { ok: false, rowCount: 0, error: this.status.message };
-    }
-
-    const result = await this.createClient(target).ping();
-
-    this.status = {
-      phase: result.ok ? "idle" : "error",
-      message: result.ok
-        ? `连接正常 · 云端 ${result.rowCount} 项`
-        : (result.error ?? "连接失败"),
-      at: Date.now(),
-      remoteCount: result.rowCount,
-      conflicts: [],
-    };
-    return result;
-  }
-
-  /** 忘记本地同步记录（下次同步按「首次」处理）。不动云端数据。 */
-  forgetLocalSyncState(): void {
+  /**
+   * 盯上一条已有的 Gist（用户在设置里选的）。
+   *
+   * **会清掉同步记账**：换了云端就等于换了基准，旧的「每个题库同步到哪」
+   * 对新云端没有意义；留着还会把整包数据判成冲突。
+   */
+  selectGist(gistId: string, gistUrl = ""): void {
+    this.config.update({ gistId: gistId.trim(), gistUrl: gistUrl.trim() });
     clearSyncMeta();
     this.status = {
       phase: "idle",
-      message: "已忘记本地同步记录",
+      message: "已选定云端，点「立即同步」开始",
       at: Date.now(),
-      remoteCount: this.status.remoteCount,
+      remoteCount: 0,
+      remoteBanks: 0,
       conflicts: [],
     };
+  }
+
+  /** 丢弃本地记的 Gist ID，下次同步重新建一条云端（不动旧的）。 */
+  forgetGist(): void {
+    this.config.update({ gistId: "" });
+    clearSyncMeta();
+    this.status = {
+      phase: "idle",
+      message: "已断开云端，下次同步会重新创建一条",
+      at: Date.now(),
+      remoteCount: 0,
+      remoteBanks: 0,
+      conflicts: [],
+    };
+  }
+
+  /**
+   * 列出账号里的代码片段，供用户挑一条来同步。
+   *
+   * 需要先有令牌（用草稿令牌也行，所以这里收一个可选参数）。
+   */
+  async listGists(token?: string): Promise<GistSummary[]> {
+    const draft = token?.trim();
+    const config = draft
+      ? { ...this.config.value, token: draft }
+      : this.config.value;
+    const { target, error } = resolveSyncTarget(config, this.apiBase);
+    if (!target) throw new Error(error ?? "同步配置不完整");
+    return await new GiteeClient(target).listGists();
+  }
+
+  /** 连接自检：令牌能用吗、云端在不在、里面有几个题库。 */
+  async testConnection(): Promise<{
+    ok: boolean;
+    message: string;
+    fileCount: number;
+    bankCount: number;
+  }> {
+    this.setStatus("checking", "正在检查连接…");
+    const target = this.ensureTarget();
+    if (!target) {
+      return { ok: false, message: this.status.message, fileCount: 0, bankCount: 0 };
+    }
+
+    const client = new GiteeClient(target);
+    const result = await client.ping();
+    let bankCount = 0;
+
+    if (result.ok && result.gist) {
+      // 顺手数一下云端有几个题库（同一份响应里就有全部文件内容，不用再请求）
+      const remote = buildRemoteState(
+        await this.readRemoteFiles(result.gist.files),
+      );
+      bankCount = remote.banks.size;
+
+      // 令牌与 Gist 都通的情况下顺手回填 id 与它的网页地址
+      const patch: { gistId?: string; gistUrl?: string } = {};
+      if (client.id !== this.config.value.gistId) patch.gistId = client.id;
+      if (!this.config.value.gistUrl && result.gist.htmlUrl) {
+        patch.gistUrl = result.gist.htmlUrl;
+      }
+      if (Object.keys(patch).length > 0) this.config.update(patch);
+    }
+
+    const message = result.ok
+      ? result.fileCount > 0
+        ? `连接正常 · 云端 ${bankCount} 个题库 / ${result.fileCount} 个文件`
+        : "连接正常 · 云端还空着，第一次同步会创建"
+      : (result.error ?? "连接失败");
+
+    this.status = {
+      phase: result.ok ? "idle" : "error",
+      message,
+      at: Date.now(),
+      remoteCount: result.fileCount,
+      remoteBanks: bankCount,
+      conflicts: [],
+    };
+    return { ok: result.ok, message, fileCount: result.fileCount, bankCount };
   }
 
   // ── 内部实现 ──────────────────────────────────────────────────────────────
 
-  /**
-   * 拿到可用的同步目标。
-   *
-   * 纯本地解析：凭据就在这台设备的 localStorage 里，不需要问后端。
-   */
+  /** 云同步的总开关是否打开。关掉后自动同步与轮询都不跑。 */
+  private isOn(): boolean {
+    return this.config.value.enabled;
+  }
+
+  /** 还没同步过时状态行该显示什么（配好了就不该再出现「点测试连接开始」）。 */
+  private idleMessage(): string {
+    if (!this.config.value.enabled) return "云同步已关闭";
+    if (this.config.value.token.length === 0) return "点「测试连接」开始";
+    return "还没同步过";
+  }
+
   private ensureTarget(): SyncTarget | null {
-    const { target, error } = resolveSyncTarget(this.config.value);
+    const { target, error } = resolveSyncTarget(this.config.value, this.apiBase);
     if (!target) {
       this.setStatus("error", error ?? "同步配置不完整");
       return null;
     }
     return target;
-  }
-
-  private createClient(target: SyncTarget): SyncClient {
-    return new SyncClient({ target });
   }
 
   private setStatus(phase: SyncStatus["phase"], message: string): void {
@@ -253,7 +458,54 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * 配置变了。
+   *
+   * 关键的一条：**总开关一关，内存里的同步状态就立刻清干净**——冲突提示、
+   * 待裁决、错误信息、排队中的防抖上传。不然会出现「云同步都关了，侧边栏还在
+   * 提示有待处理冲突」这种自相矛盾的状态。
+   *
+   * 注意这里清的是**内存状态**：盘上的 `quiz_app_sync_meta`（「上次同步到哪」的
+   * 基准线）与 mtime 都留着——它们是下次打开同步时判断「谁改过」的依据，删掉
+   * 只会让下次同步把一切都当成没同步过。要彻底忘掉云端用「清空配置 / 断开云端」，
+   * 那条路（`forgetGist`）会连记账一起清掉。
+   *
+   * 重新打开时按「打开页面」的规格对一次账：冲突如果还在，会重新报出来。
+   */
+  private onConfigChanged(config: SyncConfig): void {
+    if (!config.enabled) {
+      this.clearDisabledState();
+      return;
+    }
+
+    // 之前是关着的（状态还停在 disabled）→ 这是「重新打开」，先对一次账
+    if (this.status.phase !== "disabled") return;
+    this.setStatus("idle", this.idleMessage());
+    if (config.token.length > 0 && config.autoSync) void this.sync();
+  }
+
+  /** 关掉总开关：把内存里的同步状态清空（盘上的基准线不动）。 */
+  private clearDisabledState(): void {
+    if (this.pushTimer !== null) {
+      clearTimeout(this.pushTimer);
+      this.pushTimer = null;
+    }
+    this.resolutions.clear();
+    this.lastConflictSignature = "";
+    this.lastErrorSignature = "";
+
+    this.status = {
+      phase: "disabled",
+      message: "云同步已关闭",
+      at: Date.now(),
+      remoteCount: 0,
+      remoteBanks: 0,
+      conflicts: [],
+    };
+  }
+
   private maybeCheckOnFocus(): void {
+    if (!this.isOn()) return;
     if (!this.config.value.autoSync) return;
     const now = Date.now();
     if (now - this.lastFocusCheck < SYNC_FOCUS_THROTTLE_MS) return;
@@ -271,7 +523,52 @@ export class SyncEngine {
     return task;
   }
 
+  /** 收集本地文件，顺便清掉已删除键留下的 mtime。 */
+  private collectLocal(): CollectedState {
+    pruneStaleMtimes();
+    return collectLocalState(mtimeOf);
+  }
+
+  /**
+   * 把 Gitee 的文件内容解成 `RemoteFile`。
+   *
+   * 哈希算在**解码后的内容**上，不是压缩后的字符串上——因为要和本地快照的
+   * `stableHash` 比，两侧必须是同一套口径（不然「内容其实一样」永远比不出来，
+   * 就会退化成只看 mtime，而 mtime 会把「应用启动时规范化了配置」误判成改动）。
+   *
+   * 解不出来的文件（不是我们的格式）回落到对原始字符串取哈希：那种文件本来就
+   * 只该被跳过，哈希只用来判断「云端这份变没变」。
+   */
+  private async readRemoteFiles(
+    files: Map<string, string>,
+  ): Promise<RemoteFile[]> {
+    const result: RemoteFile[] = [];
+    for (const [name, content] of files) {
+      const json = await decodePayload(content);
+      let hash: string;
+      if (json === null) {
+        hash = await sha1Hex(content);
+      } else {
+        try {
+          hash = stableHash(JSON.parse(json));
+        } catch {
+          hash = await sha1Hex(content);
+        }
+      }
+      result.push({ name, hash, json });
+    }
+    result.sort((a, b) => (a.name < b.name ? -1 : 1));
+    return result;
+  }
+
   private async runOnce(mode: SyncMode): Promise<SyncOutcome> {
+    // 总开关关着就什么都不做。别指望调用方都记得判断：`online` 事件、
+    // 组件里的按钮、还有关开关那一瞬间已经排上队的防抖任务都会走到这里。
+    if (!this.isOn()) {
+      this.setStatus("disabled", "云同步已关闭");
+      return IDLE_OUTCOME;
+    }
+
     this.setStatus(
       "syncing",
       mode === "merge" ? "正在同步…" : mode === "push" ? "正在上传…" : "正在下载…",
@@ -281,292 +578,226 @@ export class SyncEngine {
       const target = this.ensureTarget();
       if (!target) return IDLE_OUTCOME;
 
-      const client = this.createClient(target);
-      const remote = await client.listRows();
-      const local = collectLocalEntries();
-      const meta = loadSyncMeta();
+      const client = new GiteeClient(target);
+      const local = this.collectLocal();
 
-      // ── 首次同步：两边都有数据时绝不猜 ──
-      if (!meta.bootstrapped && local.length > 0 && remote.length > 0) {
-        return await this.bootstrap(client, local, remote);
+      // ── 还没有云端：建一条，把本地推上去 ──
+      if (!client.id) {
+        if (local.banks.size === 0 && !local.generalHasEdits) {
+          this.setStatus("idle", "本地还没有题库，导入一份再同步");
+          return IDLE_OUTCOME;
+        }
+        const files = filesOfState(local);
+        const gist = await client.createGist(await this.encodeAll(files));
+        this.config.update({ gistId: gist.id, gistUrl: gist.htmlUrl });
+        saveSyncMeta(baselineMeta(local, gist.updatedAt));
+        const outcome: SyncOutcome = {
+          ...IDLE_OUTCOME,
+          pushed: local.banks.size,
+        };
+        this.finishStatus(outcome, gist.files.size, local.banks.size);
+        this.emit({
+          kind: "synced",
+          message: "已把本地数据备份到云端",
+          result: { pushed: outcome.pushed, pulled: 0 },
+        });
+        return outcome;
       }
 
-      const plan = buildSyncPlan({ local, remote, meta });
-      return await this.execute(client, plan, local, remote, mode);
+      const gist = await client.getGist();
+      if (!gist) {
+        this.setStatus(
+          "error",
+          "云端那条 Gist 不见了（被删了，或令牌换了账号）。在「更多操作」里点「重建云端」新建一条并重传本地数据。",
+        );
+        return IDLE_OUTCOME;
+      }
+      // 老版本只存过 id，顺手把网页地址补上（避免自己拼用户名拼错）
+      if (!this.config.value.gistUrl && gist.htmlUrl) {
+        this.config.update({ gistUrl: gist.htmlUrl });
+      }
+
+      const remote = buildRemoteState(await this.readRemoteFiles(gist.files));
+      const meta = loadSyncMeta();
+
+      let plan =
+        mode === "push"
+          ? forcePushPlan(local, remote, meta)
+          : mode === "pull"
+            ? forcePullPlan(local, remote, meta)
+            : buildSyncPlan({ local, remote, meta });
+
+      // ── 冲突裁决 ──
+      //
+      // 只要还有**没裁决**的冲突，这一轮就什么都不做：不拉、不推、不改本地
+      // （所以也不会整页刷新），只把冲突摆到面板上问用户。
+      // 早期版本会「冲突的题库不动、其余照常同步」，于是拉到别的题库之后
+      // 立刻 `location.reload()`——冲突提示跟着内存状态一起没了，用户看到的
+      // 就是「还没选就自己刷过去了」。宁可停一轮，也不能让用户的选择落空。
+      if (mode === "merge" && plan.conflicts.length > 0) {
+        // 把用户已经答过的那些裁决应用上去；用户没答过的仍然是 conflict
+        plan = applyResolution(plan, this.resolutions);
+        if (plan.conflicts.length > 0) {
+          this.reportConflict(plan.conflicts, gist.files.size, remote.banks.size);
+          // 裁决表**留着**：用户对「题库一」的选择不能因为这一轮又冒出
+          // 「题库二」的新冲突而作废，等他答完题库二，两者一起生效。
+          return {
+            ...IDLE_OUTCOME,
+            conflicts: plan.conflicts.map((conflict) => conflict.hash),
+          };
+        }
+      }
+
+      const outcome = await this.execute({
+        client,
+        plan,
+        remote,
+        meta,
+        remoteUpdatedAt: gist.updatedAt,
+        remoteFileCount: gist.files.size,
+      });
+
+      // 这一轮真的执行完了，裁决才算用掉。留着的话，同一个题库以后**再次**
+      // 两边都改过时会被上一次的答案悄悄裁决掉——用户没见过那次冲突。
+      this.resolutions.clear();
+      return outcome;
     } catch (error) {
       return this.fail(error);
     }
   }
 
-  /**
-   * 首次同步：决定「以哪一边为准」，并把它走完。
-   *
-   * - `same`       → 两边内容本来就一致，只写下基准线
-   * - `pullRemote` → 云端为准：先删掉本地独有的行，再把云端整份拉下来
-   * - `pushLocal`  → 本地为准：先删掉云端独有的行，再把本地整份推上去
-   * - `ask`        → 两边都有数据且内容不同，交给用户拍板（这一轮什么都不做）
-   *
-   * 这里刻意不复用增量流程：增量是「逐行比时间」，首次同步根本没有基准线可比，
-   * 硬套只会绕出一堆特例。
-   */
-  private async bootstrap(
-    client: SyncClient,
-    local: LocalEntry[],
-    remote: RemoteRowMeta[],
-  ): Promise<SyncOutcome> {
-    const decision = await this.decideFirstSync(client, local, remote);
-
-    if (decision === "ask") {
-      const plan = buildSyncPlan({
-        local,
-        remote,
-        meta: { lastSyncedAt: 0, bootstrapped: false, rows: {} },
-      });
-      this.reportConflict(plan.conflicts, remote);
-      return { ...IDLE_OUTCOME, conflicts: plan.conflicts };
+  /** 把本地文件编码成 Gitee 的文件表。 */
+  private async encodeAll(
+    local: readonly LocalFile[],
+  ): Promise<Record<string, string>> {
+    const result: Record<string, string> = {};
+    for (const file of local) {
+      result[file.name] = await encodePayload(file.snapshot);
     }
-
-    if (decision === "same") {
-      saveSyncMeta(baselineMeta(local, remote));
-      this.setStatus("idle", "云端与本地一致");
-      return IDLE_OUTCOME;
-    }
-
-    const pullByRemote = decision === "pullRemote";
-    const localValues = new Map(local.map((entry) => [entry.id, entry.value]));
-    const remoteIds = new Set(remote.map((row) => row.id));
-    const keepLocalIds = pullByRemote ? remoteIds : new Set(localValues.keys());
-
-    // 云端为准：把云端整份拉下来（本地独有的行随后删掉）
-    // 本地为准：云端独有的行推上去，云端多出来的行删掉
-    const pullIds = remote
-      .filter((row) => pullByRemote || !localValues.has(row.id))
-      .map((row) => row.id);
-    const pushEntries = local.filter((entry) => !remoteIds.has(entry.id));
-    const localDeletes = local.filter((entry) => !keepLocalIds.has(entry.id));
-    const remoteDeletes = pullByRemote
-      ? []
-      : remote.filter((row) => !localValues.has(row.id)).map((row) => row.id);
-
-    const outcome = await this.transfer(client, {
-      pullIds,
-      pushEntries,
-      localDeletes,
-      remoteDeletes,
-    });
-
-    this.setStatus(
-      "idle",
-      `首次同步完成 · 上传 ${outcome.pushed} 项 · 下载 ${outcome.pulled} 项`,
-    );
-    this.emit({
-      kind: "synced",
-      message: pullByRemote ? "已从云端恢复" : "已把本地数据备份到云端",
-      result: { pushed: outcome.pushed, pulled: outcome.pulled },
-    });
-    if (outcome.changedLocal) this.reloadForAppliedChanges();
-    return outcome;
+    return result;
   }
 
   /**
-   * 首次同步的处置。
+   * 执行计划。顺序固定：**先拉取 → 再删云端垃圾 → 最后按「拉取之后」的本地
+   * 状态重建分片上传**。
    *
-   * - 只有一边有数据 → 按那一边走（不打扰用户）
-   * - 两边数据完全一致 → 只补上基准线，什么也不传
-   * - 两边都有且不一致 → 交给用户决定
+   * 最后一步的顺序是关键：推上去的必须是应用完拉取之后重新收集的内容。
+   * 拿同步开始时那份旧快照去推，就会把刚拉下来的东西又推回旧版本
+   * （线上踩过：新设备拿空壳 general 覆盖了云端的题库列表）。
    */
-  private async decideFirstSync(
-    client: SyncClient,
-    local: LocalEntry[],
-    remote: RemoteRowMeta[],
-  ): Promise<"pushLocal" | "pullRemote" | "same" | "ask"> {
-    const latestLocalAt = local.reduce(
-      (max, entry) => Math.max(max, entry.localAt),
-      0,
-    );
-
-    // 只有行数和 id 都对得上时才值得比内容
-    const remoteById = new Map(remote.map((row) => [row.id, row]));
-    let allMatch = local.length === remote.length;
-    if (allMatch) {
-      const ids = local
-        .filter((entry) => remoteById.has(entry.id))
-        .map((entry) => entry.id);
-      const payloads = await client.fetchRows(ids);
-      for (const entry of local) {
-        const remoteValue = payloads.get(entry.id);
-        if (remoteValue === undefined || !sameJson(remoteValue, entry.value)) {
-          allMatch = false;
-          break;
-        }
-      }
-    }
-
-    const decision = decideBootstrap({
-      hasLocalData: local.length > 0,
-      hasRemoteData: remote.length > 0,
-      localMatchesRemote: allMatch,
-      latestLocalAt,
-    });
-
-    return decision === null ? "same" : decision;
-  }
-
-  /**
-   * 执行增量计划。
-   *
-   * 冲突（同一行两边都改过）在没有用户裁决时原地不动，其余行照常同步。
-   * 「保留云端」要把那一行的本地基准线抹掉，否则拉下来之后它又会因为
-   * 「本地比基准新」而被判成待上传。
-   */
-  private async execute(
-    client: SyncClient,
-    plan: SyncPlan,
-    local: LocalEntry[],
-    remote: RemoteRowMeta[],
-    mode: SyncMode,
-  ): Promise<SyncOutcome> {
-    let conflicts = plan.conflicts;
-    let pullIds = [...plan.pullNew, ...plan.pullUpdated];
-    const pushEntries = [...plan.pushNew, ...plan.pushUpdated];
-
-    if (mode === "merge" && conflicts.length > 0) {
-      const resolution = this.conflictResolution;
-      this.conflictResolution = null;
-
-      if (resolution === null) {
-        this.reportConflict(conflicts, remote);
-        // 冲突的行原封不动，其余行照常同步
-      } else if (resolution === "keepLocal") {
-        pushEntries.push(
-          ...local.filter((entry) => conflicts.includes(entry.id)),
-        );
-        conflicts = [];
-      } else {
-        pullIds = [...pullIds, ...conflicts];
-        const meta = loadSyncMeta();
-        for (const id of conflicts) delete meta.rows[id];
-        saveSyncMeta(meta);
-        conflicts = [];
-      }
-    } else {
-      conflicts = [];
-    }
-
-    const outcome = await this.transfer(client, {
-      pullIds: mode === "push" ? [] : pullIds,
-      pushEntries: mode === "pull" ? [] : pushEntries,
-      localDeletes: [],
-      remoteDeletes: mode === "pull" ? [] : plan.orphans,
-    });
-
-    outcome.conflicts = conflicts;
-    this.finishStatus(outcome, remote);
-    if (outcome.changedLocal) this.reloadForAppliedChanges();
-    return outcome;
-  }
-
-  /**
-   * 真正跑网络动作。顺序固定：先下载 → 再删除 → 最后上传。
-   *
-   * 「上传的 payload」必须在下载之前就定下来：下载会写 localStorage，
-   * 那些写入只会影响「本地修改时间」，绝不能污染这一轮要推上去的内容。
-   */
-  private async transfer(
-    client: SyncClient,
-    request: {
-      pullIds: string[];
-      pushEntries: LocalEntry[];
-      /** 本地要删掉的行（云端为准时，本地独有的那些） */
-      localDeletes: LocalEntry[];
-      /** 云端要删掉的行（本地为准时，云端独有的那些） */
-      remoteDeletes: string[];
-    },
-  ): Promise<SyncOutcome> {
-    const outcome: SyncOutcome = { ...IDLE_OUTCOME };
-    const meta = loadSyncMeta();
+  private async execute(ctx: {
+    client: GiteeClient;
+    plan: SyncPlan;
+    remote: RemoteState;
+    meta: SyncMeta;
+    remoteUpdatedAt: number;
+    remoteFileCount: number;
+  }): Promise<SyncOutcome> {
+    const { client, plan, remote, meta } = ctx;
     const now = Date.now();
-    const pullIds = [...new Set(request.pullIds)];
+    // 走到这里说明**所有**冲突都已裁决（没裁决的在上一步就 return 了），
+    // 所以不会出现「一边有冲突一边还在写数据」的情况。
+    const outcome: SyncOutcome = { ...IDLE_OUTCOME };
 
-    // ── 删除云端独有的行（本地为准时）──
-    if (request.remoteDeletes.length > 0) {
-      await client.deleteRows(request.remoteDeletes);
-      for (const id of request.remoteDeletes) {
-        delete meta.rows[id];
-        removeLocal(`quiz_app_sync_mtime:${id}`);
-      }
+    // ── ① general 先落地，再落题库 ──
+    //
+    // 顺序不能反：题库列表在 general 里，先落题库会出现「内容在、列表里没有」
+    // 的中间态（侧边栏是题库的唯一入口，那个中间态看起来就像丢数据）。
+    if (plan.generalChangedLocal) {
+      applyRemoteValue(STORAGE_KEY_GENERAL, JSON.stringify(plan.general));
+      outcome.changedLocal = true;
     }
 
-    // ── 下载 ──
-    if (pullIds.length > 0) {
-      // 单独取一次远端元信息：调用方手里的那份可能已经过期
-      const remoteRows = await client.listRows();
-      const remoteById = new Map(remoteRows.map((row) => [row.id, row]));
-      const payloads = await client.fetchRows(pullIds);
-
-      for (const id of pullIds) {
-        const payload = payloads.get(id);
-        if (payload === undefined) continue;
-        const remoteUpdatedAt = remoteById.get(id)?.updatedAt ?? now;
-        if (sameJson(payload, readLocal(id))) {
-          // 内容一样：只补元数据，不写盘也不触发刷新
-          meta.rows[id] = { remoteUpdatedAt, syncedAt: now };
-          continue;
-        }
-        applyRemoteRow(id, payload);
-        meta.rows[id] = { remoteUpdatedAt, syncedAt: now };
+    for (const action of plan.actions) {
+      if (action.verdict === "pull") {
+        const bank = remote.banks.get(action.hash);
+        if (!bank) continue;
+        writeBankLocally(bank);
         outcome.pulled += 1;
+        outcome.changedLocal = true;
+      } else if (action.verdict === "deleteLocal") {
+        removeBankLocally(action.hash);
         outcome.changedLocal = true;
       }
     }
 
-    // ── 删掉本地独有的行（云端为准时）──
-    for (const entry of request.localDeletes) {
-      removeLocal(entry.id);
-      removeLocal(`quiz_app_sync_mtime:${entry.id}`);
-      delete meta.rows[entry.id];
+    // ── ② 回收云端的垃圾文件（空分片 / 旧格式残留）──
+    let fileCount = ctx.remoteFileCount;
+    if (plan.deleteRemoteFiles.length > 0) {
+      await client.deleteFiles(plan.deleteRemoteFiles);
+      fileCount -= plan.deleteRemoteFiles.length;
     }
 
-    // ── 上传 ──
-    if (request.pushEntries.length > 0) {
-      const serverAt = await client.upsertRows(request.pushEntries);
-      // 批量 upsert 在同一个事务里跑，所有行的 updated_at 是同一个值；
-      // 回执里没带上时间戳的行用这个批量时间兜底，避免退化成「本机现在」——
-      // 那会让这一行在下一轮被误判成「云端又改过」。
-      const batchAt = serverAt.size > 0 ? Math.max(...serverAt.values()) : now;
-      for (const entry of request.pushEntries) {
-        meta.rows[entry.id] = {
-          remoteUpdatedAt: serverAt.get(entry.id) ?? batchAt,
-          syncedAt: now,
-        };
-        outcome.pushed += 1;
+    // ── ③ 按「拉取之后」的本地状态重建要上传的分片 ──
+    const after = this.collectLocal();
+    const uploads: Record<string, string> = {};
+    for (const index of plan.pushShards) {
+      const name = shardFileName(index);
+      const banks = [...after.banks.values()].filter((bank) => bank.shard === index);
+      if (banks.length === 0) continue;
+      const snapshot = buildShardSnapshot(banks);
+      const remoteFile = remote.files.find((file) => file.name === name);
+      // 内容没变就不传（同片的别的题库可能刚好把内容凑回原样）
+      if (remoteFile !== undefined && stableHash(snapshot) === remoteFile.hash) {
+        continue;
       }
+      uploads[name] = await encodePayload(snapshot);
+    }
+    if (plan.generalPush) {
+      uploads[GIST_GENERAL_FILE] = await encodePayload(after.general);
     }
 
-    meta.lastSyncedAt = now;
-    meta.bootstrapped = true;
-    saveSyncMeta(meta);
+    if (Object.keys(uploads).length > 0) {
+      const gist = await client.updateFiles(uploads);
+      fileCount = gist.files.size;
+    }
+
+    // ── ④ 记基准线 ──
+    saveSyncMeta(
+      nextMeta({
+        previous: meta,
+        state: after,
+        plan,
+        remoteUpdatedAt: ctx.remoteUpdatedAt,
+        now,
+      }),
+    );
+
+    outcome.pushed = plan.actions.filter(
+      (action) =>
+        action.verdict === "push" && settledThisRound(plan, action),
+    ).length;
+
+    this.finishStatus(outcome, fileCount, remoteBankCount(plan));
+    if (outcome.changedLocal) this.reloadForAppliedChanges();
     return outcome;
   }
 
-  private finishStatus(outcome: SyncOutcome, remote: RemoteRowMeta[]): void {
-    if (outcome.conflicts.length > 0) {
-      this.reportConflict(outcome.conflicts, remote);
-      return;
-    }
+  private finishStatus(
+    outcome: SyncOutcome,
+    remoteCount: number,
+    remoteBanks: number,
+  ): void {
+    if (outcome.conflicts.length > 0) return; // reportConflict 已经写过状态
+
+    // 走到这里说明这一轮正常收尾了：按真实数据重算「还有没有没推上去的东西」
+    this.pendingChanges = this.computePendingChanges();
 
     const summary =
       outcome.pushed === 0 && outcome.pulled === 0
         ? "已是最新"
-        : `上传 ${outcome.pushed} 项 · 下载 ${outcome.pulled} 项`;
+        : `上传 ${outcome.pushed} · 下载 ${outcome.pulled}`;
 
     this.status = {
       phase: "idle",
       message: summary,
       at: Date.now(),
-      remoteCount: this.status.remoteCount,
+      remoteCount,
+      remoteBanks,
       conflicts: [],
     };
+    this.lastConflictSignature = "";
+    this.lastErrorSignature = "";
 
     if (outcome.pushed > 0 || outcome.pulled > 0) {
       this.emit({
@@ -577,32 +808,45 @@ export class SyncEngine {
     }
   }
 
-  /** 进入冲突状态：冲突的那一行谁都不动，等用户在设置面板里选择。 */
-  private reportConflict(ids: string[], remote: RemoteRowMeta[]): void {
-    const remoteById = new Map(remote.map((row) => [row.id, row]));
-    const meta = loadSyncMeta();
+  /**
+   * 进入冲突状态：冲突的题库谁都不动，等用户在设置面板里选择。
+   *
+   * 冲突的单位是**题库**（不是分片文件），提示里直接写题库名。
+   * 同一个冲突反复出现时不重复弹提示——轮询每 3 分钟一次，会刷屏。
+   */
+  private reportConflict(
+    conflicts: readonly BankAction[],
+    remoteCount: number,
+    remoteBanks: number,
+  ): void {
+    const signature = conflicts
+      .map((conflict) => conflict.hash)
+      .sort()
+      .join(",");
+
     this.status = {
       phase: "conflict",
-      message: `${ids.length} 项两边都改过，需要你选择保留哪一边`,
+      message: `${conflicts.length} 个题库两边都改过，需要你选择保留哪一边`,
       at: Date.now(),
-      remoteCount: remote.length,
-      conflicts: ids.map((id) => ({
-        id,
-        localAt: meta.rows[id]?.syncedAt ?? 0,
-        remoteAt: remoteById.get(id)?.updatedAt ?? 0,
-      })),
+      remoteCount,
+      remoteBanks,
+      conflicts: conflicts.map(toConflict),
     };
-    this.emit({
-      kind: "conflict",
-      message: `${ids.length} 项内容两边都改过，请在设置里选择保留哪一边`,
-    });
+
+    if (signature !== this.lastConflictSignature) {
+      this.lastConflictSignature = signature;
+      this.emit({
+        kind: "conflict",
+        message: `${conflicts.length} 个题库两边都改过，请在设置里选择保留哪一边`,
+      });
+    }
   }
 
   private fail(error: unknown): SyncOutcome {
     const offline =
       typeof navigator !== "undefined" && navigator.onLine === false;
     const message =
-      error instanceof SyncError
+      error instanceof GiteeError
         ? error.message
         : error instanceof Error
           ? error.message
@@ -614,9 +858,44 @@ export class SyncEngine {
       message: offline ? "当前离线，联网后会自动重试" : message,
       at: Date.now(),
     };
-    if (!offline) this.emit({ kind: "error", message });
+    if (!offline && message !== this.lastErrorSignature) {
+      this.lastErrorSignature = message;
+      this.emit({ kind: "error", message });
+    }
     console.warn("Sync failed:", error);
     return IDLE_OUTCOME;
+  }
+
+  /**
+   * 本地和「上次同步成功的基准」比，有没有对不上的地方。
+   *
+   * 比的是**内容哈希**而不是 mtime：应用启动时会把配置 / 进度原样重写一遍，
+   * mtime 永远是新鲜的，只看 mtime 会让指示点一直黄着。
+   * 只在同步收尾时调用（要遍历一遍本地题库，不适合每次写入都跑）。
+   */
+  private computePendingChanges(): boolean {
+    const meta = loadSyncMeta();
+    const local = collectLocalState(mtimeOf);
+
+    // 从来没同步成功过 → 当然还没同步
+    if (meta.generalBaseline === null) return true;
+    if (stableHash(local.general) !== stableHash(meta.generalBaseline)) return true;
+
+    const seen = new Set<string>();
+    for (const bank of local.banks.values()) {
+      const key = bankRowKey(bank.hash);
+      seen.add(key);
+      const row = meta.rows[key];
+      // 没有基准 = 这个题库还没上去过；内容不一样 = 同步之后又改了
+      if (row === undefined || row.remoteHash !== bank.contentHash) return true;
+    }
+
+    // 记账里还有、本地已经没有的题库 = 删除还没推到云端
+    for (const key of Object.keys(meta.rows)) {
+      if (key.startsWith("bank:") && !seen.has(key)) return true;
+    }
+
+    return false;
   }
 
   /**
@@ -630,54 +909,192 @@ export class SyncEngine {
   }
 }
 
-/** 把「本地就是云端」记下来，作为后续冲突检测的基准线。 */
-export function baselineMeta(
-  local: LocalEntry[],
-  remote: RemoteRowMeta[],
-): SyncMeta {
-  const meta = loadSyncMeta();
-  const remoteById = new Map(remote.map((row) => [row.id, row]));
-  const now = Date.now();
-  for (const entry of local) {
-    meta.rows[entry.id] = {
-      remoteUpdatedAt: remoteById.get(entry.id)?.updatedAt ?? 0,
-      syncedAt: now,
-    };
-  }
-  meta.lastSyncedAt = now;
-  meta.bootstrapped = true;
-  return meta;
+/**
+ * 同步之后云端一共有几个题库。
+ *
+ * 不能直接用本地题库数：被冲突冻住的分片里，「本地已删、云端还在」的题库
+ * 这一轮不会从云端消失，直接数本地会少报。
+ */
+function remoteBankCount(plan: SyncPlan): number {
+  return plan.actions.filter((action) => {
+    if (action.verdict === "deleteRemote") {
+      // 没能删掉（分片被冲突冻住）→ 云端那份还在
+      return !settledThisRound(plan, action);
+    }
+    if (action.verdict === "deleteLocal") return false; // 云端本来就没有
+    return true;
+  }).length;
 }
 
 /**
- * 比较两段 JSON 是否等价。
+ * 这个题库这一轮真的对齐了吗？
  *
- * 不能直接比 `JSON.stringify(JSON.parse(x))`：`JSON.parse` 保留键的出现顺序，
- * 所以「同一份数据、键序不同」会被判成不同——那会让同步误以为内容变了，
- * 白白多传一遍、还会多刷新一次页面。这里递归排序键名后再比。
+ * 「要上传」和「真的传上去了」不是一回事：含未裁决冲突的分片整体冻结，
+ * 同一片里别的题库这一轮也就没上去——这时候绝不能给它写新基准线，
+ * 否则下一次同步会把它误判成「云端改过」而把本地改动悄悄拉掉。
  */
-export function sameJson(a: string | null, b: string | null): boolean {
-  if (a === null || b === null) return a === b;
-  if (a === b) return true;
-  try {
-    return canonicalJson(JSON.parse(a)) === canonicalJson(JSON.parse(b));
-  } catch {
-    return false;
+function settledThisRound(plan: SyncPlan, action: BankAction): boolean {
+  switch (action.verdict) {
+    case "conflict":
+      return false;
+    case "push":
+    case "deleteRemote":
+      return plan.pushShards.includes(shardIndexOf(action.hash));
+    default:
+      return true;
   }
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null";
+/**
+ * `BankAction` → 给 UI 看的冲突条目。
+ *
+ * 冲突的单位是题库，所以提示里直接写题库名——用户看到 `banks-3.json`
+ * 根本不知道自己在选什么。
+ */
+function toConflict(action: BankAction): SyncConflict {
+  return {
+    hash: action.hash,
+    name: action.name,
+    detail: "这个题库本机和云端都改过",
+    localAt: action.localAt,
+    remoteHash: action.remoteHash ?? "",
+  };
+}
+
+// ── 落盘 ────────────────────────────────────────────────────────────────────
+
+/**
+ * 把一个题库写进 localStorage（拉取用）。
+ *
+ * 拉取**不碰 mtime**（见 `applyRemoteValue`）：这份内容来自云端，
+ * 不是这台设备改的，记成「本地改动」会让下一次同步白推一遍甚至撞成冲突。
+ */
+function writeBankLocally(bank: {
+  hash: string;
+  snapshot: { questions: unknown[]; state?: unknown };
+}): void {
+  const questionsKey = `quiz_app_questions_${bank.hash}`;
+  const stateKey = `quiz_app_state_${bank.hash}`;
+
+  applyRemoteValue(questionsKey, JSON.stringify(bank.snapshot.questions));
+  if (bank.snapshot.state === undefined) {
+    // 云端这份没有进度 = 就是没有进度（跟着云端走，别留一份孤儿进度）
+    removeLocal(stateKey);
+  } else {
+    applyRemoteValue(stateKey, JSON.stringify(bank.snapshot.state));
   }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  clearMtime(questionsKey);
+  clearMtime(stateKey);
+}
+
+/** 删掉本地一个题库的题目与进度。 */
+function removeBankLocally(hash: string): void {
+  removeLocal(`quiz_app_questions_${hash}`);
+  removeLocal(`quiz_app_state_${hash}`);
+  clearMtime(`quiz_app_questions_${hash}`);
+  clearMtime(`quiz_app_state_${hash}`);
+}
+
+/** 「本地就是云端」时的基准线（第一次创建云端之后写一次）。 */
+function baselineMeta(state: CollectedState, remoteUpdatedAt: number): SyncMeta {
+  const now = Date.now();
+  const rows: Record<string, SyncRowMeta> = {};
+  for (const bank of state.banks.values()) {
+    rows[bankRowKey(bank.hash)] = {
+      remoteHash: bank.contentHash,
+      syncedAt: now,
+      remoteUpdatedAt,
+      shard: bank.shard,
+    };
   }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
-  return `{${keys
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
+  return {
+    lastSyncedAt: now,
+    bootstrapped: true,
+    rows,
+    generalBaseline: state.general,
+  };
+}
+
+/**
+ * 同步成功之后更新基准线。
+ *
+ * 只给「这次真的对齐了的」题库写新基准：冲突中的题库保持旧基准，
+ * 否则下一次同步会误判成「云端改过」而把本地改动悄悄拉掉。
+ * 已经删掉的题库连同它的行一起清掉。
+ */
+function nextMeta(params: {
+  previous: SyncMeta;
+  state: CollectedState;
+  plan: SyncPlan;
+  remoteUpdatedAt: number;
+  now: number;
+}): SyncMeta {
+  const { previous, state, plan, remoteUpdatedAt, now } = params;
+  const rows: Record<string, SyncRowMeta> = { ...previous.rows };
+
+  for (const action of plan.actions) {
+    const key = bankRowKey(action.hash);
+    const bank = state.banks.get(action.hash);
+    switch (action.verdict) {
+      case "pull":
+      case "push":
+        if (!settledThisRound(plan, action)) break; // 分片被冲突冻住了，保持旧基准
+        if (bank === undefined) {
+          delete rows[key];
+          break;
+        }
+        rows[key] = {
+          remoteHash: bank.contentHash,
+          syncedAt: now,
+          remoteUpdatedAt,
+          shard: bank.shard,
+        };
+        break;
+      case "skip":
+        // 两边内容一样，基准线怎么写都不会错
+        if (bank !== undefined) {
+          rows[key] = {
+            remoteHash: bank.contentHash,
+            syncedAt: now,
+            remoteUpdatedAt,
+            shard: bank.shard,
+          };
+        }
+        break;
+      case "deleteLocal":
+      case "deleteRemote":
+        if (!settledThisRound(plan, action)) break;
+        delete rows[key];
+        break;
+      case "conflict":
+        // 保持旧基准，等用户裁决
+        break;
+    }
+  }
+
+  // 本地已经不存在的题库（以及老格式遗留的分片行）不再留着
+  for (const key of Object.keys(rows)) {
+    if (key === GIST_GENERAL_FILE) {
+      delete rows[key];
+      continue;
+    }
+    if (!key.startsWith("bank:")) {
+      // 老格式（banks-N.json）的行：新格式写完之后就没用了
+      delete rows[key];
+      continue;
+    }
+    const hash = key.slice("bank:".length);
+    if (!state.banks.has(hash) && !plan.conflicts.some((c) => c.hash === hash)) {
+      delete rows[key];
+    }
+  }
+
+  return {
+    lastSyncedAt: now,
+    bootstrapped: true,
+    rows,
+    generalBaseline: state.general,
+  };
 }
 
 /** 应用级单例。 */

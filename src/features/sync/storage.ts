@@ -1,38 +1,31 @@
 /**
- * 同步的存储层：收集本地快照、读写同步元数据、包装 localStorage 变更通知。
+ * 同步的存储层：感知本地改动、记录每份文件的同步元数据。
  *
  * 这里有一个刻意的设计：**用包装 `localStorage.setItem / removeItem` 的方式来感知
  * 本地改动**，而不是在 `saveState` 等出口逐个埋点。理由是本地写入的出口很分散
  * （进度、设置、题库导入 / 删除 / 重命名、题库列表顺序……），逐个改既容易漏，
  * 也会把同步逻辑渗进做题流。包装一层以后，任何写入都会自动进同步队列。
  *
- * 包装是幂等的；`writeLocal` 写的所有内容都走原始方法，不会触发通知——
+ * 包装是幂等的；`writeLocal` / `removeLocal` 走原始方法，不会触发通知——
  * 否则「拉取云端」会立刻被自己判定成本地改动，来回弹。
  */
 
+import { STORAGE_KEY_GENERAL, STORAGE_PREFIX_QUESTIONS, STORAGE_PREFIX_STATE } from "@/config";
 import {
-  STORAGE_KEY_GENERAL,
-  STORAGE_PREFIX_QUESTIONS,
-  STORAGE_PREFIX_STATE,
-} from "@/config";
-import {
+  STORAGE_KEY_SYNC_META,
   SYNC_STORAGE_PREFIX,
   emptySyncMeta,
+  normalizeGeneralOrNull,
   type SyncMeta,
   type SyncRowMeta,
 } from "./types";
 
-/** 一行本地快照。`value` 是 localStorage 里的原始字符串。 */
-export interface LocalEntry {
-  id: string;
-  value: string;
-  /** 这一行的本地修改时间（毫秒），来自同步元数据；没有记录就是 0 */
-  localAt: number;
-}
+/** `quiz_app_sync_mtime:<键>` 前缀：记录某个可同步键最后一次本地改动的时间。 */
+const MTIME_PREFIX = "quiz_app_sync_mtime:";
 
 /** 一个可以被同步的键：应用配置、题库内容、题库进度。 */
 export function isSyncableKey(key: string): boolean {
-  // 同步自己的键（配置里装着 key、元数据是本地状态）永远不进云端
+  // 同步自己的键（配置里装着令牌、元数据是本地状态）永远不进云端
   if (key.startsWith(SYNC_STORAGE_PREFIX)) return false;
 
   if (key === STORAGE_KEY_GENERAL) return true;
@@ -76,14 +69,14 @@ export function installStorageHook(): void {
   localStorage.setItem = (key: string, value: string) => {
     originalSetItem(key, value);
     if (!isSyncableKey(key)) return;
-    touchMtime(key);
+    touchMtime(state, key);
     notify(state, key);
   };
 
   localStorage.removeItem = (key: string) => {
     originalRemoveItem(key);
     if (!isSyncableKey(key)) return;
-    touchMtime(key);
+    touchMtime(state, key);
     notify(state, key);
   };
 }
@@ -91,8 +84,7 @@ export function installStorageHook(): void {
 /** 走原始方法写入（供「拉取云端」使用），不触发本地改动通知。 */
 export function writeLocal(key: string, value: string): void {
   installStorageHook();
-  const write =
-    hookState?.originalSetItem ?? localStorage.setItem.bind(localStorage);
+  const write = hookState?.originalSetItem ?? localStorage.setItem.bind(localStorage);
   write(key, value);
 }
 
@@ -123,12 +115,7 @@ function notify(state: StorageHookState, key: string): void {
   }
 }
 
-// ── 同步元数据 ───────────────────────────────────────────────────────────────
-
-/** 记录每一行的本地修改时间的存储键：`quiz_app_sync_mtime:<key>`。 */
-function mtimeKey(key: string): string {
-  return `quiz_app_sync_mtime:${key}`;
-}
+// ── 本地修改时间（mtime）────────────────────────────────────────────────────
 
 /**
  * 记录一次本地改动的时间。
@@ -137,98 +124,87 @@ function mtimeKey(key: string): string {
  * `syncedAt` 是「上次同步成功」，mtime 是「本地内容最后一次变」。判定
  * 「本地改过没有」要用后者，否则「同步完又改了」会被误判成没改。
  */
-function touchMtime(key: string): void {
-  installStorageHook();
-  const write =
-    hookState?.originalSetItem ?? localStorage.setItem.bind(localStorage);
+function touchMtime(state: StorageHookState | null, key: string): void {
+  const write = state?.originalSetItem ?? localStorage.setItem.bind(localStorage);
   try {
-    write(mtimeKey(key), String(Date.now()));
+    write(MTIME_PREFIX + key, String(Date.now()));
   } catch {
     /* 存不下就算了，最坏情况是这一行漏同步一次 */
   }
 }
 
-function readMtime(key: string): number {
-  const raw = readLocal(mtimeKey(key));
+/** 读某个键最后一次本地改动的时间；没有记录返回 0。 */
+export function mtimeOf(key: string): number {
+  const raw = readLocal(MTIME_PREFIX + key);
   if (raw === null) return 0;
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-/**
- * 收集所有要同步的本地行。
- *
- * 「本地修改时间」优先读 mtime；缺失时（例如这一行是被「拉取云端」写下来的）
- * 回落到元数据里的 `syncedAt`——它和遥控侧的时间对齐，不会误判成「本地改过」。
- * 顺手清掉本地已删行的 mtime，避免 `quiz_app_sync_mtime:*` 无限增长。
- */
-export function collectLocalEntries(): LocalEntry[] {
-  const meta = loadSyncMeta();
-  const entries: LocalEntry[] = [];
-  const seen = new Set<string>();
+/** 清掉某个键的 mtime 记录。 */
+export function clearMtime(key: string): void {
+  removeLocal(MTIME_PREFIX + key);
+}
 
+/** 清理已经不存在于本地的键所留下的 mtime，避免无限增长。 */
+export function pruneStaleMtimes(): void {
+  const present = new Set<string>();
   try {
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
-      if (key === null || !isSyncableKey(key)) continue;
-      const value = localStorage.getItem(key);
-      if (value === null) continue;
-      seen.add(key);
-      const localAt = readMtime(key) || meta.rows[key]?.syncedAt || 0;
-      entries.push({ id: key, value, localAt });
-    }
-  } catch (e) {
-    console.warn("Failed to enumerate localStorage:", e);
-  }
-
-  // 清掉已经消失的行的 mtime
-  const staleMtimes: string[] = [];
-  try {
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      if (key === null) continue;
-      if (!key.startsWith("quiz_app_sync_mtime:")) continue;
-      const target = key.slice("quiz_app_sync_mtime:".length);
-      if (!seen.has(target)) staleMtimes.push(key);
+      if (key !== null && isSyncableKey(key)) present.add(key);
     }
   } catch {
-    /* ignore */
+    return;
   }
-  for (const key of staleMtimes) removeLocal(key);
 
-  entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return entries;
+  const stale: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith(MTIME_PREFIX)) continue;
+      if (!present.has(key.slice(MTIME_PREFIX.length))) stale.push(key);
+    }
+  } catch {
+    return;
+  }
+  for (const key of stale) removeLocal(key);
 }
 
-/** 现在这一轮，本地每一行的修改时间。用于判断「还有没有没推上去的改动」。 */
-export function collectLocalTimestamps(): Record<string, number> {
-  const result: Record<string, number> = {};
-  for (const entry of collectLocalEntries()) {
-    result[entry.id] = entry.localAt;
-  }
-  return result;
-}
+// ── 同步元数据 ───────────────────────────────────────────────────────────────
 
 function normalizeRowMeta(value: unknown): SyncRowMeta | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
-  const raw = value as { remoteUpdatedAt?: unknown; syncedAt?: unknown };
-  const remoteUpdatedAt =
-    typeof raw.remoteUpdatedAt === "number" &&
-    Number.isFinite(raw.remoteUpdatedAt)
-      ? raw.remoteUpdatedAt
-      : 0;
-  const syncedAt =
-    typeof raw.syncedAt === "number" && Number.isFinite(raw.syncedAt)
-      ? raw.syncedAt
-      : 0;
-  return { remoteUpdatedAt, syncedAt };
+  const raw = value as {
+    remoteHash?: unknown;
+    remoteUpdatedAt?: unknown;
+    syncedAt?: unknown;
+    shard?: unknown;
+  };
+  const numberOrZero = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+
+  // 没有 remoteHash 的旧记录作废：那套是按「服务端每行一个 updated_at」记的，
+  // 换到 Gitee 之后无法对应，强行沿用会把每一行都判成「云端改过」。
+  if (typeof raw.remoteHash !== "string" || raw.remoteHash.length === 0) {
+    return null;
+  }
+
+  return {
+    remoteHash: raw.remoteHash,
+    syncedAt: numberOrZero(raw.syncedAt),
+    remoteUpdatedAt: numberOrZero(raw.remoteUpdatedAt),
+    ...(typeof raw.shard === "number" && Number.isInteger(raw.shard)
+      ? { shard: raw.shard }
+      : {}),
+  };
 }
 
 /** 读取同步元数据。 */
 export function loadSyncMeta(): SyncMeta {
-  const raw = readLocal("quiz_app_sync_meta");
+  const raw = readLocal(STORAGE_KEY_SYNC_META);
   if (raw === null) return emptySyncMeta();
 
   try {
@@ -236,6 +212,7 @@ export function loadSyncMeta(): SyncMeta {
       lastSyncedAt?: unknown;
       bootstrapped?: unknown;
       rows?: unknown;
+      generalBaseline?: unknown;
     };
     const rows: Record<string, SyncRowMeta> = {};
     if (
@@ -243,9 +220,9 @@ export function loadSyncMeta(): SyncMeta {
       typeof parsed.rows === "object" &&
       !Array.isArray(parsed.rows)
     ) {
-      for (const [key, value] of Object.entries(parsed.rows)) {
+      for (const [name, value] of Object.entries(parsed.rows)) {
         const meta = normalizeRowMeta(value);
-        if (meta && isSyncableKey(key)) rows[key] = meta;
+        if (meta) rows[name] = meta;
       }
     }
     return {
@@ -256,6 +233,7 @@ export function loadSyncMeta(): SyncMeta {
           : 0,
       bootstrapped: parsed.bootstrapped === true,
       rows,
+      generalBaseline: normalizeGeneralOrNull(parsed.generalBaseline),
     };
   } catch (e) {
     console.warn("Failed to parse sync meta:", e);
@@ -266,30 +244,25 @@ export function loadSyncMeta(): SyncMeta {
 /** 写入同步元数据。 */
 export function saveSyncMeta(meta: SyncMeta): void {
   try {
-    writeLocal("quiz_app_sync_meta", JSON.stringify(meta));
+    writeLocal(STORAGE_KEY_SYNC_META, JSON.stringify(meta));
   } catch (e) {
     console.warn("Failed to save sync meta:", e);
   }
 }
 
 /**
- * 写一行本地数据（走原始方法，不触发本地改动通知），并刷新它的修改时间。
- * 供「拉取云端」使用。
+ * 写一个本地键（供「拉取云端」使用），**不碰 mtime**。
  *
- * 这里**不碰同步元数据**：一次同步会拉很多行，逐行读改写元数据既慢又容易互相覆盖，
- * 元数据统一由引擎在同步结束时整份写一次。
+ * 「mtime = 本地最后一次改动」是判断要不要上传的基准：把拉下来的内容也记成
+ * 本地改动，下一次同步就会把刚拉下来的东西当成「本地改过」，轻则白传一遍、
+ * 重则和云端撞成冲突（两边都"改过"同一份）。所以拉取只写内容。
+ *
+ * 这里也**不碰同步元数据**：一次同步会拉好几个文件，逐次读改写元数据既慢
+ * 又容易互相覆盖，元数据统一由引擎在同步结束时整份写一次。
  */
-export function applyRemoteRow(id: string, payload: string): void {
-  writeLocal(id, payload);
-  touchMtime(id);
+export function applyRemoteValue(key: string, value: string): void {
+  writeLocal(key, value);
 }
-
-/**
- * 同步元数据整份读-改-写。
- *
- * 引擎一次同步只写一次盘（`loadSyncMeta` → 改 → `saveSyncMeta`），
- * 所以这里不提供「按行写」的接口——那会让一次同步写十几次 localStorage。
- */
 
 /** 测试用：清掉所有同步元数据与 mtime 记录。 */
 export function clearSyncMeta(): void {
@@ -297,8 +270,7 @@ export function clearSyncMeta(): void {
   try {
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
-      if (key !== null && key.startsWith("quiz_app_sync_mtime:"))
-        keys.push(key);
+      if (key !== null && key.startsWith(MTIME_PREFIX)) keys.push(key);
     }
   } catch {
     /* ignore */
