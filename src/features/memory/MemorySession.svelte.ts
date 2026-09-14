@@ -114,6 +114,14 @@ export class MemorySession {
   /** 同一批里已经出现过的题（用于显示连对进度） */
   shownIds = $state<string[]>([]);
   /**
+   * 出题序号：每次 `selectNext()` 都 +1。
+   *
+   * 题干字号的过渡要按「一次出题」而不是「一张卡」来分界：同一张卡被排回队尾
+   * 再次出现时（答错后重来、池子里只有一两张卡）它仍然是新的一次展示，不该
+   * 从答案页的小字号动画回大字号。UI 用它做 `{#key}`。
+   */
+  presentationSeq = $state(0);
+  /**
    * 本轮已经掌握了几题（达到 `roundTarget` 本轮就结束）。
    * 这是**落盘**的：学到一半退出，下次进来继续算这一轮。
    */
@@ -645,6 +653,7 @@ export class MemorySession {
     }
 
     this.currentQuestion = question;
+    this.presentationSeq += 1;
     this.showResult = false;
     this.isCorrect = false;
     this.selectedAnswers = [];
