@@ -147,15 +147,14 @@
                 : learnState === "extra"
                   ? "outline"
                   : "ghost"}
-            class="h-auto w-full justify-start overflow-hidden px-4 py-3 text-left"
+            class="h-auto w-full justify-start gap-3 overflow-hidden px-4 py-3 text-left relative"
             disabled={!learnClickable}
             onclick={() => session.startLearning()}
         >
             <learnCard.watermark
-                size={96}
-                class="absolute -top-3 right-0 opacity-20 -z-1"
+                class="absolute -top-3 right-0 opacity-20 size-30"
             />
-            <learnCard.icon size={28} stroke={1.5} class="shrink-0" />
+            <learnCard.icon stroke={1.5} class="shrink-0 size-8" />
             <span class="flex min-w-0 flex-col items-start">
                 <span class="text-sm font-semibold">{learnCard.title}</span>
                 <span class="text-xs opacity-60">{learnCard.hint}</span>
@@ -164,15 +163,14 @@
 
         <Button
             variant={reviewState === "due" ? "default" : "ghost"}
-            class="h-auto w-full justify-start overflow-hidden px-4 py-3 text-left"
+            class="h-auto w-full justify-start gap-3 overflow-hidden px-4 py-3 text-left relative"
             disabled={reviewState !== "due"}
             onclick={() => session.startReview()}
         >
             <reviewCard.watermark
-                size={96}
-                class="absolute -top-3 right-0 opacity-20 -z-1"
+                class="absolute -top-3 right-0 opacity-20 size-30"
             />
-            <reviewCard.icon size={28} stroke={1.5} class="shrink-0" />
+            <reviewCard.icon stroke={1.5} class="shrink-0 size-8" />
             <span class="flex min-w-0 flex-col items-start">
                 <span class="text-sm font-semibold">{reviewCard.title}</span>
                 <span class="text-xs opacity-60">{reviewCard.hint}</span>
