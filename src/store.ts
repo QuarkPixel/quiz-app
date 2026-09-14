@@ -9,6 +9,8 @@ import type {
   StoredState,
   RuntimeState,
   ActivePoolItem,
+  MemoryProgressMap,
+  MemoryStoredState,
   Question,
   QuestionType,
   BankSettings,
@@ -140,6 +142,37 @@ function normalizeLearningPool(value: unknown): ActivePoolItem[] | undefined {
     });
   }
   return items;
+}
+
+/**
+ * 丢掉记忆进度里题库中已不存在的题目（`activePool` / `learningPool` 是同一套约定），
+ * 顺带清掉这些题的「本轮重新连对」待办。
+ */
+function cleanMemoryState(
+  memory: MemoryStoredState | undefined,
+  questionIds: ReadonlySet<string>,
+): MemoryStoredState | undefined {
+  if (!memory) return undefined;
+
+  const progress: MemoryProgressMap = {};
+  for (const [id, item] of Object.entries(memory.progress)) {
+    if (questionIds.has(id)) progress[id] = item;
+  }
+
+  // 待办跟着进度走：题库里没有这张卡，就谈不上「本轮还要重新连对几次」
+  const retry = memory.retry
+    ? {
+        ...memory.retry,
+        targets: Object.fromEntries(
+          Object.entries(memory.retry.targets).filter(([id]) =>
+            questionIds.has(id),
+          ),
+        ),
+      }
+    : undefined;
+
+  // 用展开而不是逐字段重建：`memory` 段以后再加字段时不会被这里悄悄抹掉
+  return { ...memory, progress, retry };
 }
 
 function stateKey(hash: string): string {
@@ -289,6 +322,9 @@ export function buildRuntimeState(
     learningPool: storedState.learningPool?.filter((item) =>
       questionIds.has(item.id),
     ),
+    // 记忆进度同理：改了题库（题目被删 / id 变了）之后，旧进度条目既不该
+    // 计入统计，也不该让导出直接报错——统一按「题库里没有这张卡」丢掉
+    memory: cleanMemoryState(storedState.memory, questionIds),
   };
 
   return {

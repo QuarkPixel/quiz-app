@@ -20,6 +20,7 @@ import {
   STORAGE_KEY_GENERAL,
 } from "../src/config";
 import type {
+  MemoryQuestion,
   Question,
   QuestionType,
   RuntimeState,
@@ -698,5 +699,71 @@ describe("getActivePoolItem", () => {
   it("空池 → undefined", () => {
     const state = makeRuntime([]);
     expect(getActivePoolItem(state, "a")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 记忆进度：题库里已不存在的题目要被丢掉
+// ---------------------------------------------------------------------------
+
+describe("buildRuntimeState 对记忆进度的清理", () => {
+  const memoryQuestions: MemoryQuestion[] = [
+    { id: "m1", type: "memory", question: "q1", answer: "a1" },
+    { id: "m2", type: "memory", question: "q2", answer: "a2" },
+  ];
+
+  function stateWithStaleProgress(): StoredState {
+    return {
+      masteredIds: [],
+      masteredMistakes: {},
+      activePool: [],
+      currentRound: 0,
+      filterType: "all",
+      settings: createDefaultSettings(),
+      ui: { progressFocused: false, showPool: false },
+      memory: {
+        progress: {
+          m1: {
+            state: "reviewing",
+            level: 3,
+            streak: 0,
+            nextDue: 1789315200000,
+            lapses: 0,
+          },
+          // 题库里已经没有这张卡了（改过题库 / 手改过进度）
+          gone: {
+            state: "mastered",
+            level: 0,
+            streak: 0,
+            nextDue: 0,
+            lapses: 1,
+          },
+        },
+        settings: { graduateLevel: 6, roundTarget: 5 },
+        retry: {
+          day: 1789315200000,
+          targets: { m1: 2, gone: 2 },
+        },
+      },
+    };
+  }
+
+  it("丢掉题库里不存在的进度条目与对应的待办", () => {
+    const runtime = buildRuntimeState(memoryQuestions, stateWithStaleProgress());
+
+    expect(Object.keys(runtime.memory!.progress)).toEqual(["m1"]);
+    expect(runtime.memory!.retry?.targets).toEqual({ m1: 2 });
+    expect(runtime.memory!.settings).toEqual({
+      graduateLevel: 6,
+      roundTarget: 5,
+    });
+  });
+
+  it("刷题模式题库（没有 memory 段）不受影响", () => {
+    const runtime = buildRuntimeState(memoryQuestions, {
+      ...stateWithStaleProgress(),
+      memory: undefined,
+    });
+    expect(runtime.memory).toBeUndefined();
   });
 });

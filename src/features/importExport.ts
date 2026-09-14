@@ -310,23 +310,40 @@ function decodeActivePool(
 }
 
 // ── deflate-raw 压缩/解压（Web Streams API） ───────────────────────────────────
+//
+// 读与写**必须并发**：TransformStream 的背压会让「先 await writer.write() 再开始
+// 读」永久挂住（Deno 的实现就是这样，部分浏览器同理），表现成「点了导出没反应」。
+// 用 Promise.all 同时观察两端：既不会死锁，写入端的错误也会照常抛给调用方，
+// 不会留下未处理的 promise rejection。
 
-async function deflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
-  const cs = new CompressionStream("deflate-raw");
-  const writer = cs.writable.getWriter();
-  // 必须 await：write / close 失败时（配额、非法输入）不 await 会产生
-  // 未处理的 promise rejection，而调用方只会看到「解压失败」的提示
-  await writer.write(data);
-  await writer.close();
-
+/** 收集可读流的全部数据块 */
+async function readAllChunks(
+  stream: ReadableStream<Uint8Array>,
+): Promise<Uint8Array[]> {
   const chunks: Uint8Array[] = [];
-  const reader = cs.readable.getReader();
-  while (true) {
+  const reader = stream.getReader();
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
   }
+  return chunks;
+}
 
+/**
+ * 写入全部数据并关闭（失败时 reject）。
+ * `CompressionStream.writable` 在 DOM 类型里是 `WritableStream<BufferSource>`。
+ */
+async function writeAllChunks(
+  stream: WritableStream<BufferSource>,
+  data: Uint8Array<ArrayBuffer>,
+): Promise<void> {
+  const writer = stream.getWriter();
+  await writer.write(data);
+  await writer.close();
+}
+
+function concatChunks(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   const total = chunks.reduce((n, c) => n + c.length, 0);
   const result = new Uint8Array(total);
   let offset = 0;
@@ -337,28 +354,26 @@ async function deflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<Arr
   return result;
 }
 
-async function inflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+async function deflateRaw(
+  data: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const cs = new CompressionStream("deflate-raw");
+  const [chunks] = await Promise.all([
+    readAllChunks(cs.readable),
+    writeAllChunks(cs.writable, data),
+  ]);
+  return concatChunks(chunks);
+}
+
+async function inflateRaw(
+  data: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array<ArrayBuffer>> {
   const ds = new DecompressionStream("deflate-raw");
-  const writer = ds.writable.getWriter();
-  await writer.write(data);
-  await writer.close();
-
-  const chunks: Uint8Array[] = [];
-  const reader = ds.readable.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-
-  const total = chunks.reduce((n, c) => n + c.length, 0);
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return result;
+  const [chunks] = await Promise.all([
+    readAllChunks(ds.readable),
+    writeAllChunks(ds.writable, data),
+  ]);
+  return concatChunks(chunks);
 }
 
 // ── Base64url（不含 padding）────────────────────────────────────────────────────
@@ -399,16 +414,20 @@ export async function exportProgress(
   questions: readonly ProgressQuestion[],
 ): Promise<string> {
   const { ids, idToIndex } = buildQuestionIndex(questions);
-  const filterCode = FILTER_TO_CODE[state.filterType] ?? 0;
-  const exportedMasteredIds = getExportedMasteredIds(state, ids, idToIndex);
   const memory = state.memory;
 
   // 有 memory 段 = 记忆模式题库（刷题模式题库不会有这一段）。这里不能按
   // 「progress 非空」判断：一张卡都还没学过的记忆题库会掉进刷题分支，
   // 导入时 graduateLevel / roundTarget 就丢了。
+  //
+  // 记忆分支只关心 memory 段：`masteredIds` / `filterType` 是刷题模式的口径，
+  // 提前算它们只会让「题库里没有的旧 id」这类刷题侧的问题把记忆模式的导出也带崩。
   if (memory) {
     return encodeMemoryProgress(state, memory, hash, ids, idToIndex);
   }
+
+  const filterCode = FILTER_TO_CODE[state.filterType] ?? 0;
+  const exportedMasteredIds = getExportedMasteredIds(state, ids, idToIndex);
 
   const compact: unknown[] = [
     FORMAT_VERSION,
@@ -453,7 +472,10 @@ async function encodeMemoryProgress(
     .map(([id, item]) => {
       const index = idToIndex.get(id);
       if (index === undefined) {
-        throw new Error(`导出失败：进度包含题库中不存在的题目 id：${id}`);
+        throw new Error(
+          `导出失败：进度里有题库中不存在的题目 id（${id}）。` +
+            `请确认这份进度属于当前题库（题库题目改动过就会对不上）。`,
+        );
       }
       return [item, index] as const;
     })

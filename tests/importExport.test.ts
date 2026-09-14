@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { exportProgress, importProgress } from "../src/features/importExport";
 import type {
   Question,
@@ -610,5 +610,69 @@ describe("importProgress 错误处理", () => {
     const encoded = await encodePayload(compact({ filterCode: 99 }));
     const restored = await importProgress(encoded, HASH, QUESTIONS);
     expect(restored.filterType).toBe("all");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 流背压：绝不「先 await 写、再开始读」
+// ---------------------------------------------------------------------------
+
+describe("压缩流不会因为背压死锁", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("写端要等读端才会完成时，导出仍然能在超时内返回", async () => {
+    // 规范 / Deno 的 TransformStream 会把背压传给写端：没人读的时候 write()
+    // 不会 resolve。曾经的写法是 `await writer.write(data)` 之后才开始读，
+    // 在这种实现下会永久挂住——表现成「点了导出没反应」（浏览器同样可能如此）。
+    // 这个替身把那种行为固定下来：write 只在读端 pull 之后才完成。
+    class GatedCompressionStream {
+      readable: ReadableStream<Uint8Array>;
+      writable: WritableStream<BufferSource>;
+
+      constructor() {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        let controller!: ReadableStreamDefaultController<Uint8Array>;
+
+        // highWaterMark: 0 → 只有真的有人在 read 时才会 pull，
+        // 也就是「没人读 → 写端永远等不到放行」的背压行为
+        this.readable = new ReadableStream<Uint8Array>(
+          {
+            start(c) {
+              controller = c;
+            },
+            pull() {
+              release();
+            },
+          },
+          { highWaterMark: 0 },
+        );
+        this.writable = new WritableStream<BufferSource>({
+          async write(chunk) {
+            await gate;
+            controller.enqueue(new Uint8Array(chunk as ArrayBuffer));
+          },
+          close() {
+            controller.close();
+          },
+        });
+      }
+    }
+
+    vi.stubGlobal("CompressionStream", GatedCompressionStream);
+
+    const encoded = await Promise.race([
+      exportProgress(makeState(), HASH, QUESTIONS),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("导出超时：写端在等读端，顺序写错了")),
+          3000,
+        ),
+      ),
+    ]);
+
+    expect(encoded.startsWith(`${HASH}.`)).toBe(true);
   });
 });

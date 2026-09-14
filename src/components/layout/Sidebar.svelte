@@ -437,7 +437,11 @@
     async function handleExport(hash: string): Promise<void> {
         closeMenus(true);
         const result = await exportBank(source, hash);
-        if (!result.ok) importMessage = result.message;
+        if (!result.ok) {
+            importMessage = result.message;
+        } else if (result.warning) {
+            importMessage = { title: "题库已导出", text: result.warning };
+        }
     }
 
     function shouldShowSelectionLabel(hash: string): boolean {

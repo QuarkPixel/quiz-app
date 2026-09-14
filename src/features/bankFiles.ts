@@ -126,7 +126,7 @@ export type BankImportPrompt =
   | { kind: "summary"; message: BankFileMessage };
 
 export type BankExportResult =
-  | { ok: true }
+  | { ok: true; warning?: string }
   | { ok: false; message: BankFileMessage };
 
 function success(fileName: string): BankImportOutcome {
@@ -438,7 +438,9 @@ export async function exportBank(
     }
 
     downloadTextFile(result.filename, result.content);
-    return { ok: true };
+    return result.warning === undefined
+      ? { ok: true }
+      : { ok: true, warning: result.warning };
   } catch (e) {
     return {
       ok: false,

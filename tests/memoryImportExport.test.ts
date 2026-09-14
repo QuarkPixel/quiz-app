@@ -221,3 +221,67 @@ describe("记忆模式进度：导出失败路径", () => {
     );
   });
 });
+
+describe("记忆模式进度：导出不该被刷题字段拖累", () => {
+  it("masteredIds 里带着题库中不存在的 id，记忆模式照样能导出", async () => {
+    // 刷题模式会因此报错（下面那条用例），但记忆分支根本不看 masteredIds：
+    // 旧数据 / 改过题库之后盘上留下的脏 id 不该让导出挂掉
+    const state = baseState({
+      progress: { m1: createReviewProgress(BASE_TIME) },
+      settings: createDefaultMemorySettings(),
+    });
+    state.masteredIds = ["已经没有这张卡了"];
+
+    const encoded = await exportProgress(state, HASH, QUESTIONS);
+    const decoded = await importProgress(encoded, HASH, QUESTIONS);
+    expect(Object.keys(decoded.memory!.progress)).toEqual(["m1"]);
+  });
+
+  it("刷题模式仍然严格要求 masteredIds 都在题库里", async () => {
+    const state = baseState(undefined);
+    state.masteredIds = ["已经没有这张卡了"];
+    await expect(exportProgress(state, HASH, QUESTIONS)).rejects.toThrow(
+      /题库中不存在的题目 id/,
+    );
+  });
+
+  it("进度里出现题库不存在的 id 时，报错说清楚是「题库和进度对不上」", async () => {
+    const state = baseState({
+      progress: { gone: createLearningProgress(1) },
+      settings: createDefaultMemorySettings(),
+    });
+    await expect(exportProgress(state, HASH, QUESTIONS)).rejects.toThrow(
+      /请确认这份进度属于当前题库/,
+    );
+  });
+});
+
+describe("记忆模式进度：大进度也不会卡住", () => {
+  it("2000 张卡的进度能在超时内导出并原样导回", async () => {
+    const bigQuestions = Array.from({ length: 2000 }, (_, i) => ({
+      id: `m${i}`,
+      question: `q${i}`,
+      answer: `a${i}`,
+    }));
+    const progress: Record<string, ReturnType<typeof createReviewProgress>> = {};
+    for (let i = 0; i < 2000; i++) {
+      progress[`m${i}`] = {
+        ...createReviewProgress(BASE_TIME),
+        level: (i % 6) + 1,
+        lapses: i % 3,
+      };
+    }
+
+    // 超时保护：读写顺序写错时（先 await write 再读）Web Streams 会永久挂住
+    const encoded = await Promise.race([
+      exportProgress(baseState({ progress, settings: createDefaultMemorySettings() }), HASH, bigQuestions),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("导出超时（疑似流背压死锁）")), 4000),
+      ),
+    ]);
+
+    const decoded = await importProgress(encoded, HASH, bigQuestions);
+    expect(Object.keys(decoded.memory!.progress)).toHaveLength(2000);
+    expect(decoded.memory!.progress.m1999).toEqual(progress.m1999);
+  });
+});

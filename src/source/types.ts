@@ -53,6 +53,11 @@ export type ApplyStateResult = { ok: true } | { ok: false; error: string };
 export interface BankExportFile {
   filename: string;
   content: string;
+  /**
+   * 导出成功但有需要告知用户的问题（目前只有一种：进度编码失败，
+   * 于是只导出了题库内容）。没有问题时不存在。
+   */
+  warning?: string;
 }
 
 /**

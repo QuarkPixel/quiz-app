@@ -233,7 +233,18 @@ export class BankStore implements QuizSource {
 
     // 库里存的就是 canonical 形式，bank.hash 就是 canonical hash，直接用即可。
     const storedState = loadStoredState(hash);
-    const stateEncoded = await exportProgress(storedState, hash, questions);
+    // 进度编码失败（比如盘上还留着题库里已不存在的题目 id）不该让整份题库导不出去：
+    // 丢掉的只是进度备份，题目本身照常导出，并附一句说明。
+    let stateEncoded: string | undefined;
+    let warning: string | undefined;
+    try {
+      stateEncoded = await exportProgress(storedState, hash, questions);
+    } catch (e) {
+      stateEncoded = undefined;
+      warning = `进度没有一起导出：${
+        e instanceof Error ? e.message : "进度编码失败"
+      }题目不受影响，导入后进度会从零开始。`;
+    }
 
     const mastered = storedState.masteredIds.length;
     const total = questions.length;
@@ -243,10 +254,12 @@ export class BankStore implements QuizSource {
       mode: summary.mode,
       title: summary.name,
       questions,
-      state: stateEncoded,
+      ...(stateEncoded === undefined ? {} : { state: stateEncoded }),
     });
 
-    return { filename, content: fileContent };
+    return warning === undefined
+      ? { filename, content: fileContent }
+      : { filename, content: fileContent, warning };
   }
 
   renameBank(hash: string, name: string): void {
