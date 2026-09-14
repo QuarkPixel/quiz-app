@@ -83,7 +83,14 @@ async function proxy(request: Request, url: URL): Promise<Response> {
     return json({ error: "缺少目标路径", hint: "用法：/api/sync/quiz_app_sync" }, 400);
   }
 
-  const target = `${base}/rest/v1/${upstreamPath}${url.search}`;
+  // `url` 是给这台函数看的（该转发到哪个 Supabase 项目），**不能带给 PostgREST**——
+  // 它会把这个参数当成一个过滤器去解析，然后报
+  // "failed to parse filter (https://…)"。
+  const passthrough = new URLSearchParams(url.searchParams);
+  passthrough.delete("url");
+
+  const query = passthrough.toString();
+  const target = `${base}/rest/v1/${upstreamPath}${query ? `?${query}` : ""}`;
 
   const headers = new Headers();
   for (const name of ["content-type", "prefer", "accept", "range"]) {

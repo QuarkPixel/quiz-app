@@ -27,8 +27,15 @@ export class SyncError extends Error {
 /** 连接自检的结果。 */
 export interface SyncPingResult {
   ok: boolean;
-  /** 后端连 Supabase 那一段的自检信息 */
-  relay?: { ok: boolean; latencyMs?: number; hint?: string; error?: string };
+  /** 后端自身的自检信息 */
+  relay?: {
+    ok: boolean;
+    /** 后端是旧版本（没有 `/_ping`），需要重新部署 */
+    stale?: boolean;
+    latencyMs?: number;
+    hint?: string;
+    error?: string;
+  };
   /** 云端表里现在有几行 */
   rowCount: number;
   error?: string;
@@ -256,8 +263,14 @@ export class SyncClient {
         method: "GET",
         headers: { accept: "application/json" },
       });
-      const payload = (await response.json()) as { ok?: unknown };
-      result.relay = { ok: payload.ok === true };
+      if (response.status === 404 || response.status === 405) {
+        // 老版本的后端没有这个自检端点。这里不能当成「不可达」——
+        // 否则线上还没重新部署时，会把「后端是旧的」误报成「后端挂了」。
+        result.relay = { ok: false, stale: true };
+      } else {
+        const payload = (await response.json()) as { ok?: unknown };
+        result.relay = { ok: payload.ok === true };
+      }
     } catch (error) {
       result.relay = {
         ok: false,

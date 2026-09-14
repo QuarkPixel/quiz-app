@@ -129,11 +129,20 @@
     function testConnection(): void {
         void withBusy("test", async () => {
             const result = await syncEngine.testConnection();
-            const lines: string[] = [`后端 ${endpoint}：${result.relay?.ok ? "可达" : "不可达"}`];
+            const relay = result.relay;
 
-            if (result.relay && !result.relay.ok) {
-                lines.push(`　${result.relay.error ?? "无法访问"}`);
+            const lines: string[] = [];
+            if (relay?.ok) {
+                lines.push(`后端 ${endpoint}：可达`);
+            } else if (relay?.stale) {
+                lines.push(
+                    `后端 ${endpoint}：是旧版本（缺 /_ping 自检端点），把仓库最新的代码重新部署一次`,
+                );
+            } else {
+                lines.push(`后端 ${endpoint}：不可达`);
+                lines.push(`　${relay?.error ?? "无法访问"}`);
             }
+
             lines.push(
                 result.ok
                     ? `数据表 ${SYNC_TABLE}：可读，云端现有 ${result.rowCount} 项`
