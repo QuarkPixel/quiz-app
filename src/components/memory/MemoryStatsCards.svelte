@@ -6,9 +6,9 @@
     import IconRepeat from "@tabler/icons-svelte/icons/repeat";
 
     /**
-     * 首页与总览共用的三张统计卡。
+     * 首页与总览共用的三道统计卡。
      *
-     * 版式与刷题模式总览顶部那三张完全一致（同一套 Card 结构、同样的
+     * 版式与刷题模式总览顶部那三道完全一致（同一套 Card 结构、同样的
      * 「大字号数字 + 小字说明 + 右上角水印图标」）：
      *
      *   1. 未学习 / 学习中 / 已掌握
@@ -50,7 +50,7 @@
                 >
             </span>
             <span class="text-muted-foreground text-xs tabular-nums">
-                共 {total} 张卡片
+                共 {total} 道卡片
             </span>
         </Card.Content>
     </Card.Root>
@@ -89,7 +89,7 @@
                 {inProgress}
             </span>
             <span class="text-muted-foreground text-xs tabular-nums">
-                正在复习 {session.reviewingCount} 张
+                正在复习 {session.reviewingCount} 道
             </span>
         </Card.Content>
     </Card.Root>

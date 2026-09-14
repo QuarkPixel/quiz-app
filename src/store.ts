@@ -159,7 +159,7 @@ function cleanMemoryState(
     if (questionIds.has(id)) progress[id] = item;
   }
 
-  // 待办跟着进度走：题库里没有这张卡，就谈不上「本轮还要重新连对几次」
+  // 待办跟着进度走：题库里没有这道卡，就谈不上「本轮还要重新连对几次」
   const retry = memory.retry
     ? {
         ...memory.retry,
@@ -323,7 +323,7 @@ export function buildRuntimeState(
       questionIds.has(item.id),
     ),
     // 记忆进度同理：改了题库（题目被删 / id 变了）之后，旧进度条目既不该
-    // 计入统计，也不该让导出直接报错——统一按「题库里没有这张卡」丢掉
+    // 计入统计，也不该让导出直接报错——统一按「题库里没有这道卡」丢掉
     memory: cleanMemoryState(storedState.memory, questionIds),
   };
 

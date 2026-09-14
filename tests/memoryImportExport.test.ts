@@ -131,7 +131,7 @@ describe("记忆模式进度：导入导出往返", () => {
     expect(decoded.memory).toBeUndefined();
   });
 
-  it("一张卡都没学过的记忆题库：仍走记忆分支，掌握阈值与每轮题数不丢", async () => {
+  it("一道卡都没学过的记忆题库：仍走记忆分支，掌握阈值与每轮题数不丢", async () => {
     // 关键点：progress 是空的，但题库是记忆模式（有 memory 段）。
     // 早期实现按「progress 非空」判断，这里会掉进刷题分支，
     // 导入后 graduateLevel / roundTarget 静默回到默认值。
@@ -230,7 +230,7 @@ describe("记忆模式进度：导出不该被刷题字段拖累", () => {
       progress: { m1: createReviewProgress(BASE_TIME) },
       settings: createDefaultMemorySettings(),
     });
-    state.masteredIds = ["已经没有这张卡了"];
+    state.masteredIds = ["已经没有这道卡了"];
 
     const encoded = await exportProgress(state, HASH, QUESTIONS);
     const decoded = await importProgress(encoded, HASH, QUESTIONS);
@@ -239,7 +239,7 @@ describe("记忆模式进度：导出不该被刷题字段拖累", () => {
 
   it("刷题模式仍然严格要求 masteredIds 都在题库里", async () => {
     const state = baseState(undefined);
-    state.masteredIds = ["已经没有这张卡了"];
+    state.masteredIds = ["已经没有这道卡了"];
     await expect(exportProgress(state, HASH, QUESTIONS)).rejects.toThrow(
       /题库中不存在的题目 id/,
     );
@@ -257,7 +257,7 @@ describe("记忆模式进度：导出不该被刷题字段拖累", () => {
 });
 
 describe("记忆模式进度：大进度也不会卡住", () => {
-  it("2000 张卡的进度能在超时内导出并原样导回", async () => {
+  it("2000 道卡的进度能在超时内导出并原样导回", async () => {
     const bigQuestions = Array.from({ length: 2000 }, (_, i) => ({
       id: `m${i}`,
       question: `q${i}`,

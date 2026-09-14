@@ -730,7 +730,7 @@ describe("buildRuntimeState 对记忆进度的清理", () => {
             nextDue: 1789315200000,
             lapses: 0,
           },
-          // 题库里已经没有这张卡了（改过题库 / 手改过进度）
+          // 题库里已经没有这道卡了（改过题库 / 手改过进度）
           gone: {
             state: "mastered",
             level: 0,

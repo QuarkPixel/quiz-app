@@ -165,7 +165,7 @@ export type MemoryProgressMap = Record<string, MemoryProgress>;
  * - `graduateLevel`：复习到第几级算已掌握；对应天数由 `2^(level-1)` 累加得出
  * - `roundTarget`：一轮学习要掌握几题才算这一轮结束（默认 5）
  *
- * 复习答错后这张卡在本轮要重新连对 N 次（见 `MemoryRetryState`）；连对次数就是
+ * 复习答错后这道卡在本轮要重新连对 N 次（见 `MemoryRetryState`）；连对次数就是
  * `BankSettings.correctStreakToMaster`，没有单独的设置项。
  */
 export interface MemoryBankSettings {
@@ -176,7 +176,7 @@ export interface MemoryBankSettings {
 /**
  * 「答错后本轮必须重新连对 N 次」的待办。
  *
- * 复习答错时这张卡的复习阶梯已经归零（`level = 1`、明天到期），但本轮还得
+ * 复习答错时这道卡的复习阶梯已经归零（`level = 1`、明天到期），但本轮还得
  * 连对 N 次才算复习完。这件事要跨会话成立——中途按 Esc / 刷新 / 切题库回来时，
  * 只按「今天到期的卡」重建队列的话，这个要求会被静默丢掉。
  *

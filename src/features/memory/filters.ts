@@ -24,7 +24,7 @@ export function createMemoryFilterState(): MemoryFilterState {
   return { learning: new Set(), due: new Set() };
 }
 
-/** 一张卡片的「学习进度」归类；复习中的卡片返回 null（它由复习进度管）。 */
+/** 一道卡片的「学习进度」归类；复习中的卡片返回 null（它由复习进度管）。 */
 export function learningStatusOf(
   item: MemoryProgress | undefined,
 ): MemoryLearningStatus | null {
@@ -42,7 +42,7 @@ export function dueBucket(days: number): MemoryDueStatus {
   return "later";
 }
 
-/** 判断一张卡片是否落在筛选范围内。`daysUntilDue` 只对复习中的卡片有意义。 */
+/** 判断一道卡片是否落在筛选范围内。`daysUntilDue` 只对复习中的卡片有意义。 */
 export function matchesMemoryFilter(options: {
   filter: MemoryFilterState;
   searchTerm: string;

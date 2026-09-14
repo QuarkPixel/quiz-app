@@ -42,7 +42,7 @@
     });
 
     // 只有在「同一次展示内部」（题干页 ↔ 答案页）才动画；
-    // 换下一题 / 同一张卡被排回队尾重新出题时直接落位，否则又会看到「从小变大」。
+    // 换下一题 / 同一道卡被排回队尾重新出题时直接落位，否则又会看到「从小变大」。
     // 用 $effect.pre：DOM 更新前就把值摆好，避免新题先以小字号闪一帧。
     let lastSeq = session.presentationSeq;
     let lastShowResult = session.showResult;
@@ -63,7 +63,7 @@
     /**
      * 答案卡片的滑入：高度也是动画出来的，所以下方按钮是被平滑「推」下去，
      * 而不是瞬移。只写 `in:`（没有 `out:`）——换下一题时答案块直接卸载，
-     * 两张卡片之间不该有任何动画。
+     * 两道卡片之间不该有任何动画。
      */
     const answerSlide = prefersReducedMotion
         ? { duration: 0 }
@@ -112,7 +112,7 @@
         - `min-h-[6.5rem]`：给一段最小高度，短题干的卡片也占住答案将要出现的位置，
           一段答案之内的卡片展开时下方按钮完全不动（更长的答案由 slide 平滑推开）
         - 字号由 `textReveal` 这个 Tween 按 `--reveal` 逐帧插值（1 = 题干页档位，
-          0 = 答案页档位），缓动与答案 slide 同为 `circOut`；换下一题 / 同一张卡被
+          0 = 答案页档位），缓动与答案 slide 同为 `circOut`；换下一题 / 同一道卡被
           排回队尾重新出题时先把值落位再渲染，所以不会「从小变大」
     -->
     <div class="flex min-h-64 flex-col gap-2.5">
@@ -160,7 +160,7 @@
             </Button>
         {:else}
             {#if session.isCorrect}
-                <!-- 选了「知道」：给一个反悔入口（一步到位，把这张改成答错） -->
+                <!-- 选了「知道」：给一个反悔入口（一步到位，把这道改成答错） -->
                 <Button
                     variant="outline"
                     size="lg"

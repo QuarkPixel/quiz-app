@@ -91,7 +91,7 @@ function makeSession(
   );
 }
 
-/** 走一张卡：自评（1=知道 / 0=忘记）+ 提交 + 下一题。 */
+/** 走一道卡：自评（1=知道 / 0=忘记）+ 提交 + 下一题。 */
 function answer(session: MemorySession, knows: boolean): void {
   session.selectedAnswers = [knows ? 1 : 0];
   session.submit();
@@ -232,8 +232,8 @@ describe("记忆模式：学习流", () => {
     session.startLearning();
     expect(session.run).toBe("learning");
 
-    // 每张卡要连续答对 3 次；队列顺序由算法决定（答对后出队、答错后回队尾），
-    // 这里只驱动到本轮结束，再断言每张卡都毕业了。
+    // 每道卡要连续答对 3 次；队列顺序由算法决定（答对后出队、答错后回队尾），
+    // 这里只驱动到本轮结束，再断言每道卡都毕业了。
     let guard = 0;
     while (session.run === "learning" && session.currentQuestion) {
       expect(guard++).toBeLessThan(20);
@@ -261,7 +261,7 @@ describe("记忆模式：学习流", () => {
 
     session.advanceQuestionFlow();
     flushSync();
-    // 本轮只有这一张，排到队尾后立刻又是它
+    // 本轮只有这一道，排到队尾后立刻又是它
     expect(session.run).toBe("learning");
     expect(session.currentQuestion?.id).toBe("a");
     expect(session.progress.a.streak).toBe(0);
@@ -326,7 +326,7 @@ describe("记忆模式：学习流", () => {
     session.updateMemorySettings({ roundTarget: 5 });
     session.startLearning();
 
-    // 顺序 = 取题库最前面的 5 张入池
+    // 顺序 = 取题库最前面的 5 道入池
     expect(session.appState.activePool.map((i) => i.id).sort()).toEqual([
       "a",
       "b",
@@ -334,7 +334,7 @@ describe("记忆模式：学习流", () => {
       "d",
       "e",
     ]);
-    // 池内出题随机：第一张不保证是 a，但一定是池里的题
+    // 池内出题随机：第一道不保证是 a，但一定是池里的题
     expect(["a", "b", "c", "d", "e"]).toContain(session.currentQuestion?.id);
   });
 
@@ -345,7 +345,7 @@ describe("记忆模式：学习流", () => {
     session.updateMemorySettings({ roundTarget: 3 });
     session.startLearning();
 
-    // 一张卡要连对 3 次才毕业；每张卡出现时都答「知道」
+    // 一道卡要连对 3 次才毕业；每道卡出现时都答「知道」
     const graduated = new Set<string>();
     let guard = 0;
     while (session.run === "learning" && session.currentQuestion) {
@@ -497,7 +497,7 @@ describe("记忆模式：复习流", () => {
     );
   });
 
-  it("复习答错后连对完成本轮：进度条把这张算成已复习", () => {
+  it("复习答错后连对完成本轮：进度条把这道算成已复习", () => {
     const hash = "memory_fail_progress_hash";
     saveState(hash, {
       ...emptyState(),
@@ -516,7 +516,7 @@ describe("记忆模式：复习流", () => {
     session.startReview();
     expect(session.reviewTotal).toBe(2);
 
-    // 第一张答错 → 应当立即记为「今天已处理」
+    // 第一道答错 → 应当立即记为「今天已处理」
     session.selectedAnswers = [0];
     session.submit();
     flushSync();
@@ -592,7 +592,7 @@ describe("记忆模式：复习流", () => {
       seen.push(session.currentQuestion.id);
       answer(session, true);
     }
-    // 三张都复习到了，顺序不做断言（本轮内部随机）
+    // 三道都复习到了，顺序不做断言（本轮内部随机）
     expect([...seen].sort()).toEqual(["a", "b", "c"]);
   });
 
@@ -671,7 +671,7 @@ describe("记忆模式：持久化", () => {
     session.updateMemorySettings({ roundTarget: 5 });
     session.startLearning();
 
-    // 练会一张卡（它要在本轮里连对 3 次，中间会穿插别的卡）
+    // 练会一道卡（它要在本轮里连对 3 次，中间会穿插别的卡）
     const masteredId = session.currentQuestion!.id;
     let guard = 0;
     while (
@@ -703,7 +703,7 @@ describe("记忆模式：持久化", () => {
     expect(resumed.appState.activePool.length).toBe(5);
   });
 
-  it("学到一半但一张都没掌握就退出：下次接着这一轮继续，不重挑题", () => {
+  it("学到一半但一道都没掌握就退出：下次接着这一轮继续，不重挑题", () => {
     const hash = "memory_resume_zero_hash";
     const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
     const session = makeSession(ids, { hash });
@@ -711,7 +711,7 @@ describe("记忆模式：持久化", () => {
     session.updateMemorySettings({ roundTarget: 5 });
     session.startLearning();
 
-    // 只答对一次（连对 1 / 3，离学会还远，本轮已掌握 0 张）
+    // 只答对一次（连对 1 / 3，离学会还远，本轮已掌握 0 道）
     const partialId = session.currentQuestion!.id;
     answer(session, true);
     expect(session.roundMastered).toBe(0);
@@ -760,7 +760,7 @@ describe("记忆模式：持久化", () => {
     expect(session.newCount).toBe(5);
     expect(session.learnableCount).toBe(6);
 
-    // 用「顺序」挑入池，好让断言确定（随机模式下这张孤儿卡可能这一批没被抽中）
+    // 用「顺序」挑入池，好让断言确定（随机模式下这道孤儿卡可能这一批没被抽中）
     session.updateBankSettings({ selectionMode: "sequential" });
     session.startLearning();
     expect(session.run).toBe("learning");
@@ -786,7 +786,7 @@ describe("记忆模式：持久化", () => {
     const ids = ["a", "b", "c", "d", "e"];
     saveState(hash, {
       ...emptyState(),
-      // 上一轮学到一半（已掌握 2 张），中途去复习了一趟：
+      // 上一轮学到一半（已掌握 2 道），中途去复习了一趟：
       // activePool 里现在是到期队列，不是学习池
       activePool: [
         {
@@ -849,10 +849,10 @@ describe("记忆模式：持久化", () => {
     session.updateBankSettings({ selectionMode: "sequential" });
     session.updateMemorySettings({ roundTarget: 5 });
     session.startLearning();
-    // 顺序挑题 → 池子正好是题库里前 5 张没学过的卡（不含 z）
+    // 顺序挑题 → 池子正好是题库里前 5 道没学过的卡（不含 z）
     const poolBefore = session.appState.activePool.map((i) => i.id);
     expect(poolBefore).toEqual(["a", "b", "c", "d", "e"]);
-    // 答对一次（一张都没掌握），池子里留下连对进度
+    // 答对一次（一道都没掌握），池子里留下连对进度
     answer(session, true);
     session.exitSession();
     expect(session.appState.activePool.map((i) => i.id)).toEqual(poolBefore);
@@ -931,7 +931,7 @@ describe("记忆模式：本轮计数与重置 / 导入", () => {
     session.updateMemorySettings({ roundTarget: 5 });
     session.startLearning();
 
-    // 先在本轮里掌握一张
+    // 先在本轮里掌握一道
     const firstId = session.currentQuestion!.id;
     let guard = 0;
     while (
@@ -1024,7 +1024,7 @@ describe("记忆模式：答错后的「重新连对」跨会话", () => {
     });
   }
 
-  it("答错后退出再进来：这张卡仍在本轮，必须补完连对 N 次", () => {
+  it("答错后退出再进来：这道卡仍在本轮，必须补完连对 N 次", () => {
     const hash = "memory_retry_resume_hash";
     saveDueCard(hash, ["a"]);
 
@@ -1139,7 +1139,7 @@ describe("记忆模式：本轮收尾", () => {
       answer(session, true);
     }
 
-    // 两张都学会了，但离目标 5 张还差得远
+    // 两道都学会了，但离目标 5 道还差得远
     expect(session.run).toBe("idle");
     expect(session.roundMastered).toBe(0);
     expect(session.roundGoal).toBe(0);
@@ -1292,7 +1292,7 @@ describe("记忆模式：进度变更的落盘时机", () => {
     session.submit();
     flushSync();
     // 这里刻意不用 answer()：要断言的就是 advanceQuestionFlow 之后、
-    // 还没发生下一次 submit 时盘上的状态。池子里还有另一张，所以本轮不会
+    // 还没发生下一次 submit 时盘上的状态。池子里还有另一道，所以本轮不会
     // 结束（结束时的 save 会掩盖这个问题）
     session.advanceQuestionFlow();
     flushSync();
@@ -1305,7 +1305,7 @@ describe("记忆模式：进度变更的落盘时机", () => {
     );
   });
 
-  it("学习轮掌握一张后立即落盘本轮计数", () => {
+  it("学习轮掌握一道后立即落盘本轮计数", () => {
     const hash = "memory_learning_persist_hash";
     const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
     const session = makeSession(ids, { hash });

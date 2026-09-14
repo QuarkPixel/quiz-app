@@ -116,8 +116,8 @@ export class MemorySession {
   /**
    * 出题序号：每次 `selectNext()` 都 +1。
    *
-   * 题干字号的过渡要按「一次出题」而不是「一张卡」来分界：同一张卡被排回队尾
-   * 再次出现时（答错后重来、池子里只有一两张卡）它仍然是新的一次展示，不该
+   * 题干字号的过渡要按「一次出题」而不是「一道卡」来分界：同一道卡被排回队尾
+   * 再次出现时（答错后重来、池子里只有一两道卡）它仍然是新的一次展示，不该
    * 从答案页的小字号动画回大字号。UI 用它做 `{#key}`。
    */
   presentationSeq = $state(0);
@@ -147,8 +147,8 @@ export class MemorySession {
    * 本轮复习里「答错过」的题。
    *
    * 「这一轮完成」≠「掌握了」：答错说明忘了，掌握阶梯已经归零并定在明天。
-   * 所以本轮连对达标时，只要这张在本轮失败过，就**不允许**再推进阶梯，
-   * 否则答错那张会和一次答对那张拿到同样的两天间隔（之前的 bug）。
+   * 所以本轮连对达标时，只要这道在本轮失败过，就**不允许**再推进阶梯，
+   * 否则答错那道会和一次答对那道拿到同样的两天间隔（之前的 bug）。
    */
   failedThisRound = $state<string[]>([]);
   /** 进度备份：和 QuizSession 同一套状态 */
@@ -290,7 +290,7 @@ export class MemorySession {
   /**
    * 今天可以进入复习的卡片数：到期的 + 还没补完连对的。
    * 首页入口的可点击性与「今日待复习」统计都用它，否则答错后退出再进来
-   * 会因为「到期 0 张」而点不开复习。
+   * 会因为「到期 0 道」而点不开复习。
    */
   get reviewableCount(): number {
     return this.dueCount + this.pendingRetryCount;
@@ -321,7 +321,7 @@ export class MemorySession {
     return this.reviewedIds.length;
   }
 
-  /** 首页「学习新的题目」这次会学几张 */
+  /** 首页「学习新的题目」这次会学几道 */
   get nextBatchSize(): number {
     return Math.min(
       this.learnableCount,
@@ -363,7 +363,7 @@ export class MemorySession {
     return this.appState.memory?.learnedDay === studyDay(this.now);
   }
 
-  /** 「学习新的题目」还能学几张：没学过的 + 学到一半的 */
+  /** 「学习新的题目」还能学几道：没学过的 + 学到一半的 */
   get learnableCount(): number {
     return this.newCount + this.learningCount;
   }
@@ -405,9 +405,9 @@ export class MemorySession {
   /**
    * 开始「学习新的题目」。
    *
-   * 上一轮只要学到一半就接着继续，**一张都没掌握也一样**：中途退出不该丢掉
+   * 上一轮只要学到一半就接着继续，**一道都没掌握也一样**：中途退出不该丢掉
    * 这一轮，也不该重挑一批题。判断依据是「池子里还有没有没学完的卡」，
-   * 不是「已经掌握了几张」。
+   * 不是「已经掌握了几道」。
    */
   startLearning(): void {
     // 把学习轮的活动池放回 `activePool`（如果中途去复习过，池子暂存在
@@ -422,7 +422,7 @@ export class MemorySession {
 
     // 这一轮的计数还能不能接着用？
     //  - 池子里还有没学完的卡 → 正常续轮
-    //  - 池子被「复习」顶掉过，但这一轮已经掌握了几张 → 计数留着，只把池子放回来
+    //  - 池子被「复习」顶掉过，但这一轮已经掌握了几道 → 计数留着，只把池子放回来
     const keepRound = this.roundGoal > 0 && (ongoing || this.roundMastered > 0);
     if (!keepRound) {
       // 新的一轮：从 0 开始数
@@ -533,7 +533,7 @@ export class MemorySession {
 
   // ── 本轮「答错后重新连对」的待办 ────────────────────────────────────
   //
-  // 答错时把「这张卡本轮还要连对 N 次」写进 `state.memory.retry`（落盘），
+  // 答错时把「这道卡本轮还要连对 N 次」写进 `state.memory.retry`（落盘），
   // 这样中途退出 / 刷新 / 切题库回来时，它还留在本轮里；跨过凌晨 5 点
   // （学习日变了）就自动作废，卡片按常规的「明天重来」走。
 
@@ -556,7 +556,7 @@ export class MemorySession {
     return targets;
   }
 
-  /** 记下「这张卡本轮还要连对几次」（同一天里重复答错就覆盖）。 */
+  /** 记下「这道卡本轮还要连对几次」（同一天里重复答错就覆盖）。 */
   private writeRetryTarget(
     memory: MemoryStoredState,
     id: string,
@@ -570,7 +570,7 @@ export class MemorySession {
     };
   }
 
-  /** 本轮复习完成（或重置）后清掉这张卡的待办。 */
+  /** 本轮复习完成（或重置）后清掉这道卡的待办。 */
   private clearRetryTarget(id: string): void {
     const memory = this.appState.memory;
     const retry = memory?.retry;
@@ -667,7 +667,7 @@ export class MemorySession {
     this.markAsShown(question.id);
   }
 
-  /** 记忆题型的「提交」= 用自评结果结算这一张卡。 */
+  /** 记忆题型的「提交」= 用自评结果结算这一道卡。 */
   submit(): void {
     const question = this.currentQuestion;
     if (!question || this.showResult || this.selectedAnswers.length === 0) {
@@ -715,10 +715,10 @@ export class MemorySession {
 
     // 学习流：还没连对到 N 次的卡片（包括刚答错的）排到队尾继续。
     // 注意：连对到门槛的卡片在 submit 时就已经毕业、离开了 activePool，
-    // 所以 `item` 为 undefined 时说明这张已经学会了。
+    // 所以 `item` 为 undefined 时说明这道已经学会了。
     if (this.run === "learning") {
       // 连对够了的卡片在 submit 时就已经毕业、离开了 activePool，
-      // 所以 `item === undefined` 就是「这张学会了」，正好只出现一次。
+      // 所以 `item === undefined` 就是「这道学会了」，正好只出现一次。
       if (item !== undefined && item.consecutiveCorrect < this.streakToLearn) {
         this.requeue(question.id);
         return;
@@ -739,7 +739,7 @@ export class MemorySession {
     // 连对达标 = 「这一轮复习完成」。它不等于「掌握」：
     //   - 本轮没失败过 → 正常推进掌握阶梯（走完 M → 已掌握）
     //   - 本轮失败过   → 阶梯已经归零并定在「明天」，本轮完成不再推进，
-    //                    否则答错那张的间隔会被推成和答对一样（bug 根因）
+    //                    否则答错那道的间隔会被推成和答对一样（bug 根因）
     if (!this.failedThisRound.includes(question.id)) {
       this.appState = this.advanceMastery(question.id);
     } else {
@@ -757,7 +757,7 @@ export class MemorySession {
       }
     }
     delete this.reviewTarget[question.id];
-    // 这一张的本轮要求补完了：清掉落盘的待办，并立刻把阶梯 / streak 写下去
+    // 这一道的本轮要求补完了：清掉落盘的待办，并立刻把阶梯 / streak 写下去
     // （「下一题」之后再关页面不该丢掉这次推进）
     this.clearRetryTarget(question.id);
     this.markReviewed(question.id);
@@ -782,7 +782,7 @@ export class MemorySession {
       );
 
     this.fillActivePool();
-    // 本轮计数与补进来的新卡都要立刻落盘，否则紧接着关页面会少算一张
+    // 本轮计数与补进来的新卡都要立刻落盘，否则紧接着关页面会少算一道
     this.save();
 
     if (this.roundMastered >= this.targetPerRound) {
@@ -905,7 +905,7 @@ export class MemorySession {
 
       if (!knows) {
         // 忘记了：掌握阶梯归零（明天从 1 天重来），本轮连对清零，
-        // 并且这张卡在本轮需要连对 N 次才算复习完——这个要求同时落盘，
+        // 并且这道卡在本轮需要连对 N 次才算复习完——这个要求同时落盘，
         // 中途退出 / 刷新后重新进复习时它还会回到本轮（见 `retryTargetsToday`）。
         this.reviewTarget = {
           ...this.reviewTarget,
@@ -914,7 +914,7 @@ export class MemorySession {
         if (!this.failedThisRound.includes(question.id)) {
           this.failedThisRound = [...this.failedThisRound, question.id];
         }
-        // 这张今天已经处理过了（之后还会再出现几次也不算新的一题），
+        // 这道今天已经处理过了（之后还会再出现几次也不算新的一题），
         // 进度条与「今日已复习」都要认它
         this.markReviewed(question.id);
         return {
@@ -1058,8 +1058,8 @@ export class MemorySession {
     this.deps.toast(
       run === "reviewing" ? "本轮复习完成" : "本轮学习完成",
       run === "reviewing"
-        ? `共复习 ${learned} 张卡片。`
-        : `共学会 ${learned} 张卡片，明天开始复习。`,
+        ? `共复习 ${learned} 道卡片。`
+        : `共学会 ${learned} 道卡片，明天开始复习。`,
       "success",
     );
     maybePlaySuccessSound(this.globalSettings, this.deps.sound);
@@ -1131,7 +1131,7 @@ export class MemorySession {
       },
     });
     // 本轮计数是会话字段，换掉 appState 不会自动清：留着会让下一轮从旧的
-    // 「已掌握 X / Y」接着数，只学几张就提前结束本轮
+    // 「已掌握 X / Y」接着数，只学几道就提前结束本轮
     this.roundMastered = 0;
     this.roundGoal = 0;
     this.exitSession();
@@ -1279,7 +1279,7 @@ export class MemorySession {
       }),
     );
     // 备份里不带「本轮」的短周期状态（见 AGENTS.md），所以导入后必须按新一轮
-    // 重新开始：否则旧的 roundMastered 会叠到导入的进度上，几张就结束本轮
+    // 重新开始：否则旧的 roundMastered 会叠到导入的进度上，几道就结束本轮
     this.roundMastered = 0;
     this.roundGoal = 0;
     this.exitSession();
@@ -1310,7 +1310,7 @@ export class MemorySession {
     stored: ReturnType<typeof loadStoredState>,
   ): RuntimeState {
     // 本轮的「重新连对」待办只保留今天的：昨天写下的要求今天已经没意义
-    // （那张卡今天本来就会到期，答对一次即过）
+    // （那道卡今天本来就会到期，答对一次即过）
     const today = studyDay(this.now);
     // 展开原段再覆盖要净化的字段：以后 `memory` 加字段时不会被这里悄悄抹掉
     const memory = stored.memory

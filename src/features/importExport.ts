@@ -417,7 +417,7 @@ export async function exportProgress(
   const memory = state.memory;
 
   // 有 memory 段 = 记忆模式题库（刷题模式题库不会有这一段）。这里不能按
-  // 「progress 非空」判断：一张卡都还没学过的记忆题库会掉进刷题分支，
+  // 「progress 非空」判断：一道卡都还没学过的记忆题库会掉进刷题分支，
   // 导入时 graduateLevel / roundTarget 就丢了。
   //
   // 记忆分支只关心 memory 段：`masteredIds` / `filterType` 是刷题模式的口径，

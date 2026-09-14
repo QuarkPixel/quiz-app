@@ -12,7 +12,7 @@ import {
  * 回归背景：`MemoryView` 曾经自己写了一套判定，缺了刷题模式里的
  * `isInteractiveTarget` / `defaultPrevented` 守卫，于是焦点落在按钮上时
  * `Space` / `Enter` 会「原生点击 + 全局处理器」各触发一次——答案页会连跳两题，
- * 刚显示的那张卡被静默排到队尾。
+ * 刚显示的那道卡被静默排到队尾。
  */
 function keydownOn(
   target: Element,

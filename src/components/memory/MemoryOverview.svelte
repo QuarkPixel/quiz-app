@@ -16,7 +16,7 @@
     import type { MemoryProgress, MemoryQuestion } from "@/types";
     import { isCoarsePointer } from "$lib/utils";
 
-    // 与 ReviewView.svelte 同构：同样的 Dialog 外壳、同样的顶部三张 Card、
+    // 与 ReviewView.svelte 同构：同样的 Dialog 外壳、同样的顶部三道 Card、
     // 同样的筛选 + 列表结构；题目卡片直接用 QuestionPreview（它会自动渲染记忆
     // 题型的 Review 组件），所以没有记忆模式专属的展示样式。
     interface Props {
@@ -36,7 +36,7 @@
     let sentinel: HTMLDivElement | null = $state(null);
     let searchInputRef: HTMLInputElement | null = $state(null);
 
-    /** 点热力图的小方块时，把列表里对应那张卡滚动到视野中央并高亮一下 */
+    /** 点热力图的小方块时，把列表里对应那道卡滚动到视野中央并高亮一下 */
     let highlightedId = $state<string | null>(null);
     let highlightTimer: ReturnType<typeof setTimeout> | null = null;
     /** 复制题目：复用刷题模式的 store（按钮状态 + toast 由它管） */
@@ -114,7 +114,7 @@
     });
 
     /**
-     * 每张卡片只显示一句话的状态：
+     * 每道卡片只显示一句话的状态：
      *   未学习 / 学习中 / 已掌握；复习中直接写「N 天后复习」，
      *   不再重复「复习中」这个词，也不显示「3/5」这种轮次进度。
      */

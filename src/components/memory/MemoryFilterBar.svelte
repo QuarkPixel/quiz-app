@@ -172,7 +172,7 @@
                 <span
                     class="text-muted-foreground self-end text-xs tabular-nums"
                 >
-                    {resultCount} 张
+                    {resultCount} 道
                 </span>
             </div>
         </div>

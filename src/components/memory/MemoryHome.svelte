@@ -29,7 +29,7 @@
     const session = useMemorySession();
 
     const hasAnythingToReview = $derived(session.reviewingCount > 0);
-    // 学到一半但一张都没掌握的卡也算「有得学」：这一轮还留着，点进去接着继续
+    // 学到一半但一道都没掌握的卡也算「有得学」：这一轮还留着，点进去接着继续
     const hasAnythingToLearn = $derived(session.learnableCount > 0);
 
     /**
@@ -72,7 +72,7 @@
                 title: "学习新的题目",
                 hint: resuming
                     ? `接着上一轮 · 已掌握 ${session.roundCompletedCount} / ${session.targetPerRound}`
-                    : `还有 ${session.learnableCount} 张没学完 · 这次 ${session.nextBatchSize} 张`,
+                    : `还有 ${session.learnableCount} 道没学完 · 这次 ${session.nextBatchSize} 道`,
                 watermark: IconCircleDashedCheck,
             };
         }
@@ -81,7 +81,7 @@
             return {
                 icon: IconSchool,
                 title: "再学一轮",
-                hint: `今天已经学过一轮 · 还有 ${session.learnableCount} 张没学完`,
+                hint: `今天已经学过一轮 · 还有 ${session.learnableCount} 道没学完`,
                 watermark: IconPlus,
             };
         }
@@ -106,7 +106,7 @@
             return {
                 icon: IconRepeat,
                 title: "复习",
-                hint: `今天有 ${session.reviewableCount} 张待复习`,
+                hint: `今天有 ${session.reviewableCount} 道待复习`,
                 watermark: IconRepeat,
             };
         }

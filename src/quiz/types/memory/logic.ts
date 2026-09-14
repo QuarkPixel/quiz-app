@@ -58,7 +58,7 @@ export const memoryLogic: QuestionTypeLogic = {
   getKeyboardAction(context, event) {
     if (event.scope !== "global") return null;
 
-    // 答案页：空格 / 回车 = 下一题；M / ; = 记错了（把这张改判成答错）
+    // 答案页：空格 / 回车 = 下一题；M / ; = 记错了（把这道改判成答错）
     if (context.showResult) {
       if (event.code === "Space" || event.code === "Enter") {
         return { kind: "next" };
