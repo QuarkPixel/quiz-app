@@ -1,59 +1,198 @@
 /**
- * 云同步的核心逻辑测试。
+ * 云同步（Gitee Gist）的核心逻辑测试 —— 纯函数那一层。
  *
  * 重点覆盖「会不会静默覆盖用户数据」这一类问题：
- *   - 哪些键会被同步（密钥绝不能进云端）
- *   - 逐行三方合并的判定
- *   - 孤儿行的判定（另一台设备的数据不能被误删）
- *   - 首次同步的取向
+ *   - 令牌 / Gist ID 的净化与掩码（令牌绝不能进云端）
+ *   - 压缩往返（压缩写错 = 云端数据读不回来）
+ *   - 逐**题库**三方合并的判定（含删除、无基准、老格式兜底）
+ *   - general 的逐字段 / 逐条目合并（新设备的空壳绝不能覆盖云端题库列表）
+ *   - 冲突裁决后的计划重算
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
+import { sanitizeSyncConfig } from "@/features/sync/config.svelte";
+import { giteeApiBase, maskToken, resolveSyncTarget } from "@/features/sync/target";
+import { decodePayload, encodePayload } from "@/features/sync/payload";
 import {
+  bankContentHash,
+  collectLocalState,
+  stableHash,
+  type BankRecord,
+  type CollectedState,
+} from "@/features/sync/collect";
+import {
+  applyResolution,
+  buildRemoteState,
   buildSyncPlan,
-  computeOrphans,
-  decideBootstrap,
-  groupByIds,
-  judgeRow,
+  forcePullPlan,
+  forcePushPlan,
+  judgeBank,
+  mergeGeneral,
   planIsEmpty,
-} from "@/features/sync/plan";
+  type RemoteBank,
+  type RemoteState,
+} from "@/features/sync/merge";
 import {
-  collectLocalEntries,
-  collectLocalTimestamps,
+  applyRemoteValue,
+  clearSyncMeta,
   installStorageHook,
   isSyncableKey,
   loadSyncMeta,
+  mtimeOf,
   saveSyncMeta,
 } from "@/features/sync/storage";
-import { sameJson } from "@/features/sync/engine.svelte";
 import {
   EMPTY_SYNC_CONFIG,
+  GIST_DESCRIPTION,
+  GIST_GENERAL_FILE,
+  GITEE_API_BASE,
+  SHARD_COUNT,
   STORAGE_KEY_SYNC_CONFIG,
   STORAGE_KEY_SYNC_META,
-  SYNC_API_PATH,
+  SYNC_PAYLOAD_VERSION,
+  bankRowKey,
   emptySyncMeta,
-  type RemoteRowMeta,
+  looksLikeSyncGist,
+  normalizeGeneralSnapshot,
+  shardFileName,
+  shardIndexFromFileName,
+  shardIndexOf,
+  type BankSnapshot,
+  type GeneralSnapshot,
+  type RemoteFile,
+  type SyncMeta,
 } from "@/features/sync/types";
-import {
-  isValidSupabaseUrl,
-  maskKey,
-  sanitizeSyncConfig,
-} from "@/features/sync/config.svelte";
-import { relayBase, resolveSyncTarget } from "@/features/sync/relay";
-import type { LocalEntry } from "@/features/sync/storage";
 
-function entry(id: string, value: string, localAt: number): LocalEntry {
-  return { id, value, localAt };
+// ── 造数据的小工具 ──────────────────────────────────────────────────────────
+
+function makeBankSnapshot(
+  name: string,
+  options: { state?: unknown; marker?: string; mode?: "quiz" | "memory" } = {},
+): BankSnapshot {
+  return {
+    mode: options.mode ?? "memory",
+    name,
+    questions: [
+      {
+        id: "q1",
+        type: "memory",
+        question: options.marker ?? "题干",
+        answer: "answer",
+      },
+    ],
+    ...(options.state === undefined ? {} : { state: options.state }),
+  };
 }
 
-function remoteRow(id: string, updatedAt: number): RemoteRowMeta {
-  return { id, updatedAt };
+function localBank(
+  hash: string,
+  name: string,
+  options: { localAt?: number; state?: unknown } = {},
+): BankRecord {
+  const snapshot = makeBankSnapshot(name, options);
+  return {
+    hash,
+    shard: shardIndexOf(hash),
+    contentHash: bankContentHash(snapshot),
+    localAt: options.localAt ?? 0,
+    snapshot,
+  };
 }
+
+function remoteBank(
+  hash: string,
+  name: string,
+  options: { state?: unknown } = {},
+): RemoteBank {
+  const snapshot = makeBankSnapshot(name, options);
+  return {
+    hash,
+    shard: shardIndexOf(hash),
+    contentHash: bankContentHash(snapshot),
+    name,
+    snapshot,
+  };
+}
+
+function localState(
+  banks: BankRecord[],
+  general: Partial<GeneralSnapshot> = {},
+): CollectedState {
+  const normalized = normalizeGeneralSnapshot(general);
+  return {
+    general: normalized,
+    generalHash: stableHash(normalized),
+    generalLocalAt: 0,
+    generalHasEdits: normalized.library.length > 0 || normalized.activeBank !== null,
+    banks: new Map(banks.map((bank) => [bank.hash, bank])),
+  };
+}
+
+function remoteState(
+  banks: RemoteBank[],
+  general: Partial<GeneralSnapshot> | null = {},
+  extraFiles: RemoteFile[] = [],
+): RemoteState {
+  const shardBanks = new Map<number, string[]>();
+  for (const bank of banks) {
+    const list = shardBanks.get(bank.shard) ?? [];
+    list.push(bank.hash);
+    shardBanks.set(bank.shard, list);
+  }
+  const files: RemoteFile[] = [...extraFiles];
+  for (const [index, hashes] of shardBanks) {
+    files.push({
+      name: shardFileName(index),
+      hash: `file-${index}`,
+      json: JSON.stringify({
+        banks: Object.fromEntries(
+          hashes.map((hash) => [
+            hash,
+            banks.find((bank) => bank.hash === hash)?.snapshot,
+          ]),
+        ),
+      }),
+    });
+  }
+  const normalized = general === null ? null : normalizeGeneralSnapshot(general);
+  // 哈希口径要和引擎一致：对**解出来的 JSON 内容**取 stableHash
+  const generalHash = normalized === null ? "" : stableHash(normalized);
+  if (normalized !== null) {
+    files.push({
+      name: GIST_GENERAL_FILE,
+      hash: generalHash,
+      json: JSON.stringify(normalized),
+    });
+  }
+  return {
+    general: normalized,
+    generalHash,
+    files,
+    banks: new Map(banks.map((bank) => [bank.hash, bank])),
+    shardBanks,
+    unreadableShards: [],
+  };
+}
+
+function metaWith(
+  rows: Record<string, string>,
+  generalBaseline: GeneralSnapshot | null = null,
+): SyncMeta {
+  const map: SyncMeta["rows"] = {};
+  for (const [name, hash] of Object.entries(rows)) {
+    map[name] = { remoteHash: hash, syncedAt: 500, remoteUpdatedAt: 500 };
+  }
+  return { lastSyncedAt: 500, bootstrapped: true, rows: map, generalBaseline };
+}
+
+const HASH_A = "aaaabbbbccccdddd";
+const HASH_B = "eeeeffff00001111";
 
 beforeEach(() => {
   installStorageHook();
   localStorage.clear();
+  clearSyncMeta();
 });
 
 afterEach(() => {
@@ -77,363 +216,760 @@ describe("哪些键会被同步", () => {
     expect(isSyncableKey("theme")).toBe(false);
     expect(isSyncableKey("quiz_app_library")).toBe(false);
   });
+});
 
-  test("收集时跳过密钥，只收题库数据", () => {
-    localStorage.setItem(
-      STORAGE_KEY_SYNC_CONFIG,
-      JSON.stringify({ supabaseKey: "sb_publishable_secret" }),
-    );
-    localStorage.setItem(
-      "quiz_app_general",
-      JSON.stringify({ activeBank: null }),
-    );
-    localStorage.setItem("quiz_app_questions_abc", "[]");
+describe("分片约定", () => {
+  test("分片文件名 ↔ 下标可往返", () => {
+    expect(shardFileName(0)).toBe("banks-0.json");
+    expect(shardFileName(8)).toBe("banks-8.json");
+    expect(shardIndexFromFileName("banks-3.json")).toBe(3);
+  });
 
-    const ids = collectLocalEntries().map((item) => item.id);
-    expect(ids).toEqual(["quiz_app_general", "quiz_app_questions_abc"]);
+  test("越界或不是分片的文件名都返回 null", () => {
+    expect(shardIndexFromFileName("banks-9.json")).toBeNull();
+    expect(shardIndexFromFileName("_general.json")).toBeNull();
+    expect(shardIndexFromFileName("readme.md")).toBeNull();
+  });
 
-    const serialized = JSON.stringify(collectLocalEntries());
-    expect(serialized).not.toContain("sb_publishable_secret");
+  test("任何题库 hash 都落在合法范围内，且同一 hash 永远落同一片", () => {
+    const hashes = Array.from({ length: 500 }, (_, i) => `h${i}`);
+    for (const hash of hashes) {
+      const index = shardIndexOf(hash);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThan(SHARD_COUNT);
+      expect(shardIndexOf(hash)).toBe(index);
+    }
+  });
+
+  test("文件总数（1 个 general + 9 个分片）正好卡在 Gitee 的 10 个上限", () => {
+    // Gitee 实测：10 个成功、11 个报「文件不能超过 10 个」
+    expect(1 + SHARD_COUNT).toBeLessThanOrEqual(10);
   });
 });
 
-describe("本地改动时间", () => {
-  test("写入一个可同步键会留下 mtime", () => {
-    localStorage.setItem("quiz_app_general", "{}");
-    const at = collectLocalTimestamps()["quiz_app_general"];
-    expect(at).toBeGreaterThan(0);
+describe("认出「可同步的代码片段」", () => {
+  // 这是「换设备时选哪条」的判据。判错就会闷头新建一条，
+  // 表现成「同一个令牌在别处同步永远拿不到数据」——之前踩过的坑。
+  test("描述对 + 含 _general.json → 是", () => {
+    expect(
+      looksLikeSyncGist({
+        description: GIST_DESCRIPTION,
+        fileNames: ["_general.json", "banks-0.json"],
+      }),
+    ).toBe(true);
   });
 
-  test("只在本地写入，不产生元数据（同步前不该假装已经同步过）", () => {
-    localStorage.setItem("quiz_app_general", "{}");
-    const meta = loadSyncMeta();
-    expect(meta.rows["quiz_app_general"]).toBeUndefined();
-    expect(meta.bootstrapped).toBe(false);
+  test("描述对但里面没有 _general.json → 不是", () => {
+    expect(
+      looksLikeSyncGist({ description: GIST_DESCRIPTION, fileNames: ["notes.md"] }),
+    ).toBe(false);
+  });
+
+  test("有 _general.json 但描述被改过 → 不是", () => {
+    expect(
+      looksLikeSyncGist({
+        description: "something else",
+        fileNames: ["_general.json"],
+      }),
+    ).toBe(false);
+  });
+
+  test("描述为空 → 不是", () => {
+    expect(
+      looksLikeSyncGist({ description: "", fileNames: ["_general.json"] }),
+    ).toBe(false);
   });
 });
 
-describe("逐行三方合并", () => {
-  test("两边都没动 → 跳过", () => {
-    expect(judgeRow(100, 100, { remoteUpdatedAt: 100, syncedAt: 100 })).toBe(
-      "skip",
-    );
+describe("压缩往返", () => {
+  test("编码再解码能拿回同一份内容", async () => {
+    const snapshot = {
+      mode: "memory",
+      name: "英语短语",
+      questions: [
+        { id: "m1", type: "memory", question: "取得进步", answer: "make progress" },
+      ],
+      state: { memory: { progress: { m1: { state: "learning", streak: 1 } } } },
+    };
+    const encoded = await encodePayload(snapshot);
+    const decoded = await decodePayload(encoded);
+    expect(decoded).not.toBeNull();
+    expect(JSON.parse(decoded as string)).toEqual(snapshot);
   });
 
-  test("只有本地动过 → 上传", () => {
-    expect(judgeRow(200, 100, { remoteUpdatedAt: 100, syncedAt: 100 })).toBe(
+  test("编码结果带版本号，且明显比原文小", async () => {
+    const questions = Array.from({ length: 200 }, (_, i) => ({
+      id: "m" + i,
+      type: "memory",
+      question: "取得进步 / 稳步推进",
+      answer: "make progress steadily",
+    }));
+    const encoded = await encodePayload({ questions });
+    const payload = JSON.parse(encoded) as { v: number; d: string };
+    expect(payload.v).toBe(SYNC_PAYLOAD_VERSION);
+    expect(encoded.length).toBeLessThan(JSON.stringify({ questions }).length / 2);
+  });
+
+  test("不是我们的格式时返回 null，而不是抛错", async () => {
+    expect(await decodePayload("这不是 JSON")).toBeNull();
+    expect(await decodePayload('{"hello":1}')).toBeNull();
+    expect(await decodePayload('{"v":1}')).toBeNull();
+  });
+
+  test("版本比当前新时拒绝解码（别按旧规则解新数据）", async () => {
+    expect(await decodePayload(JSON.stringify({ v: 99, d: "abc" }))).toBeNull();
+  });
+});
+
+describe("逐题库三方合并", () => {
+  test("两边内容一样 → 跳过（哪怕 mtime 很新鲜）", () => {
+    // 应用一启动就会重写一遍本地配置 / 进度，mtime 常常是新鲜的；
+    // 只看 mtime 会把「其实没变」判成冲突。
+    const local = localBank(HASH_A, "题库", { localAt: 999999 });
+    const remote = remoteBank(HASH_A, "题库");
+    expect(judgeBank({ local, remote })).toBe("skip");
+  });
+
+  test("只有本地改过 → 上传", () => {
+    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库");
+    expect(
+      judgeBank({
+        local,
+        remote,
+        row: { remoteHash: remote.contentHash, syncedAt: 500, remoteUpdatedAt: 0 },
+      }),
+    ).toBe("push");
+  });
+
+  test("只有云端改过 → 下载", () => {
+    const local = localBank(HASH_A, "题库", { localAt: 100 });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(
+      judgeBank({
+        local,
+        remote,
+        row: { remoteHash: "旧哈希", syncedAt: 500, remoteUpdatedAt: 0 },
+      }),
+    ).toBe("pull");
+  });
+
+  test("两边都改过 → 冲突，绝不自动选边", () => {
+    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(
+      judgeBank({
+        local,
+        remote,
+        row: { remoteHash: "旧哈希", syncedAt: 500, remoteUpdatedAt: 0 },
+      }),
+    ).toBe("conflict");
+  });
+
+  test("没有基准时：本地没进度、云端有 → 听云端的（本地没什么可丢）", () => {
+    const local = localBank(HASH_A, "题库");
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(judgeBank({ local, remote })).toBe("pull");
+  });
+
+  test("没有基准时：只有本地有进度 → 上传", () => {
+    const local = localBank(HASH_A, "题库", { state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库");
+    expect(judgeBank({ local, remote })).toBe("push");
+  });
+
+  test("没有基准、两边都有进度但不一样 → 冲突（不猜）", () => {
+    const local = localBank(HASH_A, "题库", { state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(judgeBank({ local, remote })).toBe("conflict");
+  });
+
+  test("只有本地有、没有基准 → 新导入的题库，上传", () => {
+    expect(judgeBank({ local: localBank(HASH_A, "题库"), remote: undefined })).toBe(
       "push",
     );
   });
 
-  test("只有云端动过 → 下载", () => {
-    expect(judgeRow(100, 200, { remoteUpdatedAt: 100, syncedAt: 100 })).toBe(
+  test("只有本地有、但有基准 → 云端删掉了它，本地跟着删", () => {
+    expect(
+      judgeBank({
+        local: localBank(HASH_A, "题库"),
+        remote: undefined,
+        row: { remoteHash: "h", syncedAt: 500, remoteUpdatedAt: 0 },
+      }),
+    ).toBe("deleteLocal");
+  });
+
+  test("只有云端有、没有基准 → 别的设备新增的，下载", () => {
+    expect(judgeBank({ local: undefined, remote: remoteBank(HASH_A, "题库") })).toBe(
       "pull",
     );
   });
 
-  test("两边都动过 → 冲突，绝不自动选边", () => {
-    expect(judgeRow(200, 300, { remoteUpdatedAt: 100, syncedAt: 100 })).toBe(
-      "conflict",
-    );
+  test("只有云端有、但有基准 → 这台设备删过它，回收云端那一份", () => {
+    expect(
+      judgeBank({
+        local: undefined,
+        remote: remoteBank(HASH_A, "题库"),
+        row: { remoteHash: "h", syncedAt: 500, remoteUpdatedAt: 0 },
+      }),
+    ).toBe("deleteRemote");
   });
 
-  test("没有元数据（首次见到这一行）时，两边都有内容也算冲突", () => {
-    expect(judgeRow(100, 200, undefined)).toBe("conflict");
+  test("老格式（只有分片文件的基准）也能当兜底：文件没变 → 上传", () => {
+    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库");
+    expect(
+      judgeBank({
+        local,
+        remote,
+        fileRow: { remoteHash: "文件哈希", syncedAt: 500, remoteUpdatedAt: 0 },
+        remoteFileHash: "文件哈希",
+      }),
+    ).toBe("push");
+  });
+
+  test("老格式兜底：分片文件变了、本地也动过 → 冲突", () => {
+    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(
+      judgeBank({
+        local,
+        remote,
+        fileRow: { remoteHash: "旧文件哈希", syncedAt: 500, remoteUpdatedAt: 0 },
+        remoteFileHash: "新文件哈希",
+      }),
+    ).toBe("conflict");
   });
 });
 
-describe("孤儿行", () => {
-  // 「孤儿」= 云端有这一行，而本地既没有这一行、**又有它的元数据**。
-  //
-  // 元数据是关键，它是「这台设备见过这一行」的证据：
-  //   - 有元数据、本地却没有 → 本地主动删掉了它（删题库 / 换题库）→ 该回收云端那一行
-  //   - 连元数据都没有         → 这台设备从没见过它（另一台设备刚导入的新题库）
-  //                            → 那是别人的数据，绝不能删
-  //
-  // 失败要偏保守：漏删一行只是云端多留一条垃圾，多删一行就是不可恢复的数据丢失，
-  // 所以判据宁可站在「不删」那一边。
-  test("本地没有、也没有元数据 → 别的设备的数据，不许删", () => {
-    expect(
-      computeOrphans(new Set(), ["quiz_app_state_new"], emptySyncMeta()),
-    ).toEqual(["quiz_app_state_new"]);
-  });
+describe("合并计划", () => {
+  test("本地改了 A、云端改了 B → 各走各的，互不牵连", () => {
+    const localA = localBank(HASH_A, "题库一", { localAt: 900, state: { round: 2 } });
+    const remoteA = remoteBank(HASH_A, "题库一");
+    const localB = localBank(HASH_B, "题库二", { localAt: 100 });
+    const remoteB = remoteBank(HASH_B, "题库二", { state: { round: 3 } });
 
-  test("本地没有、但有元数据 → 这台设备删掉了它，该回收云端那一行", () => {
-    const meta = {
-      lastSyncedAt: 1,
-      bootstrapped: true,
-      rows: { quiz_app_state_gone: { remoteUpdatedAt: 1, syncedAt: 1 } },
-    };
-    expect(computeOrphans(new Set(), ["quiz_app_state_gone"], meta)).toEqual(
-      [],
-    );
-  });
-
-  test("本地存在的行永远不是孤儿", () => {
-    expect(
-      computeOrphans(
-        new Set(["quiz_app_state_here"]),
-        ["quiz_app_state_here"],
-        emptySyncMeta(),
-      ),
-    ).toEqual([]);
-  });
-
-  test("关键不变式：有没有元数据，决定同一行删不删", () => {
-    const id = "quiz_app_state_same";
-    const remoteIds = [id];
-    const withMeta = computeOrphans(new Set(), remoteIds, {
-      lastSyncedAt: 1,
-      bootstrapped: true,
-      rows: { [id]: { remoteUpdatedAt: 1, syncedAt: 1 } },
+    const plan = buildSyncPlan({
+      local: localState([localA, localB]),
+      remote: remoteState([remoteA, remoteB]),
+      meta: metaWith({
+        [bankRowKey(HASH_A)]: remoteA.contentHash,
+        [bankRowKey(HASH_B)]: "云端改动之前的哈希",
+      }),
     });
-    const withoutMeta = computeOrphans(new Set(), remoteIds, emptySyncMeta());
 
-    // 同一行、同一份远端数据，唯一的差别是本地有没有它的元数据。
-    // 两者的结论必须不同，否则「本地删题库」和「别的设备加题库」就分不开了。
-    expect(withMeta).not.toEqual(withoutMeta);
-    // 保守方向：没有元数据时必须保留（那是别人的数据）
-    expect(withoutMeta).toEqual(remoteIds);
-  });
-});
-
-describe("同步计划", () => {
-  const meta = {
-    lastSyncedAt: 500,
-    bootstrapped: true,
-    rows: {
-      quiz_app_general: { remoteUpdatedAt: 500, syncedAt: 500 },
-      quiz_app_state_a: { remoteUpdatedAt: 500, syncedAt: 500 },
-      quiz_app_state_gone: { remoteUpdatedAt: 500, syncedAt: 500 },
-    },
-  };
-
-  const local = [
-    entry("quiz_app_general", '{"v":2}', 600),
-    entry("quiz_app_state_a", '{"v":1}', 500),
-    entry("quiz_app_state_b", '{"v":1}', 400),
-  ];
-  const remote = [
-    remoteRow("quiz_app_general", 500),
-    remoteRow("quiz_app_state_a", 700),
-    remoteRow("quiz_app_state_gone", 500),
-    remoteRow("quiz_app_questions_new", 300),
-  ];
-
-  const plan = buildSyncPlan({ local, remote, meta });
-
-  test("本地改过的行排进上传", () => {
-    expect(plan.pushUpdated.map((item) => item.id)).toEqual([
-      "quiz_app_general",
-    ]);
+    const verdicts = Object.fromEntries(
+      plan.actions.map((action) => [action.hash, action.verdict]),
+    );
+    expect(verdicts[HASH_A]).toBe("push");
+    expect(verdicts[HASH_B]).toBe("pull");
+    expect(plan.conflicts).toEqual([]);
+    expect(plan.pushShards).toEqual([shardIndexOf(HASH_A)]);
   });
 
-  test("云端改过的行排进下载", () => {
-    expect(plan.pullUpdated).toEqual(["quiz_app_state_a"]);
+  test("冲突的分片整片冻结：同一片里别的题库这一轮也不上传", () => {
+    // 分片是整体上传的，为了传同片的另一个题库而把它一起推上去，
+    // 就等于替用户选了「保留本地」。
+    const sameShard = findSameShardHashes(2);
+    const [hash1, hash2] = sameShard;
+    const local1 = localBank(hash1, "题库一", { localAt: 900, state: { round: 2 } });
+    const remote1 = remoteBank(hash1, "题库一", { state: { round: 3 } });
+    const local2 = localBank(hash2, "题库二", { localAt: 900, state: { round: 5 } });
+    const remote2 = remoteBank(hash2, "题库二");
+
+    const plan = buildSyncPlan({
+      local: localState([local1, local2]),
+      remote: remoteState([remote1, remote2]),
+      meta: metaWith({
+        [bankRowKey(hash1)]: "旧哈希",
+        [bankRowKey(hash2)]: remote2.contentHash,
+      }),
+    });
+
+    expect(plan.conflicts.map((conflict) => conflict.hash)).toEqual([hash1]);
+    expect(plan.pushShards).toEqual([]);
   });
 
-  test("本地新增的行排进上传", () => {
-    expect(plan.pushNew.map((item) => item.id)).toEqual(["quiz_app_state_b"]);
+  test("云端题库一个不剩 → 那个分片文件也该回收", () => {
+    const remote = remoteState([remoteBank(HASH_A, "题库一")]);
+    const plan = buildSyncPlan({
+      local: localState([]),
+      remote,
+      meta: metaWith({ [bankRowKey(HASH_A)]: "h" }),
+    });
+
+    expect(plan.actions[0].verdict).toBe("deleteRemote");
+    expect(plan.deleteRemoteFiles).toEqual([shardFileName(shardIndexOf(HASH_A))]);
   });
 
-  test("云端独有、这台设备从没见过的行 → 下载（换设备靠这条恢复）", () => {
-    expect(plan.pullNew).toEqual(["quiz_app_state_gone"]);
+  test("旧版「每题库一个文件」的残留一律回收", () => {
+    const legacy: RemoteFile = {
+      name: "a1b2c3d4e5f60718.json",
+      hash: "h",
+      json: "{}",
+    };
+    const plan = buildSyncPlan({
+      local: localState([]),
+      remote: remoteState([], {}, [legacy]),
+      meta: emptySyncMeta(),
+    });
+    expect(plan.deleteRemoteFiles).toEqual(["a1b2c3d4e5f60718.json"]);
   });
 
-  test("云端独有、但本地主动删过的行（有元数据）→ 当孤儿回收", () => {
-    expect(plan.orphans).toEqual(["quiz_app_questions_new"]);
+  test("认不出来的陌生文件不动（可能是别人的东西）", () => {
+    const stranger: RemoteFile = { name: "notes.md", hash: "h", json: null };
+    const plan = buildSyncPlan({
+      local: localState([]),
+      remote: remoteState([], {}, [stranger]),
+      meta: emptySyncMeta(),
+    });
+    expect(plan.deleteRemoteFiles).toEqual([]);
   });
 
   test("两边一致时计划是空的", () => {
-    const stable = buildSyncPlan({
-      local: [entry("quiz_app_general", "{}", 500)],
-      remote: [remoteRow("quiz_app_general", 500)],
-      meta,
+    const local = localBank(HASH_A, "题库一", { localAt: 100 });
+    const remote = remoteBank(HASH_A, "题库一");
+    const general = {
+      library: [{ hash: HASH_A, name: "题库一", mode: "memory" as const, count: 1 }],
+    };
+    const plan = buildSyncPlan({
+      local: localState([local], general),
+      remote: remoteState([remote], general),
+      meta: metaWith({ [bankRowKey(HASH_A)]: remote.contentHash }),
     });
-    expect(planIsEmpty(stable)).toBe(true);
+    expect(planIsEmpty(plan)).toBe(true);
   });
 
-  test("按 id 分组会丢掉重复项（后一个覆盖前一个）", () => {
-    const grouped = groupByIds(
-      [entry("a", "1", 1), entry("a", "2", 2)],
-      [remoteRow("a", 5), remoteRow("b", 6)],
-    );
-    expect(grouped.local.get("a")?.value).toBe("2");
-    expect(grouped.remote.size).toBe(2);
-  });
-});
-
-describe("首次同步的取向", () => {
-  test("云端为空 → 上传本地", () => {
-    expect(
-      decideBootstrap({
-        hasLocalData: true,
-        hasRemoteData: false,
-        localMatchesRemote: false,
-        latestLocalAt: 100,
-      }),
-    ).toBe("pushLocal");
-  });
-
-  test("本地为空 → 下载云端（新设备 / 清过缓存）", () => {
-    expect(
-      decideBootstrap({
-        hasLocalData: false,
-        hasRemoteData: true,
-        localMatchesRemote: false,
-        latestLocalAt: 0,
-      }),
-    ).toBe("pullRemote");
-  });
-
-  test("两边都有数据且内容一致 → 什么都不做，只补基准线", () => {
-    expect(
-      decideBootstrap({
-        hasLocalData: true,
-        hasRemoteData: true,
-        localMatchesRemote: true,
-        latestLocalAt: 100,
-      }),
-    ).toBeNull();
-  });
-
-  test("两边都有数据、本地有未推送的改动 → 偏向本地", () => {
-    expect(
-      decideBootstrap({
-        hasLocalData: true,
-        hasRemoteData: true,
-        localMatchesRemote: false,
-        latestLocalAt: 100,
-      }),
-    ).toBe("pushLocal");
-  });
-
-  test("两边都有数据、本地从未改过 → 偏向云端", () => {
-    expect(
-      decideBootstrap({
-        hasLocalData: true,
-        hasRemoteData: true,
-        localMatchesRemote: false,
-        latestLocalAt: 0,
-      }),
-    ).toBe("pullRemote");
-  });
-});
-
-describe("JSON 等价判定", () => {
-  test("键序不同但内容相同算等价", () => {
-    expect(sameJson('{"a":1,"b":2}', '{"b":2,"a":1}')).toBe(true);
-  });
-
-  test("内容不同不算等价", () => {
-    expect(sameJson('{"a":1}', '{"a":2}')).toBe(false);
-  });
-
-  test("一边缺失时只有同为 null 才算等价", () => {
-    expect(sameJson(null, null)).toBe(true);
-    expect(sameJson("{}", null)).toBe(false);
-  });
-});
-
-describe("同步元数据", () => {
-  test("读写一轮保持不变", () => {
-    saveSyncMeta({
-      lastSyncedAt: 123,
-      bootstrapped: true,
-      rows: { quiz_app_general: { remoteUpdatedAt: 100, syncedAt: 123 } },
+  test("强制上传 / 强制下载：无条件按一边来，不算冲突", () => {
+    const local = localBank(HASH_A, "题库一", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库一", { state: { round: 3 } });
+    const remote2 = remoteBank(HASH_B, "题库二");
+    const meta = metaWith({
+      [bankRowKey(HASH_A)]: "旧",
+      [bankRowKey(HASH_B)]: "旧",
     });
-    const meta = loadSyncMeta();
-    expect(meta.bootstrapped).toBe(true);
-    expect(meta.lastSyncedAt).toBe(123);
-    expect(meta.rows["quiz_app_general"]?.remoteUpdatedAt).toBe(100);
+
+    const push = forcePushPlan(localState([local]), remoteState([remote, remote2]), meta);
+    expect(push.conflicts).toEqual([]);
+    expect(push.actions.find((a) => a.hash === HASH_A)?.verdict).toBe("push");
+    expect(push.actions.find((a) => a.hash === HASH_B)?.verdict).toBe("deleteRemote");
+
+    const pull = forcePullPlan(localState([local]), remoteState([remote]), meta);
+    expect(pull.conflicts).toEqual([]);
+    expect(pull.actions[0].verdict).toBe("pull");
   });
 
-  test("元数据里混进不可同步的键会被丢掉", () => {
-    localStorage.setItem(
-      STORAGE_KEY_SYNC_META,
-      JSON.stringify({
-        lastSyncedAt: 1,
-        bootstrapped: true,
-        rows: {
-          [STORAGE_KEY_SYNC_CONFIG]: { remoteUpdatedAt: 1, syncedAt: 1 },
-          quiz_app_general: { remoteUpdatedAt: 1, syncedAt: 1 },
+  test("冲突裁决后重算计划：keepLocal 全推、keepRemote 全拉", () => {
+    const local = localBank(HASH_A, "题库一", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库一", { state: { round: 3 } });
+    const plan = buildSyncPlan({
+      local: localState([local]),
+      remote: remoteState([remote]),
+      meta: metaWith({ [bankRowKey(HASH_A)]: "旧" }),
+    });
+    expect(plan.conflicts).toHaveLength(1);
+
+    const keepLocal = applyResolution(plan, new Map([[HASH_A, "keepLocal"]]));
+    expect(keepLocal.conflicts).toEqual([]);
+    expect(keepLocal.actions[0].verdict).toBe("push");
+    expect(keepLocal.pushShards).toEqual([shardIndexOf(HASH_A)]);
+
+    const keepRemote = applyResolution(plan, new Map([[HASH_A, "keepRemote"]]));
+    expect(keepRemote.conflicts).toEqual([]);
+    expect(keepRemote.actions[0].verdict).toBe("pull");
+    expect(keepRemote.pushShards).toEqual([]);
+  });
+
+  test("裁决只作用于用户看见过的题库：新冒出来的冲突继续留着问", () => {
+    // 两次同步之间又有一台设备改了别的题库时，绝不能拿上一次的答案
+    // 顺手把它也裁决掉——用户没见过的冲突必须重新问。
+    const sameShard = findSameShardHashes(2);
+    const [hash1, hash2] = sameShard;
+    const local1 = localBank(hash1, "题库一", { localAt: 900, state: { round: 2 } });
+    const remote1 = remoteBank(hash1, "题库一", { state: { round: 3 } });
+    const local2 = localBank(hash2, "题库二", { localAt: 900, state: { round: 5 } });
+    const remote2 = remoteBank(hash2, "题库二", { state: { round: 6 } });
+
+    const plan = buildSyncPlan({
+      local: localState([local1, local2]),
+      remote: remoteState([remote1, remote2]),
+      meta: metaWith({
+        [bankRowKey(hash1)]: "旧哈希",
+        [bankRowKey(hash2)]: "旧哈希",
+      }),
+    });
+    expect(plan.conflicts).toHaveLength(2);
+
+    // 用户只对题库一做了选择
+    const resolved = applyResolution(plan, new Map([[hash1, "keepLocal"]]));
+    expect(resolved.actions.find((a) => a.hash === hash1)?.verdict).toBe("push");
+    expect(resolved.actions.find((a) => a.hash === hash2)?.verdict).toBe("conflict");
+    expect(resolved.conflicts.map((c) => c.hash)).toEqual([hash2]);
+    // 还剩冲突 → 那一片不能动
+    expect(resolved.pushShards).toEqual([]);
+  });
+});
+
+describe("general 的合并", () => {
+  const remoteGeneral = normalizeGeneralSnapshot({
+    activeBank: HASH_A,
+    defaultSettings: { activePoolSize: 20 },
+    library: [{ hash: HASH_A, name: "题库一", mode: "memory", count: 1 }],
+    globalSettings: { soundEnabled: true },
+  });
+
+  test("新设备的空壳绝不能覆盖云端的题库列表", () => {
+    // 线上 bug：新设备的 general 是个默认空壳，早期版本会把它推上云端，
+    // 于是所有设备的题库列表都被清空。
+    const shell = normalizeGeneralSnapshot({
+      activeBank: null,
+      defaultSettings: {},
+      library: [],
+      globalSettings: {},
+    });
+    const merged = mergeGeneral({
+      local: shell,
+      remote: remoteGeneral,
+      base: null,
+      actions: [
+        {
+          hash: HASH_A,
+          name: "题库一",
+          verdict: "pull",
+          remoteHash: "h",
+          localAt: 0,
         },
-      }),
-    );
-    const meta = loadSyncMeta();
-    expect(meta.rows[STORAGE_KEY_SYNC_CONFIG]).toBeUndefined();
-    expect(meta.rows["quiz_app_general"]).toBeDefined();
+      ],
+      localBanks: new Map(),
+      remoteBanks: new Map([[HASH_A, remoteBank(HASH_A, "题库一")]]),
+      localHasEdits: false,
+    });
+
+    expect(merged.library.map((entry) => entry.hash)).toEqual([HASH_A]);
+    expect(merged.activeBank).toBe(HASH_A);
+    expect(merged.globalSettings).toEqual({ soundEnabled: true });
   });
 
-  test("元数据损坏时回落到空值，不抛错", () => {
-    localStorage.setItem(STORAGE_KEY_SYNC_META, "{ 这不是 JSON");
-    expect(loadSyncMeta()).toEqual(emptySyncMeta());
+  test("题库列表是合并后的题库集合：两边各自导入的都在，删掉的消失", () => {
+    const local = normalizeGeneralSnapshot({
+      activeBank: HASH_B,
+      defaultSettings: {},
+      library: [{ hash: HASH_B, name: "题库二", mode: "memory", count: 1 }],
+      globalSettings: {},
+    });
+    const merged = mergeGeneral({
+      local,
+      remote: remoteGeneral,
+      base: null,
+      actions: [
+        { hash: HASH_A, name: "题库一", verdict: "pull", localAt: 0 },
+        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+      ],
+      localBanks: new Map([[HASH_B, localBank(HASH_B, "题库二")]]),
+      remoteBanks: new Map([[HASH_A, remoteBank(HASH_A, "题库一")]]),
+      localHasEdits: true,
+    });
+
+    expect(merged.library.map((entry) => entry.hash)).toEqual([HASH_B, HASH_A]);
+    expect(merged.activeBank).toBe(HASH_B);
+  });
+
+  test("激活题库被删掉时退到云端那个，都没有就置空", () => {
+    const local = normalizeGeneralSnapshot({
+      activeBank: HASH_B,
+      library: [{ hash: HASH_B, name: "题库二" }],
+    });
+    const merged = mergeGeneral({
+      local,
+      remote: remoteGeneral,
+      base: null,
+      actions: [
+        { hash: HASH_A, name: "题库一", verdict: "skip", localAt: 0 },
+        { hash: HASH_B, name: "题库二", verdict: "deleteLocal", localAt: 0 },
+      ],
+      localBanks: new Map([[HASH_B, localBank(HASH_B, "题库二")]]),
+      remoteBanks: new Map([[HASH_A, remoteBank(HASH_A, "题库一")]]),
+      localHasEdits: true,
+    });
+    expect(merged.activeBank).toBe(HASH_A);
+  });
+
+  test("全局设置逐字段三方合并：只有云端改过就听云端的", () => {
+    const base = normalizeGeneralSnapshot({ globalSettings: { soundEnabled: true } });
+    const local = normalizeGeneralSnapshot({ globalSettings: { soundEnabled: true } });
+    const remote = normalizeGeneralSnapshot({ globalSettings: { soundEnabled: false } });
+    const merged = mergeGeneral({
+      local,
+      remote,
+      base,
+      actions: [],
+      localBanks: new Map(),
+      remoteBanks: new Map(),
+      localHasEdits: true,
+    });
+    expect(merged.globalSettings).toEqual({ soundEnabled: false });
+  });
+
+  test("全局设置逐字段三方合并：只有本地改过就听本地的", () => {
+    const base = normalizeGeneralSnapshot({ globalSettings: { soundEnabled: true } });
+    const local = normalizeGeneralSnapshot({ globalSettings: { soundEnabled: false } });
+    const remote = normalizeGeneralSnapshot({ globalSettings: { soundEnabled: true } });
+    const merged = mergeGeneral({
+      local,
+      remote,
+      base,
+      actions: [],
+      localBanks: new Map(),
+      remoteBanks: new Map(),
+      localHasEdits: true,
+    });
+    expect(merged.globalSettings).toEqual({ soundEnabled: false });
+  });
+
+  test("题库顺序：云端调了顺序、本地没动 → 跟着云端", () => {
+    const base = normalizeGeneralSnapshot({
+      library: [
+        { hash: HASH_A, name: "题库一" },
+        { hash: HASH_B, name: "题库二" },
+      ],
+    });
+    const local = normalizeGeneralSnapshot({ library: base.library });
+    const remote = normalizeGeneralSnapshot({
+      library: [
+        { hash: HASH_B, name: "题库二" },
+        { hash: HASH_A, name: "题库一" },
+      ],
+    });
+
+    const merged = mergeGeneral({
+      local,
+      remote,
+      base,
+      actions: [
+        { hash: HASH_A, name: "题库一", verdict: "skip", localAt: 0 },
+        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+      ],
+      localBanks: new Map([
+        [HASH_A, localBank(HASH_A, "题库一")],
+        [HASH_B, localBank(HASH_B, "题库二")],
+      ]),
+      remoteBanks: new Map([
+        [HASH_A, remoteBank(HASH_A, "题库一")],
+        [HASH_B, remoteBank(HASH_B, "题库二")],
+      ]),
+      localHasEdits: true,
+    });
+
+    expect(merged.library.map((entry) => entry.hash)).toEqual([HASH_B, HASH_A]);
+  });
+
+  test("题库顺序：本地调了顺序、云端没动 → 保留本地", () => {
+    const base = normalizeGeneralSnapshot({
+      library: [
+        { hash: HASH_A, name: "题库一" },
+        { hash: HASH_B, name: "题库二" },
+      ],
+    });
+    const local = normalizeGeneralSnapshot({
+      library: [
+        { hash: HASH_B, name: "题库二" },
+        { hash: HASH_A, name: "题库一" },
+      ],
+    });
+    const remote = normalizeGeneralSnapshot({ library: base.library });
+
+    const merged = mergeGeneral({
+      local,
+      remote,
+      base,
+      actions: [
+        { hash: HASH_A, name: "题库一", verdict: "skip", localAt: 0 },
+        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+      ],
+      localBanks: new Map([
+        [HASH_A, localBank(HASH_A, "题库一")],
+        [HASH_B, localBank(HASH_B, "题库二")],
+      ]),
+      remoteBanks: new Map([
+        [HASH_A, remoteBank(HASH_A, "题库一")],
+        [HASH_B, remoteBank(HASH_B, "题库二")],
+      ]),
+      localHasEdits: true,
+    });
+
+    expect(merged.library.map((entry) => entry.hash)).toEqual([HASH_B, HASH_A]);
+  });
+
+  test("删掉题库不该被当成「重排」：剩下那些的顺序保持不变", () => {
+    const base = normalizeGeneralSnapshot({
+      library: [
+        { hash: HASH_A, name: "题库一" },
+        { hash: HASH_B, name: "题库二" },
+      ],
+    });
+    const local = normalizeGeneralSnapshot({
+      library: [{ hash: HASH_B, name: "题库二" }],
+    });
+    const remote = normalizeGeneralSnapshot({ library: base.library });
+
+    const merged = mergeGeneral({
+      local,
+      remote,
+      base,
+      actions: [
+        { hash: HASH_A, name: "题库一", verdict: "deleteLocal", localAt: 0 },
+        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+      ],
+      localBanks: new Map([[HASH_B, localBank(HASH_B, "题库二")]]),
+      remoteBanks: new Map([
+        [HASH_A, remoteBank(HASH_A, "题库一")],
+        [HASH_B, remoteBank(HASH_B, "题库二")],
+      ]),
+      localHasEdits: true,
+    });
+
+    expect(merged.library.map((entry) => entry.hash)).toEqual([HASH_B]);
+  });
+
+  test("题库名按「哪边改过听哪边」：云端改了名就跟着改", () => {
+    const base = normalizeGeneralSnapshot({
+      library: [{ hash: HASH_A, name: "旧名字" }],
+    });
+    const local = normalizeGeneralSnapshot({
+      library: [{ hash: HASH_A, name: "旧名字" }],
+    });
+    const remote = normalizeGeneralSnapshot({
+      library: [{ hash: HASH_A, name: "新名字" }],
+    });
+    const merged = mergeGeneral({
+      local,
+      remote,
+      base,
+      actions: [{ hash: HASH_A, name: "新名字", verdict: "skip", localAt: 0 }],
+      localBanks: new Map([[HASH_A, localBank(HASH_A, "旧名字")]]),
+      remoteBanks: new Map([[HASH_A, remoteBank(HASH_A, "新名字")]]),
+      localHasEdits: true,
+    });
+    expect(merged.library[0].name).toBe("新名字");
   });
 });
 
-describe("同步配置（地址 + 密钥）", () => {
-  test("全新安装时两样都是空的，但自动同步是开的", () => {
-    expect(EMPTY_SYNC_CONFIG.supabaseUrl).toBe("");
-    expect(EMPTY_SYNC_CONFIG.supabaseKey).toBe("");
+describe("把云端文件解成状态", () => {
+  test("分片里的题库、general、以及认不出来的文件都认得清", async () => {
+    const snapshot = {
+      banks: { [HASH_A]: makeBankSnapshot("题库一", { state: { round: 2 } }) },
+    };
+    const files: RemoteFile[] = [
+      {
+        name: GIST_GENERAL_FILE,
+        hash: "g",
+        json: JSON.stringify({ activeBank: HASH_A, library: [] }),
+      },
+      {
+        name: shardFileName(shardIndexOf(HASH_A)),
+        hash: "s",
+        json: JSON.stringify(snapshot),
+      },
+      { name: "banks-1.json", hash: "broken", json: "这不是 JSON" },
+      { name: "notes.md", hash: "x", json: null },
+    ];
+
+    const remote = buildRemoteState(files);
+    expect(remote.banks.size).toBe(1);
+    expect(remote.banks.get(HASH_A)?.name).toBe("题库一");
+    expect(remote.general?.activeBank).toBe(HASH_A);
+    expect(remote.unreadableShards).toEqual(["banks-1.json"]);
+  });
+
+  test("空的分片文件不会被当成有内容", () => {
+    const remote = buildRemoteState([
+      { name: "banks-2.json", hash: "s", json: JSON.stringify({ banks: {} }) },
+    ]);
+    expect(remote.banks.size).toBe(0);
+    expect(remote.shardBanks.get(2)).toEqual([]);
+  });
+
+  test("题库名相同时内容哈希一致（云端解出来和本地收集的对得上）", () => {
+    localStorage.setItem(
+      `quiz_app_questions_${HASH_A}`,
+      JSON.stringify(makeBankSnapshot("题库一").questions),
+    );
+    localStorage.setItem(
+      `quiz_app_state_${HASH_A}`,
+      JSON.stringify({ round: 2 }),
+    );
+    localStorage.setItem(
+      "quiz_app_general",
+      JSON.stringify({ library: [{ hash: HASH_A, name: "题库一", mode: "memory" }] }),
+    );
+
+    const local = collectLocalState(mtimeOf);
+    const remote = buildRemoteState([
+      {
+        name: shardFileName(shardIndexOf(HASH_A)),
+        hash: "s",
+        json: JSON.stringify({
+          banks: { [HASH_A]: makeBankSnapshot("题库一", { state: { round: 2 } }) },
+        }),
+      },
+    ]);
+
+    expect(local.banks.get(HASH_A)?.contentHash).toBe(
+      remote.banks.get(HASH_A)?.contentHash,
+    );
+  });
+
+  test("题库名不算进内容哈希（改个名不该变成「题库内容变了」）", () => {
+    const a = makeBankSnapshot("旧名字", { state: { round: 2 } });
+    const b = makeBankSnapshot("新名字", { state: { round: 2 } });
+    expect(bankContentHash(a)).toBe(bankContentHash(b));
+  });
+});
+
+describe("同步配置（令牌 + Gist ID）", () => {
+  test("全新安装时没有令牌，但自动同步是开的", () => {
+    expect(EMPTY_SYNC_CONFIG.token).toBe("");
+    expect(EMPTY_SYNC_CONFIG.gistId).toBe("");
     expect(EMPTY_SYNC_CONFIG.autoSync).toBe(true);
   });
 
   test("两端的空白会被去掉", () => {
     expect(
       sanitizeSyncConfig({
-        supabaseUrl: "  https://abcd.supabase.co  ",
-        supabaseKey: "  sb_secret_xyz  ",
+        token: "  abc123  ",
+        gistId: "  g1  ",
+        gistUrl: "  https://gitee.com/me/codes/g1  ",
       }),
     ).toEqual({
-      supabaseUrl: "https://abcd.supabase.co",
-      supabaseKey: "sb_secret_xyz",
+      enabled: true,
+      token: "abc123",
+      gistId: "g1",
+      gistUrl: "https://gitee.com/me/codes/g1",
       autoSync: true,
     });
   });
 
-  test("地址必须是 https 的 Supabase 域名", () => {
-    expect(isValidSupabaseUrl("https://abcd.supabase.co")).toBe(true);
-    expect(isValidSupabaseUrl("https://abcd.supabase.in")).toBe(true);
-    expect(isValidSupabaseUrl("http://abcd.supabase.co")).toBe(false);
-    expect(isValidSupabaseUrl("https://example.com")).toBe(false);
-    expect(isValidSupabaseUrl("https://abcd.supabase.co/rest/v1")).toBe(false);
-    expect(isValidSupabaseUrl("")).toBe(false);
-  });
-
-  test("旧版把两样塞在一个 credentials 字段里时，会自动拆开", () => {
-    expect(
-      sanitizeSyncConfig({
-        credentials: "https://abcd.supabase.co sb_secret_xyz",
-        autoSync: false,
-      }),
-    ).toEqual({
-      supabaseUrl: "https://abcd.supabase.co",
-      supabaseKey: "sb_secret_xyz",
+  test("旧版存储后端的凭据一律丢弃（它们在 Gitee 上没有意义）", () => {
+    const legacy = sanitizeSyncConfig({
+      supabaseUrl: "https://xxxx.supabase.co",
+      supabaseKey: "sb_secret_xxx",
+      credentials: "https://xxxx.supabase.co sb_secret_xxx",
+      relayUrl: "/api/sync",
       autoSync: false,
     });
+    expect(legacy.token).toBe("");
+    expect(legacy.gistId).toBe("");
+    expect(legacy.autoSync).toBe(false);
+    expect(JSON.stringify(legacy)).not.toContain("supabase");
   });
 
-  test("更早那种带 relayUrl 的形状也能读，且丢掉已经没用的中转地址", () => {
-    expect(
-      sanitizeSyncConfig({
-        supabaseUrl: "https://abcd.supabase.co",
-        supabaseKey: "sb_secret_xyz",
-        relayUrl: "https://old.example.com/api/sync",
-        autoSync: true,
-      }),
-    ).toEqual({
-      supabaseUrl: "https://abcd.supabase.co",
-      supabaseKey: "sb_secret_xyz",
-      autoSync: true,
-    });
-  });
-
-  test("掩码展示不会泄露密钥主体", () => {
-    const masked = maskKey("sb_secret_abcdefghijklmnop");
+  test("掩码展示不会泄露令牌主体", () => {
+    const masked = maskToken("35fe6113451a4e4a17b98e8a79264af6");
     expect(masked).toContain("…");
-    expect(masked).not.toContain("abcdefghijklmnop");
-    expect(maskKey("")).toBe("");
-    expect(maskKey("short")).toBe("••••");
+    expect(masked).not.toContain("1a4e4a17b98e8a79264af6");
+    expect(maskToken("")).toBe("");
+    expect(maskToken("short")).toBe("••••");
   });
 
   test("非法输入回落到默认值，不抛错", () => {
@@ -442,40 +978,122 @@ describe("同步配置（地址 + 密钥）", () => {
   });
 });
 
-describe("后端地址与同步目标", () => {
-  test("默认走同源路径，用户不需要填后端地址", () => {
-    expect(relayBase()).toBe(SYNC_API_PATH);
+describe("同步目标", () => {
+  test("默认指向官方 Gitee API", () => {
+    expect(giteeApiBase()).toBe(GITEE_API_BASE);
   });
 
-  test("地址 + 密钥 + 同源路径合成同步目标", () => {
+  test("令牌 + Gist ID 合成同步目标", () => {
     const { target, error } = resolveSyncTarget({
-      supabaseUrl: "https://abcd.supabase.co",
-      supabaseKey: "sb_secret_xyz",
+      enabled: true,
+      token: "tok",
+      gistId: "g1",
+      gistUrl: "",
       autoSync: true,
     });
     expect(error).toBeUndefined();
     expect(target).toEqual({
-      relayUrl: SYNC_API_PATH,
-      supabaseUrl: "https://abcd.supabase.co",
-      supabaseKey: "sb_secret_xyz",
+      apiBase: GITEE_API_BASE,
+      enabled: true,
+      token: "tok",
+      gistId: "g1",
+      gistUrl: "",
       autoSync: true,
     });
   });
 
-  test("缺哪一样就提示哪一样，而不是抛错", () => {
-    const base = { supabaseUrl: "", supabaseKey: "", autoSync: true };
-    expect(resolveSyncTarget(base).error).toContain("还没填");
-    expect(
-      resolveSyncTarget({ ...base, supabaseKey: "sb_secret_xyz" }).error,
-    ).toContain("项目地址");
-    expect(
-      resolveSyncTarget({ ...base, supabaseUrl: "https://example.com" }).error,
-    ).toContain("形如");
+  test("没填令牌时给出可读提示，而不是抛错", () => {
     expect(
       resolveSyncTarget({
-        ...base,
-        supabaseUrl: "https://abcd.supabase.co",
+        enabled: true,
+        token: "  ",
+        gistId: "",
+        gistUrl: "",
+        autoSync: true,
       }).error,
-    ).toContain("密钥");
+    ).toContain("还没填");
   });
 });
+
+describe("同步元数据", () => {
+  test("读写一轮保持不变（题库行 + general 基准）", () => {
+    const baseline = normalizeGeneralSnapshot({ activeBank: HASH_A, library: [] });
+    saveSyncMeta({
+      lastSyncedAt: 123,
+      bootstrapped: true,
+      rows: {
+        [bankRowKey(HASH_A)]: {
+          remoteHash: "h",
+          syncedAt: 123,
+          remoteUpdatedAt: 100,
+          shard: 4,
+        },
+      },
+      generalBaseline: baseline,
+    });
+    const meta = loadSyncMeta();
+    expect(meta.bootstrapped).toBe(true);
+    expect(meta.rows[bankRowKey(HASH_A)]?.remoteHash).toBe("h");
+    expect(meta.rows[bankRowKey(HASH_A)]?.shard).toBe(4);
+    expect(meta.generalBaseline).toEqual(baseline);
+  });
+
+  test("没有 remoteHash 的旧记录被丢掉（那套是服务端逐行时间戳时代的）", () => {
+    localStorage.setItem(
+      STORAGE_KEY_SYNC_META,
+      JSON.stringify({
+        lastSyncedAt: 1,
+        bootstrapped: true,
+        rows: {
+          "old.json": { remoteUpdatedAt: 500, syncedAt: 500 },
+          "new.json": { remoteHash: "h", syncedAt: 500, remoteUpdatedAt: 500 },
+        },
+      }),
+    );
+    const meta = loadSyncMeta();
+    expect(meta.rows["old.json"]).toBeUndefined();
+    expect(meta.rows["new.json"]).toBeDefined();
+  });
+
+  test("元数据损坏时回落到空值，不抛错", () => {
+    localStorage.setItem(STORAGE_KEY_SYNC_META, "{ 这不是 JSON");
+    expect(loadSyncMeta()).toEqual(emptySyncMeta());
+  });
+});
+
+describe("本地改动时间", () => {
+  test("写入一个可同步键会留下 mtime", () => {
+    localStorage.setItem("quiz_app_general", "{}");
+    expect(mtimeOf("quiz_app_general")).toBeGreaterThan(0);
+  });
+
+  test("拉取云端内容**不**记成本地改动（否则下一轮会自己和自己冲突）", () => {
+    localStorage.setItem("quiz_app_general", "{}");
+    const before = mtimeOf("quiz_app_general");
+    expect(before).toBeGreaterThan(0);
+
+    applyRemoteValue("quiz_app_general", '{"activeBank":"x"}');
+    expect(mtimeOf("quiz_app_general")).toBe(before);
+    expect(localStorage.getItem("quiz_app_general")).toBe('{"activeBank":"x"}');
+  });
+
+  test("只在本地写入，不产生同步元数据", () => {
+    localStorage.setItem("quiz_app_general", "{}");
+    expect(loadSyncMeta().rows["quiz_app_general"]).toBeUndefined();
+    expect(loadSyncMeta().bootstrapped).toBe(false);
+  });
+});
+
+/** 找几个落在同一个分片里的 hash。 */
+function findSameShardHashes(count: number): string[] {
+  const byShard = new Map<number, string[]>();
+  for (let i = 0; i < 20000; i += 1) {
+    const hash = `x${i}`.padEnd(16, "0");
+    const index = shardIndexOf(hash);
+    const list = byShard.get(index) ?? [];
+    list.push(hash);
+    byShard.set(index, list);
+    if (list.length >= count) return list.slice(0, count);
+  }
+  throw new Error("找不到足够多落在一片里的 hash");
+}
