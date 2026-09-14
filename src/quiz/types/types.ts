@@ -80,6 +80,8 @@ export type QuestionKeyboardAction =
   | { kind: "next" }
   /** 记忆模式专用：把刚答对的这道改判成答错 */
   | { kind: "mark-wrong" }
+  /** 记忆模式专用：把刚答「知道」的这道改判成「模糊」 */
+  | { kind: "mark-fuzzy" }
   | {
       kind: "set-selected-answers";
       value: number[];

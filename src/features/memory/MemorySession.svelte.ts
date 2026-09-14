@@ -32,6 +32,7 @@ import {
   advanceReview,
   createLearningProgress,
   createReviewProgress,
+  fuzzyReview,
   isDue,
   memoryIntervalDays,
   resetReview,
@@ -66,6 +67,10 @@ import {
 } from "@/bankSettings";
 import { STORAGE_PREFIX_QUESTIONS } from "@/config";
 import { QUESTION_TYPES } from "@/quiz/types/registry";
+import {
+  memoryAnswerKind,
+  type MemoryAnswerKind,
+} from "@/quiz/types/memory/logic";
 import {
   QuestionCopyPattern,
   type QuestionCopyContext,
@@ -144,11 +149,12 @@ export class MemorySession {
   /** 复习：已经过了一遍的题（每过一题就加进来，进度条靠它变绿） */
   reviewedIds = $state<string[]>([]);
   /**
-   * 本轮复习里「答错过」的题。
+   * 本轮复习里被降级过的题（「忘记」→ 阶梯归零；「模糊」→ 阶梯退一级）。
    *
-   * 「这一轮完成」≠「掌握了」：答错说明忘了，掌握阶梯已经归零并定在明天。
-   * 所以本轮连对达标时，只要这道在本轮失败过，就**不允许**再推进阶梯，
-   * 否则答错那道会和一次答对那道拿到同样的两天间隔（之前的 bug）。
+   * 「这一轮完成」≠「掌握了」：降级说明没记住，阶梯已经被调低。
+   * 所以本轮连对达标时，只要这道在本轮降级过，就**不允许**再推进阶梯，
+   * 否则答错那道会和一次答对那道拿到同样的间隔（之前的 bug），
+   * 「模糊」退掉的那一级也会立刻被加回来。
    */
   failedThisRound = $state<string[]>([]);
   /** 进度备份：和 QuizSession 同一套状态 */
@@ -161,7 +167,12 @@ export class MemorySession {
   // ── 与 QuestionArea 对齐的会话状态 ─────────────────────────────────
   currentQuestion: Question | null = $state(null);
   showResult = $state(false);
-  /** 最终判定（「记错了」会把 rawIsCorrect 翻回来） */
+  /**
+   * 当前这道卡这一轮的自评结果（知道 / 模糊 / 忘记）。
+   * 答案页的「记错了 / 模糊」会改写它，按钮组合也按它决定。
+   */
+  answerKind: MemoryAnswerKind = $state("know");
+  /** 最终判定（「知道 / 模糊」算没答错；「记错了」会把 isCorrect 翻回 false） */
   isCorrect = $state(false);
   selectedAnswers: number[] = $state([]);
 
@@ -660,6 +671,7 @@ export class MemorySession {
     this.currentQuestion = question;
     this.presentationSeq += 1;
     this.showResult = false;
+    this.answerKind = "know";
     this.isCorrect = false;
     this.selectedAnswers = [];
     this.preSubmitState = null;
@@ -667,43 +679,58 @@ export class MemorySession {
     this.markAsShown(question.id);
   }
 
-  /** 记忆题型的「提交」= 用自评结果结算这一道卡。 */
+  /** 记忆题型的「提交」= 用自评结果（知道 / 模糊 / 忘记）结算这一道卡。 */
   submit(): void {
     const question = this.currentQuestion;
     if (!question || this.showResult || this.selectedAnswers.length === 0) {
       return;
     }
 
-    const knows = this.selectedAnswers[0] === 1;
-    this.isCorrect = knows;
+    const kind = memoryAnswerKind(this.selectedAnswers[0]);
+    this.answerKind = kind;
+    // 「模糊」不算答错：答案卡片保持正常配色，反馈音 / 闪烁也按「没答错」处理
+    this.isCorrect = kind !== "forget";
     this.showResult = true;
 
     this.preSubmitState = this.appState;
-    this.appState = this.applyMemoryAnswer(question, knows);
+    this.appState = this.applyMemoryAnswer(question, kind);
     this.save();
 
-    this.deps.flash(knows);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, knows);
+    this.deps.flash(this.isCorrect);
+    maybePlayAnswerSound(this.globalSettings, this.deps.sound, this.isCorrect);
   }
 
   /**
-   * 「答错记错」：在答案页把刚才的「知道」改判成答错。
+   * 答案页的降级操作：把刚才的自评改判成更差的一档。
    *
    * 和刷题模式的「视作正确」是一对反向操作：
    *   - 刷题模式：答错 → 点它 → 改成答对
-   *   - 记忆模式：点「知道」显示答案后发现自己其实没记住 → 点它 → 改成答错
+   *   - 记忆模式：点「知道」显示答案后发现自己没记住 → 点「模糊」/「记错了」
+   *
+   * 两者都基于 `preSubmitState`（提交前的状态）重算，所以反复改判不会叠加。
    */
-  markAsWrong(): void {
+  private downgradeAnswer(kind: MemoryAnswerKind): void {
     const question = this.currentQuestion;
-    if (!question || !this.showResult || !this.isCorrect || !this.preSubmitState) {
-      return;
-    }
+    if (!question || !this.showResult || !this.preSubmitState) return;
 
-    this.isCorrect = false;
-    this.appState = this.applyMemoryAnswer(question, false, this.preSubmitState);
+    this.answerKind = kind;
+    this.isCorrect = kind !== "forget";
+    this.appState = this.applyMemoryAnswer(question, kind, this.preSubmitState);
     this.save();
-    this.deps.flash(false);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, false);
+    this.deps.flash(this.isCorrect);
+    maybePlayAnswerSound(this.globalSettings, this.deps.sound, this.isCorrect);
+  }
+
+  /** 「记错了」：改判成忘记（原来答「知道」或「模糊」时才可用）。 */
+  markAsWrong(): void {
+    if (this.answerKind === "forget") return;
+    this.downgradeAnswer("forget");
+  }
+
+  /** 「模糊」：把刚才的「知道」改判成模糊（只有原答案是「知道」时可用）。 */
+  markAsFuzzy(): void {
+    if (this.answerKind !== "know") return;
+    this.downgradeAnswer("fuzzy");
   }
 
   /** 下一题：结算当前卡片，推队列。 */
@@ -890,20 +917,58 @@ export class MemorySession {
    */
   private applyMemoryAnswer(
     question: Question,
-    knows: boolean,
+    kind: MemoryAnswerKind,
     base: RuntimeState = this.appState,
   ): RuntimeState {
     const current = base.memory?.progress[question.id];
+    const knows = kind === "know";
+    const fuzzy = kind === "fuzzy";
+    // 轮内连对次数：知道 +1、模糊不动、忘记清零
     const activePool = base.activePool.map((item) =>
       item.id === question.id
-        ? { ...item, consecutiveCorrect: knows ? item.consecutiveCorrect + 1 : 0, hasBeenShown: true }
+        ? {
+            ...item,
+            consecutiveCorrect: knows
+              ? item.consecutiveCorrect + 1
+              : fuzzy
+                ? item.consecutiveCorrect
+                : 0,
+            hasBeenShown: true,
+          }
         : item,
     );
 
     if (this.run === "reviewing") {
       const item = current ?? createReviewProgress(this.now);
 
-      if (!knows) {
+      if (kind === "fuzzy") {
+        // 模糊：掌握阶梯退一级（不清零），本轮照「忘记」处理——目标提到 N、
+        // 计入本轮已复习、完成时也不推进阶梯（否则退掉的这一级立刻又被加回来）
+        this.reviewTarget = {
+          ...this.reviewTarget,
+          [question.id]: this.streakToLearn,
+        };
+        if (!this.failedThisRound.includes(question.id)) {
+          this.failedThisRound = [...this.failedThisRound, question.id];
+        }
+        this.markReviewed(question.id);
+        return {
+          ...base,
+          activePool,
+          memory: this.writeRetryTarget(
+            this.writeProgress(
+              base,
+              question.id,
+              fuzzyReview(item, this.now),
+            ),
+            question.id,
+            this.streakToLearn,
+          ),
+          currentRound: base.currentRound + 1,
+        };
+      }
+
+      if (kind === "forget") {
         // 忘记了：掌握阶梯归零（明天从 1 天重来），本轮连对清零，
         // 并且这道卡在本轮需要连对 N 次才算复习完——这个要求同时落盘，
         // 中途退出 / 刷新后重新进复习时它还会回到本轮（见 `retryTargetsToday`）。
@@ -947,11 +1012,15 @@ export class MemorySession {
       };
     }
 
-    // 学习流
-    const streak = knows ? (current?.streak ?? 0) + 1 : 0;
+    // 学习流：知道 +1、模糊保持不变（学不会但也不退）、忘记清零
+    const streak = knows
+      ? (current?.streak ?? 0) + 1
+      : fuzzy
+        ? (current?.streak ?? 0)
+        : 0;
     const required = this.requiredStreak;
-    // `lapses` 是「累计答错次数」，学习流的「忘记」也算；毕业时不能清零
-    const lapses = (current?.lapses ?? 0) + (knows ? 0 : 1);
+    // `lapses` 是「累计答错次数」，只有「忘记」算；模糊不算答错、毕业时也不清零
+    const lapses = (current?.lapses ?? 0) + (kind === "forget" ? 1 : 0);
 
     if (knows && streak >= required) {
       // 学出来了 → 进入复习中（第 1 次复习安排在明天）
@@ -980,10 +1049,6 @@ export class MemorySession {
     };
   }
 
-  /**
-   * 写一条进度，并原样保住 `memory` 段里的其它字段（设置、本轮待办）。
-   * `memory` 段是唯一出口，漏掉哪个字段就会在下次保存时把它抹掉。
-   */
   /**
    * 让 `masteredIds` 与 `memory.progress` 保持一致。
    *

@@ -194,6 +194,26 @@ export function resetReview(
 }
 
 /**
+ * 复习中「模糊」：掌握阶梯**退一级**（不清零，最低停在第 1 级），
+ * 并按新阶梯安排下次复习；轮内连对次数不动（模糊不加也不减），
+ * 本轮目标由调用方提到 N（和「忘记」一样要重新连对够次数才算本轮复习完）。
+ *
+ * 对比：`resetReview`（忘记）直接把阶梯打回第 1 级。
+ */
+export function fuzzyReview(
+  progress: MemoryProgress,
+  now: number,
+): MemoryProgress {
+  const level = Math.max(1, progress.level - 1);
+  return {
+    ...progress,
+    state: "reviewing",
+    level,
+    nextDue: addDays(studyDay(now), memoryIntervalDays(level)),
+  };
+}
+
+/**
  * 复习进度（0–1）：越接近掌握阈值越接近 1。
  * 已掌握恒为 1，刚进入复习中为 0。
  */

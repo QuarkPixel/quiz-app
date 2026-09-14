@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { memoryModeDef } from "../src/quiz/modes/memory";
+import {
+  MEMORY_ANSWER_CODE,
+  memoryAnswerDowngrades,
+  memoryAnswerKind,
+  memoryLogic,
+} from "../src/quiz/types/memory/logic";
 import { BANK_MODES } from "../src/quiz/modes";
 import { QUESTION_TYPES } from "../src/quiz/types/registry";
 import { MemorySession } from "../src/features/memory/MemorySession.svelte";
@@ -208,5 +214,80 @@ describe("记忆模式：总览接口", () => {
   // 返回 null，由 App 按 bank.mode 选择对应的总览组件。
   it("buildOverview 返回 null（总览由 MemoryOverview 自己渲染）", () => {
     expect(memoryModeDef.buildOverview()).toBeNull();
+  });
+});
+
+describe("记忆模式：三选自评（知道 / 模糊 / 忘记）", () => {
+  it("编码与还原：1 = 知道、2 = 模糊、0 = 忘记，认不出来当忘记", () => {
+    expect(MEMORY_ANSWER_CODE).toEqual({ forget: 0, know: 1, fuzzy: 2 });
+    expect(memoryAnswerKind(1)).toBe("know");
+    expect(memoryAnswerKind(2)).toBe("fuzzy");
+    expect(memoryAnswerKind(0)).toBe("forget");
+    expect(memoryAnswerKind(undefined)).toBe("forget");
+    expect(memoryAnswerKind(99)).toBe("forget");
+  });
+
+  it("只有「知道」算答对", () => {
+    const question = { id: "m1", type: "memory" as const, question: "q", answer: "a" };
+    expect(memoryLogic.evaluateAnswer(question, [1])).toBe(true);
+    expect(memoryLogic.evaluateAnswer(question, [2])).toBe(false);
+    expect(memoryLogic.evaluateAnswer(question, [0])).toBe(false);
+  });
+
+  it("答案页的降级入口：知道 → 记错了 / 模糊；模糊 → 只能记错了；忘记 → 没有", () => {
+    expect(memoryAnswerDowngrades("know")).toEqual({ fuzzy: true, wrong: true });
+    expect(memoryAnswerDowngrades("fuzzy")).toEqual({ fuzzy: false, wrong: true });
+    expect(memoryAnswerDowngrades("forget")).toEqual({ fuzzy: false, wrong: false });
+  });
+
+  it("题干页快捷键：空格 / 回车 = 知道，F = 模糊，M / ; = 忘记", () => {
+    const context = {
+      question: { id: "m1", type: "memory" as const, question: "q", answer: "a" },
+      showResult: false,
+      autoSubmitOnSelection: false,
+      shuffledOptions: [],
+      selectedAnswers: [],
+      blankAnswerInputs: [],
+    };
+    const key = (init: { key: string; code: string }) =>
+      memoryLogic.getKeyboardAction(context, { ...init, scope: "global" });
+
+    expect(key({ key: " ", code: "Space" })).toEqual({
+      kind: "set-selected-answers",
+      value: [1],
+      autoSubmit: true,
+    });
+    expect(key({ key: "f", code: "KeyF" })).toEqual({
+      kind: "set-selected-answers",
+      value: [2],
+      autoSubmit: true,
+    });
+    expect(key({ key: "m", code: "KeyM" })).toEqual({
+      kind: "set-selected-answers",
+      value: [0],
+      autoSubmit: true,
+    });
+    expect(key({ key: ";", code: "Semicolon" })).toEqual({
+      kind: "set-selected-answers",
+      value: [0],
+      autoSubmit: true,
+    });
+  });
+
+  it("答案页快捷键：空格 / 回车 = 下一题，F = 模糊，M / ; = 记错了", () => {
+    const context = {
+      question: { id: "m1", type: "memory" as const, question: "q", answer: "a" },
+      showResult: true,
+      autoSubmitOnSelection: false,
+      shuffledOptions: [],
+      selectedAnswers: [1],
+      blankAnswerInputs: [],
+    };
+    const key = (init: { key: string; code: string }) =>
+      memoryLogic.getKeyboardAction(context, { ...init, scope: "global" });
+
+    expect(key({ key: "Enter", code: "Enter" })).toEqual({ kind: "next" });
+    expect(key({ key: "f", code: "KeyF" })).toEqual({ kind: "mark-fuzzy" });
+    expect(key({ key: "m", code: "KeyM" })).toEqual({ kind: "mark-wrong" });
   });
 });

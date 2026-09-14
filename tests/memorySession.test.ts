@@ -21,6 +21,7 @@ import {
   sanitizeMemorySettings,
 } from "../src/features/memory/settings";
 import { normalizeMemoryProgress } from "../src/features/memory/normalize";
+import { MEMORY_ANSWER_CODE } from "../src/quiz/types/memory/logic";
 import { loadStoredState, saveState } from "../src/store";
 import { exportProgress } from "../src/features/importExport";
 import { globalSettingsStore } from "../src/features/globalSettings.svelte";
@@ -93,7 +94,12 @@ function makeSession(
 
 /** 走一道卡：自评（1=知道 / 0=忘记）+ 提交 + 下一题。 */
 function answer(session: MemorySession, knows: boolean): void {
-  session.selectedAnswers = [knows ? 1 : 0];
+  answerKind(session, knows ? "know" : "forget");
+}
+
+/** 走一道卡：三选自评（知道 / 模糊 / 忘记）+ 提交 + 下一题。 */
+function answerKind(session: MemorySession, kind: "know" | "fuzzy" | "forget"): void {
+  session.selectedAnswers = [MEMORY_ANSWER_CODE[kind]];
   session.submit();
   flushSync();
   session.advanceQuestionFlow();
@@ -1437,5 +1443,230 @@ describe("记忆模式：今天是否学过一轮（首页学习按钮的配色�
     answer(session, true);
     expect(session.learnedToday).toBe(true);
     expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. 「模糊」：轮内连对不变、复习阶梯退一级
+// ---------------------------------------------------------------------------
+
+describe("记忆模式：模糊", () => {
+  it("学习流：模糊既不加连对也不清零，够次数前学不出来", () => {
+    const session = makeSession(["a"]);
+    session.startLearning();
+
+    // 连对 2 次（N = 3）后来一次模糊：次数保持 2
+    answerKind(session, "know");
+    answerKind(session, "know");
+    expect(session.progress.a.streak).toBe(2);
+
+    answerKind(session, "fuzzy");
+    expect(session.progress.a.state).toBe("learning");
+    expect(session.progress.a.streak).toBe(2);
+    expect(session.progress.a.lapses).toBe(0);
+    expect(session.run).toBe("learning");
+
+    // 再连对一次才到 3 → 毕业
+    answerKind(session, "know");
+    expect(session.progress.a.state).toBe("reviewing");
+    expect(session.progress.a.level).toBe(1);
+  });
+
+  it("学习流：模糊不清零已有的连对（对照「忘记」）", () => {
+    const session = makeSession(["a"]);
+    session.startLearning();
+    answerKind(session, "know");
+    expect(session.progress.a.streak).toBe(1);
+
+    answerKind(session, "fuzzy");
+    expect(session.progress.a.streak).toBe(1);
+
+    answerKind(session, "forget");
+    expect(session.progress.a.streak).toBe(0);
+  });
+
+  it("复习流：模糊让阶梯退一级（不清零），并按新阶梯安排下次复习", () => {
+    const hash = "memory_fuzzy_level_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {
+          a: { ...createReviewProgress(BASE_TIME), level: 4, nextDue: startOfDay(BASE_TIME) },
+        },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+
+    const session = makeSession(["a"], { hash, now: BASE_TIME });
+    session.startReview();
+    answerKind(session, "fuzzy");
+
+    // 4 → 3；下次复习 = 今天 + 2^(3-1) = 4 天
+    expect(session.progress.a.state).toBe("reviewing");
+    expect(session.progress.a.level).toBe(3);
+    expect(session.progress.a.nextDue).toBe(addDays(startOfDay(BASE_TIME), 4));
+    // 模糊不算答错（lapses 不动）
+    expect(session.progress.a.lapses).toBe(0);
+  });
+
+  it("复习流：第 1 级模糊仍停在第 1 级（明天再来）", () => {
+    const hash = "memory_fuzzy_level1_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {
+          a: { ...createReviewProgress(BASE_TIME), nextDue: startOfDay(BASE_TIME) },
+        },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+
+    const session = makeSession(["a"], { hash, now: BASE_TIME });
+    session.startReview();
+    answerKind(session, "fuzzy");
+
+    expect(session.progress.a.level).toBe(1);
+    expect(session.progress.a.nextDue).toBe(addDays(startOfDay(BASE_TIME), 1));
+  });
+
+  it("复习流：模糊后本轮要重新连对 N 次，且完成时不再推进阶梯", () => {
+    const hash = "memory_fuzzy_round_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {
+          a: { ...createReviewProgress(BASE_TIME), level: 4, nextDue: startOfDay(BASE_TIME) },
+        },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+
+    const session = makeSession(["a"], { hash, now: BASE_TIME });
+    session.startReview();
+    answerKind(session, "fuzzy");
+
+    // 本轮目标提到 N=3：连对 2 次还不算复习完
+    expect(session.requiredStreak).toBe(3);
+    answerKind(session, "know");
+    expect(session.progress.a.streak).toBe(1);
+    expect(session.run).toBe("reviewing");
+    answerKind(session, "know");
+    expect(session.progress.a.streak).toBe(2);
+    expect(session.run).toBe("reviewing");
+
+    // 第 3 次连对 = 本轮复习完成；本轮降级过 → 阶梯不推进，仍是 level 3
+    answerKind(session, "know");
+    expect(session.run).toBe("idle");
+    expect(session.progress.a.level).toBe(3);
+    expect(session.progress.a.nextDue).toBe(addDays(startOfDay(BASE_TIME), 4));
+    // 待办也清掉了
+    expect(loadStoredState(hash).memory?.retry).toBeUndefined();
+  });
+
+  it("复习流：模糊也把这道计入「今日已复习」，并落盘本轮待办", () => {
+    const hash = "memory_fuzzy_reviewed_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {
+          a: { ...createReviewProgress(BASE_TIME), nextDue: startOfDay(BASE_TIME) },
+        },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+
+    const session = makeSession(["a"], { hash, now: BASE_TIME });
+    session.startReview();
+    answerKind(session, "fuzzy");
+
+    expect(session.reviewDoneCount).toBe(1);
+    const stored = loadStoredState(hash);
+    expect(stored.memory?.retry?.targets.a).toBe(3);
+  });
+
+  it("答案页降级：知道 → 模糊 → 记错了，一步到位不叠加", () => {
+    const session = makeSession(["a"]);
+    session.startLearning();
+
+    // 答「知道」
+    session.selectedAnswers = [MEMORY_ANSWER_CODE.know];
+    session.submit();
+    flushSync();
+    expect(session.answerKind).toBe("know");
+    expect(session.progress.a.streak).toBe(1);
+    expect(session.isCorrect).toBe(true);
+
+    // 改判成模糊：连对回到提交前的 0，阶梯也不动（学习中本来就没有阶梯）
+    session.markAsFuzzy();
+    flushSync();
+    expect(session.answerKind).toBe("fuzzy");
+    expect(session.isCorrect).toBe(true);
+    expect(session.progress.a.streak).toBe(0);
+    expect(session.progress.a.lapses).toBe(0);
+
+    // 再改判成记错了：只剩忘记的效果
+    session.markAsWrong();
+    flushSync();
+    expect(session.answerKind).toBe("forget");
+    expect(session.isCorrect).toBe(false);
+    expect(session.progress.a.streak).toBe(0);
+    expect(session.progress.a.lapses).toBe(1);
+  });
+
+  it("答案页降级：刚毕业的这道改判成模糊后要回到活动池（毕业被撤销）", () => {
+    const hash = "memory_fuzzy_undo_graduate_hash";
+    const session = makeSession(["a", "b"], { hash });
+    session.updateBankSettings({ correctStreakToMaster: 3 });
+    session.startLearning();
+
+    const id = session.currentQuestion!.id;
+    // 先把这道练到连对 2 次
+    let guard = 0;
+    while (
+      (session.progress[id]?.streak ?? 0) < 2 &&
+      session.run === "learning" &&
+      guard++ < 30
+    ) {
+      answerKind(session, "know");
+    }
+    expect(session.progress[id].streak).toBe(2);
+    expect(session.appState.activePool.some((i) => i.id === id)).toBe(true);
+
+    // 下一次「知道」会当场毕业（离开 activePool、进入复习中）
+    let guard2 = 0;
+    while (session.currentQuestion?.id !== id && guard2++ < 30) {
+      answerKind(session, "fuzzy");
+    }
+    session.selectedAnswers = [MEMORY_ANSWER_CODE.know];
+    session.submit();
+    flushSync();
+    expect(session.progress[id].state).toBe("reviewing");
+    expect(session.appState.activePool.some((i) => i.id === id)).toBe(false);
+
+    // 改判成模糊：毕业被撤销，回到活动池继续学，连对退回 2
+    session.markAsFuzzy();
+    flushSync();
+    expect(session.progress[id].state).toBe("learning");
+    expect(session.progress[id].streak).toBe(2);
+    expect(session.appState.activePool.some((i) => i.id === id)).toBe(true);
+  });
+
+  it("答案页降级：答「模糊」后不能再改判成模糊，但能记错了", () => {
+    const session = makeSession(["a"]);
+    session.startLearning();
+
+    session.selectedAnswers = [MEMORY_ANSWER_CODE.fuzzy];
+    session.submit();
+    flushSync();
+    expect(session.answerKind).toBe("fuzzy");
+
+    session.markAsFuzzy();
+    flushSync();
+    expect(session.answerKind).toBe("fuzzy");
+
+    session.markAsWrong();
+    flushSync();
+    expect(session.answerKind).toBe("forget");
+    expect(session.progress.a.lapses).toBe(1);
   });
 });
