@@ -49,6 +49,11 @@
 
 <Dialog.Root bind:open>
     <Dialog.Content
+        onOpenAutoFocus={(e) => {
+            // 默认行为是把焦点丢给第一个可聚焦元素（也就是「修改名称」输入框）——
+            // 打开设置时不该抢焦点、更不该直接进输入态。需要聚焦搜索框的是总览。
+            e.preventDefault();
+        }}
         class="bg-card flex max-h-[calc(100vh-4rem)] w-[calc(100vw-2rem)] max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
     >
         <Dialog.Header class="border-b px-5 py-3.5">

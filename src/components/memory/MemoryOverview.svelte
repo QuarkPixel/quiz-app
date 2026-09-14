@@ -14,6 +14,7 @@
         type MemoryFilterState,
     } from "@/features/memory/filters";
     import type { MemoryProgress, MemoryQuestion } from "@/types";
+    import { isCoarsePointer } from "$lib/utils";
 
     // 与 ReviewView.svelte 同构：同样的 Dialog 外壳、同样的顶部三张 Card、
     // 同样的筛选 + 列表结构；题目卡片直接用 QuestionPreview（它会自动渲染记忆
@@ -33,6 +34,7 @@
     let searchTerm = $state("");
     let visibleCount = $state(PAGE_SIZE);
     let sentinel: HTMLDivElement | null = $state(null);
+    let searchInputRef: HTMLInputElement | null = $state(null);
 
     /** 点热力图的小方块时，把列表里对应那张卡滚动到视野中央并高亮一下 */
     let highlightedId = $state<string | null>(null);
@@ -143,6 +145,12 @@
 
 <Dialog.Root bind:open {onOpenChange}>
     <Dialog.Content
+        onOpenAutoFocus={(e) => {
+            // 默认会把焦点给第一个可聚焦元素（这里是热力图折叠按钮）。
+            // 和刷题模式的总览一致：焦点给搜索框，触屏设备不抢焦点（免得弹键盘）
+            e.preventDefault();
+            if (!isCoarsePointer) searchInputRef?.focus();
+        }}
         class="bg-card flex h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
     >
         <Dialog.Header
@@ -168,6 +176,7 @@
                     {searchTerm}
                     onSearchChange={(value) => (searchTerm = value)}
                     resultCount={filteredRows.length}
+                    bind:inputRef={searchInputRef}
                 />
 
                 <div class="flex flex-col gap-2">

@@ -24,6 +24,8 @@
         searchTerm: string;
         onSearchChange: (value: string) => void;
         resultCount: number;
+        /** 打开总览时把焦点放到搜索框（与 ReviewFilterBar 同一套做法） */
+        inputRef?: HTMLInputElement | null;
     }
 
     let {
@@ -32,6 +34,7 @@
         searchTerm,
         onSearchChange,
         resultCount,
+        inputRef = $bindable<HTMLInputElement | null>(null),
     }: Props = $props();
 
     let showFilters = $state(false);
@@ -95,6 +98,7 @@
                 class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
             />
             <Input
+                bind:ref={inputRef}
                 value={searchTerm}
                 oninput={(e) => onSearchChange(e.currentTarget.value)}
                 class="pl-8"
