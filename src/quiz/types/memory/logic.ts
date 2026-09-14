@@ -23,6 +23,15 @@ import {
  */
 export type MemoryAnswerKind = "forget" | "know" | "fuzzy";
 
+/**
+ * 记忆模式的按键约定（设置面板最底部那份说明就是照这个写的）：
+ *   知道 / 下一题 = `Space` · `Enter`
+ *   模糊          = `'`
+ *   忘记 / 记错了 = `;`
+ */
+export const MEMORY_KEY_FUZZY = "'";
+export const MEMORY_KEY_WRONG = ";";
+
 export const MEMORY_ANSWER_CODE = {
   forget: 0,
   know: 1,
@@ -93,21 +102,21 @@ export const memoryLogic: QuestionTypeLogic = {
   getKeyboardAction(context, event) {
     if (event.scope !== "global") return null;
 
-    // 答案页：空格 / 回车 = 下一题；F = 改判成模糊；M / ; = 记错了（改判成答错）
+    // 答案页：空格 / 回车 = 下一题；' = 改判成模糊；; = 记错了（改判成忘记）
     if (context.showResult) {
       if (event.code === "Space" || event.code === "Enter") {
         return { kind: "next" };
       }
-      if (event.key === "f") {
+      if (event.key === MEMORY_KEY_FUZZY) {
         return { kind: "mark-fuzzy" };
       }
-      if (event.key === "m" || event.key === ";") {
+      if (event.key === MEMORY_KEY_WRONG) {
         return { kind: "mark-wrong" };
       }
       return null;
     }
 
-    // 题干页：空格 / 回车 = 知道；F = 模糊；M / ; = 忘记
+    // 题干页：空格 / 回车 = 知道；' = 模糊；; = 忘记
     if (event.code === "Space" || event.code === "Enter") {
       return {
         kind: "set-selected-answers",
@@ -115,14 +124,14 @@ export const memoryLogic: QuestionTypeLogic = {
         autoSubmit: true,
       };
     }
-    if (event.key === "f") {
+    if (event.key === MEMORY_KEY_FUZZY) {
       return {
         kind: "set-selected-answers",
         value: [MEMORY_ANSWER_CODE.fuzzy],
         autoSubmit: true,
       };
     }
-    if (event.key === "m" || event.key === ";") {
+    if (event.key === MEMORY_KEY_WRONG) {
       return {
         kind: "set-selected-answers",
         value: [MEMORY_ANSWER_CODE.forget],

@@ -259,41 +259,25 @@
                 >
                     快捷键
                 </h3>
+                <!-- 只列答题相关的四个动作；导出 / 导入这类应用级快捷键不写在这里 -->
                 <div class="text-muted-foreground flex flex-col gap-1.5 text-xs">
                     <div class="flex items-center justify-between gap-3">
-                        <span>知道</span>
+                        <span>知道 / 下一题</span>
                         <KbdGroup><Kbd>Space</Kbd><Kbd>Enter</Kbd></KbdGroup>
                     </div>
                     <div class="flex items-center justify-between gap-3">
                         <span>模糊</span>
-                        <KbdGroup><Kbd>F</Kbd></KbdGroup>
+                        <KbdGroup><Kbd>'</Kbd></KbdGroup>
                     </div>
                     <div class="flex items-center justify-between gap-3">
-                        <span>忘记</span>
-                        <KbdGroup><Kbd>M</Kbd><Kbd>;</Kbd></KbdGroup>
-                    </div>
-                    <div class="flex items-center justify-between gap-3">
-                        <span>下一题</span>
-                        <KbdGroup><Kbd>Space</Kbd><Kbd>Enter</Kbd></KbdGroup>
-                    </div>
-                    <div class="flex items-center justify-between gap-3">
-                        <span>改判成模糊 / 记错了</span>
-                        <KbdGroup><Kbd>F</Kbd><Kbd>/</Kbd><Kbd>M</Kbd></KbdGroup>
+                        <span>忘记 / 记错了</span>
+                        <KbdGroup><Kbd>;</Kbd></KbdGroup>
                     </div>
                     <div class="flex items-center justify-between gap-3">
                         <span>复制当前题目</span>
                         <KbdGroup>
                             <Kbd>{modKeyLabel}</Kbd>
                             <Kbd>{SHORTCUTS.copyQuestion.toUpperCase()}</Kbd>
-                        </KbdGroup>
-                    </div>
-                    <div class="flex items-center justify-between gap-3">
-                        <span>导出 / 导入进度</span>
-                        <KbdGroup>
-                            <Kbd>{modKeyLabel}</Kbd>
-                            <Kbd>{SHORTCUTS.exportProgress.toUpperCase()}</Kbd>
-                            <Kbd>/</Kbd>
-                            <Kbd>{SHORTCUTS.importProgress.toUpperCase()}</Kbd>
                         </KbdGroup>
                     </div>
                 </div>

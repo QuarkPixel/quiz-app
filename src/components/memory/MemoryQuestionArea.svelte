@@ -170,7 +170,7 @@
                 忘记
             </Button>
             <Button
-                variant="secondary"
+                variant="outline"
                 size="lg"
                 class="px-5 sm:px-8"
                 onclick={() => pick("fuzzy")}
@@ -198,7 +198,7 @@
             {#if downgrades.fuzzy}
                 <!-- 刚选了「知道」才给这一档：其实只是模糊 -->
                 <Button
-                    variant="secondary"
+                    variant="outline"
                     size="lg"
                     class="px-5 sm:px-8"
                     onclick={() => session.markAsFuzzy()}

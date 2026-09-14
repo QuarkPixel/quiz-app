@@ -240,7 +240,7 @@ describe("记忆模式：三选自评（知道 / 模糊 / 忘记）", () => {
     expect(memoryAnswerDowngrades("forget")).toEqual({ fuzzy: false, wrong: false });
   });
 
-  it("题干页快捷键：空格 / 回车 = 知道，F = 模糊，M / ; = 忘记", () => {
+  it("题干页快捷键：空格 / 回车 = 知道，' = 模糊，; = 忘记", () => {
     const context = {
       question: { id: "m1", type: "memory" as const, question: "q", answer: "a" },
       showResult: false,
@@ -257,14 +257,9 @@ describe("记忆模式：三选自评（知道 / 模糊 / 忘记）", () => {
       value: [1],
       autoSubmit: true,
     });
-    expect(key({ key: "f", code: "KeyF" })).toEqual({
+    expect(key({ key: "'", code: "Quote" })).toEqual({
       kind: "set-selected-answers",
       value: [2],
-      autoSubmit: true,
-    });
-    expect(key({ key: "m", code: "KeyM" })).toEqual({
-      kind: "set-selected-answers",
-      value: [0],
       autoSubmit: true,
     });
     expect(key({ key: ";", code: "Semicolon" })).toEqual({
@@ -272,9 +267,11 @@ describe("记忆模式：三选自评（知道 / 模糊 / 忘记）", () => {
       value: [0],
       autoSubmit: true,
     });
+    // M 已经不是记忆模式的快捷键了（回归守卫）
+    expect(key({ key: "m", code: "KeyM" })).toBeNull();
   });
 
-  it("答案页快捷键：空格 / 回车 = 下一题，F = 模糊，M / ; = 记错了", () => {
+  it("答案页快捷键：空格 / 回车 = 下一题，' = 模糊，; = 记错了", () => {
     const context = {
       question: { id: "m1", type: "memory" as const, question: "q", answer: "a" },
       showResult: true,
@@ -287,7 +284,8 @@ describe("记忆模式：三选自评（知道 / 模糊 / 忘记）", () => {
       memoryLogic.getKeyboardAction(context, { ...init, scope: "global" });
 
     expect(key({ key: "Enter", code: "Enter" })).toEqual({ kind: "next" });
-    expect(key({ key: "f", code: "KeyF" })).toEqual({ kind: "mark-fuzzy" });
-    expect(key({ key: "m", code: "KeyM" })).toEqual({ kind: "mark-wrong" });
+    expect(key({ key: "'", code: "Quote" })).toEqual({ kind: "mark-fuzzy" });
+    expect(key({ key: ";", code: "Semicolon" })).toEqual({ kind: "mark-wrong" });
+    expect(key({ key: "m", code: "KeyM" })).toBeNull();
   });
 });
