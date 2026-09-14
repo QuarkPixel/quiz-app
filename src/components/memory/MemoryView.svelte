@@ -136,6 +136,10 @@
             session.markAsWrong();
             return;
         }
+        if (action.kind === "mark-fuzzy") {
+            session.markAsFuzzy();
+            return;
+        }
         if (action.kind === "set-selected-answers") {
             session.selectedAnswers = action.value;
             session.submit();

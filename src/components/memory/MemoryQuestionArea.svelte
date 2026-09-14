@@ -4,21 +4,29 @@
     import StreakIndicator from "../quiz/StreakIndicator.svelte";
     import { useMemorySession } from "@/features/memory/context";
     import { QUESTION_TYPES } from "@/quiz/types/registry";
+    import {
+        MEMORY_ANSWER_CODE,
+        memoryAnswerDowngrades,
+        type MemoryAnswerKind,
+    } from "@/quiz/types/memory/logic";
     import { prefersReducedMotion } from "$lib/utils";
     import { slide } from "svelte/transition";
     import { circOut } from "svelte/easing";
     import { Tween } from "svelte/motion";
     import IconCheck from "@tabler/icons-svelte/icons/check";
     import IconX from "@tabler/icons-svelte/icons/x";
+    import IconCircleHalf2 from "@tabler/icons-svelte/icons/circle-half-2";
 
     /**
      * 记忆模式的答题区：版式与单选题 `QuestionArea.svelte` 完全一致，
      * 只是把「选项」整块拿掉，并把「提交答案 / 视作正确」换成「知道 / 忘记」。
      *
-     *   题干页：题型图标 + 题号 + 复制 + 连对指示器 / 大字号题干 / 两个按钮
+     *   题干页：题型图标 + 题号 + 复制 + 连对指示器 / 大字号题干 / 忘记·模糊·知道
      *   答案页：同样的头部 + 常规字号题干 + 答案卡片 / 底部按钮
      *
-     * 点「知道」或「忘记」只做两件事：题干回到常规字号、展示答案。
+     * 点任意一个自评只做两件事：题干回到常规字号、展示答案。
+     * 答案页按刚选的那一档给出「降级」入口（见 `memoryAnswerDowngrades`）：
+     *   知道 → 记错了 / 模糊 / 下一题；模糊 → 记错了 / 下一题；忘记 → 只有下一题
      */
     const session = useMemorySession();
 
@@ -69,9 +77,12 @@
         ? { duration: 0 }
         : { duration: 200, easing: circOut };
 
-    function pick(knows: boolean): void {
+    /** 答案页还能做的降级操作，由刚选的那一档决定 */
+    const downgrades = $derived(memoryAnswerDowngrades(session.answerKind));
+
+    function pick(kind: MemoryAnswerKind): void {
         if (session.showResult) return;
-        session.selectedAnswers = [knows ? 1 : 0];
+        session.selectedAnswers = [MEMORY_ANSWER_CODE[kind]];
         session.submit();
     }
 </script>
@@ -142,38 +153,63 @@
         {/if}
     </div>
 
-    <!-- 按钮区：与 QuestionArea 底部同一位置 -->
-    <div class="flex h-9 items-center justify-end gap-2 pt-2">
+    <!-- 按钮区：与 QuestionArea 底部同一位置。
+         最多会同时出现三个按钮（记错了 / 模糊 / 下一题），所以窄屏用更小的
+         内边距，并允许换行兜底，免得在 320px 宽的手机上溢出 -->
+    <div
+        class="flex h-auto min-h-9 flex-wrap items-center justify-end gap-2 pt-2"
+    >
         {#if !session.showResult}
             <Button
                 variant="outline"
                 size="lg"
-                class="px-8"
-                onclick={() => pick(false)}
+                class="px-5 sm:px-8"
+                onclick={() => pick("forget")}
             >
                 <IconX size={16} stroke={2} />
                 忘记
             </Button>
-            <Button size="lg" class="px-8" onclick={() => pick(true)}>
+            <Button
+                variant="secondary"
+                size="lg"
+                class="px-5 sm:px-8"
+                onclick={() => pick("fuzzy")}
+            >
+                <IconCircleHalf2 size={16} stroke={2} />
+                模糊
+            </Button>
+            <Button size="lg" class="px-5 sm:px-8" onclick={() => pick("know")}>
                 <IconCheck size={16} stroke={2} />
                 知道
             </Button>
         {:else}
-            {#if session.isCorrect}
-                <!-- 选了「知道」：给一个反悔入口（一步到位，把这道改成答错） -->
+            {#if downgrades.wrong}
+                <!-- 反悔入口（一步到位、不叠加）：知道 / 模糊 → 记错了 -->
                 <Button
                     variant="outline"
                     size="lg"
-                    class="px-8"
+                    class="px-5 sm:px-8"
                     onclick={() => session.markAsWrong()}
                 >
                     <IconX size={16} stroke={2} />
                     记错了
                 </Button>
             {/if}
+            {#if downgrades.fuzzy}
+                <!-- 刚选了「知道」才给这一档：其实只是模糊 -->
+                <Button
+                    variant="secondary"
+                    size="lg"
+                    class="px-5 sm:px-8"
+                    onclick={() => session.markAsFuzzy()}
+                >
+                    <IconCircleHalf2 size={16} stroke={2} />
+                    模糊
+                </Button>
+            {/if}
             <Button
                 size="lg"
-                class="px-8"
+                class="px-5 sm:px-8"
                 onclick={() => session.advanceQuestionFlow()}
             >
                 下一题
