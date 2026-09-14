@@ -187,24 +187,22 @@
                 <!-- 反悔入口（一步到位、不叠加）：知道 / 模糊 → 记错了 -->
                 <Button
                     variant="outline"
-                    size="lg"
-                    class="px-5 sm:px-8"
+                    size="icon-lg"
                     onclick={() => session.markAsWrong()}
+                    title="记错了"
                 >
                     <IconX size={16} stroke={2} />
-                    记错了
                 </Button>
             {/if}
             {#if downgrades.fuzzy}
                 <!-- 刚选了「知道」才给这一档：其实只是模糊 -->
                 <Button
                     variant="outline"
-                    size="lg"
-                    class="px-5 sm:px-8"
+                    size="icon-lg"
                     onclick={() => session.markAsFuzzy()}
+                    title="模糊"
                 >
                     <IconCircleHalf2 size={16} stroke={2} />
-                    模糊
                 </Button>
             {/if}
             <Button
