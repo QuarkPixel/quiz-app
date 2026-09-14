@@ -59,6 +59,7 @@ import {
   loadSyncMeta,
   mtimeOf,
   onLocalChange,
+  probeStorageHealth,
   pruneStaleMtimes,
   removeLocal,
   saveSyncMeta,
@@ -67,6 +68,7 @@ import { resolveSyncTarget } from "./target";
 import {
   GIST_GENERAL_FILE,
   SYNC_FOCUS_THROTTLE_MS,
+  SYNC_LOCAL_POLL_MS,
   SYNC_POLL_INTERVAL_MS,
   SYNC_PUSH_DEBOUNCE_MS,
   bankRowKey,
@@ -145,6 +147,24 @@ export class SyncEngine {
   pendingChanges: boolean = $state(true);
 
   /**
+   * 这台设备的本地存储写不进去（隐私模式 / 系统拦截）。
+   *
+   * 那不是「同步坏了」而是「进度根本存不下来」，必须让用户看见，
+   * 所以指示点会因此标红（见 `inSync` 与 `AppShell`）。
+   */
+  storageBlocked: boolean = $state(false);
+
+  /**
+   * 是否在用「定时比对本地改动」的兜底（正常设备上永远是 false）。
+   *
+   * iOS 上见过覆盖 `localStorage.setItem` 不生效：写入照常落盘、但钩子一声不响，
+   * 于是指示点永远不变黄、也不会自动上传。这时改用 `SYNC_LOCAL_POLL_MS` 定时比内容。
+   */
+  localChangeFallback: boolean = $state(false);
+
+  private localPollTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
    * 用户已经答过的冲突裁决：题库 hash → 保留哪一边。
    *
    * 按题库记账而不是「一次性开关」，是因为两次同步之间可能又冒出新的冲突：
@@ -192,6 +212,17 @@ export class SyncEngine {
   /** 装上钩子。可重复调用（幂等）。 */
   init(): void {
     if (typeof window === "undefined") return;
+
+    // 探针要在注册自己的监听**之前**跑：它自己会写一次探针键，
+    // 否则会被当成「本地改动」。
+    const health = probeStorageHealth();
+    this.storageBlocked = health === "blocked";
+    if (health === "silent") this.watchLocalChangesByPolling();
+    if (health === "blocked") {
+      console.warn(
+        "[sync] 这台设备写不了 localStorage：做题进度不会保存，云同步也无法工作",
+      );
+    }
 
     installStorageHook();
     this.watchConfig();
@@ -246,6 +277,8 @@ export class SyncEngine {
     this.unlisten = [];
     this.unsubscribeConfig?.();
     this.unsubscribeConfig = null;
+    if (this.localPollTimer !== null) clearInterval(this.localPollTimer);
+    this.localPollTimer = null;
     if (this.pushTimer !== null) clearTimeout(this.pushTimer);
     this.pushTimer = null;
     if (this.pollTimer !== null) clearInterval(this.pollTimer);
@@ -259,6 +292,8 @@ export class SyncEngine {
    * 离线 / 有冲突），而且本地没有还没推上去的改动。
    */
   get inSync(): boolean {
+    // 存储写不进去时永远不算「已同步」——那时候本地数据随时会丢
+    if (this.storageBlocked) return false;
     return this.status.phase === "idle" && !this.pendingChanges;
   }
 
@@ -502,6 +537,32 @@ export class SyncEngine {
       remoteBanks: 0,
       conflicts: [],
     };
+  }
+
+  /**
+   * 钩子不生效时的兜底：定时比一遍「本地和上次同步的基准对不对得上」。
+   *
+   * 平时用不到（正常浏览器写入就会通知）。只在 `probeStorageHealth()` 报
+   * `silent` 时装上，见 `SYNC_LOCAL_POLL_MS` 的说明。
+   */
+  private watchLocalChangesByPolling(): void {
+    this.localChangeFallback = true;
+    if (this.localPollTimer !== null) return;
+    console.warn(
+      "[sync] localStorage 钩子不生效，改用定时比对本地改动（iOS 上踩过）",
+    );
+    this.localPollTimer = setInterval(() => {
+      this.pollLocalChanges();
+    }, SYNC_LOCAL_POLL_MS);
+  }
+
+  /** 兜底轮询的一次检查：本地脏了就标黄并排队上传。 */
+  private pollLocalChanges(): void {
+    if (!this.isOn()) return;
+    if (document.visibilityState !== "visible") return;
+    if (!this.computePendingChanges()) return;
+    this.pendingChanges = true;
+    this.schedulePush();
   }
 
   private maybeCheckOnFocus(): void {

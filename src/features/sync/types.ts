@@ -318,6 +318,14 @@ export const SYNC_PUSH_DEBOUNCE_MS = 20_000;
 /** 空闲时轮询云端的间隔（毫秒）。 */
 export const SYNC_POLL_INTERVAL_MS = 3 * 60 * 1000;
 
+/**
+ * `localStorage` 钩子不生效时的兜底检查间隔（毫秒）。
+ *
+ * 正常情况下用不着：写入会直接通知引擎「本地脏了」。这条只在探针发现
+ * 「写得进去但钩子不通知」时启用（iOS 上踩过），代价是定期比一遍内容哈希。
+ */
+export const SYNC_LOCAL_POLL_MS = 5000;
+
 /** 窗口重新获得焦点时，两次检查之间至少间隔这么久（毫秒）。 */
 export const SYNC_FOCUS_THROTTLE_MS = 30 * 1000;
 

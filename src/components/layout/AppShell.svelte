@@ -29,6 +29,11 @@
      * 「离线」不算：那不是数据问题，联网后下一次同步自己就好了，标红只会让人白紧张。
      */
     const failed = $derived(syncEngine.status.phase === "error");
+    /**
+     * 这台设备根本写不了 localStorage（iOS 隐私模式 / 系统拦截）。
+     * 那比同步失败更严重：做题进度随时会丢，必须让用户看见。
+     */
+    const storageBlocked = $derived(syncEngine.storageBlocked);
 
     /**
      * 指示点的三种状态：
@@ -37,7 +42,7 @@
      *   - `danger`（红）**需要用户操心**：有冲突等着拍板，或者同步报错了
      */
     const tone = $derived<"ok" | "pending" | "danger">(
-        hasConflicts || failed ? "danger" : inSync ? "ok" : "pending",
+        hasConflicts || failed || storageBlocked ? "danger" : inSync ? "ok" : "pending",
     );
 
     /**
@@ -59,8 +64,10 @@
             ? "云同步：正在同步…"
             : hasConflicts
               ? `云同步：有 ${conflicts} 个题库冲突待处理 · 点击处理`
-              : failed
-                ? `云同步：${syncEngine.status.message} · 点击查看`
+              : storageBlocked
+                ? "云同步：这台设备写不了本地存储（隐私模式？）· 进度不会保存"
+                : failed
+                  ? `云同步：${syncEngine.status.message} · 点击查看`
                 : syncEngine.status.phase === "offline"
                   ? "云同步：当前离线 · 点击重试"
                   : inSync
@@ -79,7 +86,7 @@
      */
     function onClick(): void {
         if (!clickable) return;
-        if (hasConflicts || failed) {
+        if (hasConflicts || failed || storageBlocked) {
             globalSettingsDialog.show();
             return;
         }

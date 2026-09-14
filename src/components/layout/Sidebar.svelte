@@ -95,6 +95,9 @@
      */
     const syncIssue = $derived.by(() => {
         if (!syncConfigStore.value.enabled) return "";
+        if (syncEngine.storageBlocked) {
+            return "这台设备写不了本地存储，做题进度不会保存";
+        }
         const status = syncEngine.status;
         if (status.conflicts.length > 0) {
             return `云同步有 ${status.conflicts.length} 个题库冲突待处理`;

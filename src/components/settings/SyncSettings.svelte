@@ -437,6 +437,15 @@
             class="flex flex-col gap-3"
             transition:slide={{ duration: 220, easing: cubicOut }}
         >
+            {#if syncEngine.storageBlocked}
+                <p
+                    class="border-destructive/40 bg-destructive/5 text-destructive rounded-lg border p-2.5 text-[11px] leading-relaxed"
+                >
+                    这台设备<strong>写不了本地存储</strong>（iOS
+                    隐私模式 / 系统拦截？）：做题进度不会保存，云同步也没法工作。
+                    换普通窗口、关掉隐私模式，或改用主屏幕上的那个应用图标再试。
+                </p>
+            {/if}
             {#if editing}
                 <!-- ── 编辑态 ─────────────────────────────────────────── -->
                 <div class="flex gap-2">
@@ -804,6 +813,8 @@
                                 confirmClass="ring-destructive/40 ring-2"
                                 idleLabel="重建云端"
                                 confirmLabel="确认重建"
+                                idleTitle="丢掉本地记的 Gist 与同步记账（令牌留着），新建一条并上传本地数据"
+                                confirmTitle="确认后会在 Gitee 上新建一条 Gist；旧的不会被删除，需要的话自己去删"
                                 disabled={busy !== ""}
                                 onConfirm={() => rebuildCloud()}
                             >
@@ -844,8 +855,8 @@
                                 <p
                                     class="text-muted-foreground text-[11px] leading-relaxed"
                                 >
-                                    如果要切换对应的
-                                    Gist，请先在编辑中清空配置后再重新配置。
+                                    换一条云端：点上面的铅笔图标进编辑态，
+                                    测试连接后另选一条保存即可。
                                 </p>
                                 <div
                                     class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5"

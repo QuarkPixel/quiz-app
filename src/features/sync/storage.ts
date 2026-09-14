@@ -96,6 +96,59 @@ export function removeLocal(key: string): void {
   remove(key);
 }
 
+/**
+ * 本地存储这条路通不通。
+ *
+ *   - `ok`      写入会通知（正常）
+ *   - `blocked` 写不进去（隐私模式 / 系统拦截）——连进度都存不下来
+ *   - `silent`  写得进去，但钩子不通知（iOS 上踩过：覆盖 `setItem` 没生效）
+ */
+export type StorageHealth = "ok" | "blocked" | "silent";
+
+/** 探针用的键：形状像可同步键（这样钩子会通知），写完立刻删掉。 */
+const PROBE_KEY = `${STORAGE_PREFIX_STATE}__probe__`;
+
+/**
+ * 试一下「写入 → 钩子通知」这条路还通不通。
+ *
+ * 为什么需要这个：页头那颗同步指示点靠 `onLocalChange` 才知道「本地改了东西」。
+ * iOS 上见过两种失灵——覆盖 `localStorage.setItem` 没生效（写得进去但没人通知，
+ * 指示点永远不变黄），或者 `setItem` 直接被系统拦掉（那连进度都存不下来，
+ * 属于必须让用户知道的事）。两种情况都不能假装正常。
+ *
+ * **要在引擎注册自己的监听之前调用**，不然探针会顺带把 pendingChanges 标脏。
+ */
+export function probeStorageHealth(): StorageHealth {
+  installStorageHook();
+  if (!hookState) return "blocked";
+
+  let notified = false;
+  const listener = () => {
+    notified = true;
+  };
+  hookState.listeners.add(listener);
+
+  try {
+    try {
+      localStorage.setItem(PROBE_KEY, "1");
+    } catch {
+      return "blocked";
+    }
+    if (!notified) return "silent";
+
+    notified = false;
+    try {
+      localStorage.removeItem(PROBE_KEY);
+    } catch {
+      return "blocked";
+    }
+    return notified ? "ok" : "silent";
+  } finally {
+    hookState.listeners.delete(listener);
+    clearMtime(PROBE_KEY);
+  }
+}
+
 /** 读一个键的原始字符串；读不到返回 null。 */
 export function readLocal(key: string): string | null {
   try {
