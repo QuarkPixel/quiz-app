@@ -83,18 +83,18 @@
 
     const indicatorLabel = $derived(
         syncing
-            ? "云同步：正在同步…"
+            ? "云同步：正在同步"
             : hasConflicts
-              ? `云同步：有 ${conflicts} 个题库冲突待处理 · 点击处理`
+              ? `云同步：${conflicts} 个题库存在冲突`
               : storageBlocked
-                ? "云同步：这台设备写不了本地存储（隐私模式？）· 进度不会保存"
+                ? "云同步：本地存储不可写"
                 : failed
-                  ? `云同步：${syncEngine.status.message} · 点击查看`
+                  ? `云同步：${syncEngine.status.message}`
                 : syncEngine.status.phase === "offline"
-                  ? "云同步：当前离线 · 点击重试"
+                  ? "云同步：当前离线"
                   : inSync
-                    ? "云同步：已同步 · 点击手动同步一次"
-                    : "云同步：还没同步 · 点击同步",
+                    ? "云同步：已同步"
+                    : "云同步：还没同步",
     );
 
     /**

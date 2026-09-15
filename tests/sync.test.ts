@@ -855,6 +855,140 @@ describe("general 的合并", () => {
   });
 });
 
+describe("「设置也变了」这条信号", () => {
+  // 报给用户的那句话里，题库的四项（新增 / 删除 / 上传 / 下载）之外还要提一句
+  // 「设置已更新」——但导入一个题库也会让 `_general.json` 变（列表里多一条），
+  // 那不是设置变了。这里钉住的就是这条界线。
+
+  test("只调了题库顺序 → 设置变了（而且这一轮没有任何题库被传）", () => {
+    const local = localState(
+      [localBank(HASH_A, "题库一"), localBank(HASH_B, "题库二")],
+      {
+        library: [
+          { hash: HASH_B, name: "题库二" },
+          { hash: HASH_A, name: "题库一" },
+        ],
+      },
+    );
+    const remote = remoteState(
+      [remoteBank(HASH_A, "题库一"), remoteBank(HASH_B, "题库二")],
+      {
+        library: [
+          { hash: HASH_A, name: "题库一" },
+          { hash: HASH_B, name: "题库二" },
+        ],
+      },
+    );
+
+    const plan = buildSyncPlan({
+      local,
+      remote,
+      meta: metaWith(
+        {
+          [shardFileName(shardIndexOf(HASH_A))]: "file-x",
+          [shardFileName(shardIndexOf(HASH_B))]: "file-y",
+          [bankRowKey(HASH_A)]: local.banks.get(HASH_A)!.contentHash,
+          [bankRowKey(HASH_B)]: local.banks.get(HASH_B)!.contentHash,
+        },
+        normalizeGeneralSnapshot({
+          library: [
+            { hash: HASH_A, name: "题库一" },
+            { hash: HASH_B, name: "题库二" },
+          ],
+        }),
+      ),
+    });
+
+    expect(plan.actions.every((action) => action.verdict === "skip")).toBe(true);
+    expect(plan.settingsChanged, "顺序也是要同步的东西").toBe(true);
+    expect(plan.generalPush).toBe(true);
+  });
+
+  test("导入一个新题库 → 不算设置变了（那是「新增」在报的事）", () => {
+    const local = localState([localBank(HASH_A, "题库一")], {
+      library: [{ hash: HASH_A, name: "题库一" }],
+    });
+    const remote = remoteState([], {});
+
+    const plan = buildSyncPlan({ local, remote, meta: emptySyncMeta() });
+
+    expect(plan.actions[0].verdict).toBe("push");
+    expect(plan.generalPush, "列表里多一条，云端那份 general 当然要更新").toBe(
+      true,
+    );
+    expect(plan.settingsChanged, "题库的增删不该说成「设置已更新」").toBe(false);
+  });
+
+  test("只有云端改过设置 → 设置变了", () => {
+    const local = localState([localBank(HASH_A, "题库一")], {
+      library: [{ hash: HASH_A, name: "题库一" }],
+    });
+    const remote = remoteState([remoteBank(HASH_A, "题库一")], {
+      activeBank: HASH_A,
+      library: [{ hash: HASH_A, name: "题库一" }],
+    });
+
+    const plan = buildSyncPlan({
+      local,
+      remote,
+      meta: metaWith(
+        { [bankRowKey(HASH_A)]: local.banks.get(HASH_A)!.contentHash },
+        normalizeGeneralSnapshot({
+          library: [{ hash: HASH_A, name: "题库一" }],
+        }),
+      ),
+    });
+
+    expect(plan.settingsChanged).toBe(true);
+  });
+
+  test("两边完全一致 → 设置没变（四个数也都是 0）", () => {
+    const local = localState([localBank(HASH_A, "题库一")], {
+      activeBank: HASH_A,
+      globalSettings: { sound: true },
+      library: [{ hash: HASH_A, name: "题库一" }],
+    });
+    const remote = remoteState([remoteBank(HASH_A, "题库一")], {
+      activeBank: HASH_A,
+      globalSettings: { sound: true },
+      library: [{ hash: HASH_A, name: "题库一" }],
+    });
+
+    const plan = buildSyncPlan({
+      local,
+      remote,
+      meta: metaWith(
+        { [bankRowKey(HASH_A)]: local.banks.get(HASH_A)!.contentHash },
+        local.general,
+      ),
+    });
+
+    expect(plan.settingsChanged).toBe(false);
+    expect(planIsEmpty(plan)).toBe(true);
+  });
+
+  test("改名只算设置变了（题库内容哈希不看名字，别报成「上传」）", () => {
+    const local = localState([localBank(HASH_A, "新名字")], {
+      library: [{ hash: HASH_A, name: "新名字" }],
+    });
+    const remote = remoteState([remoteBank(HASH_A, "旧名字")], {
+      library: [{ hash: HASH_A, name: "旧名字" }],
+    });
+
+    const plan = buildSyncPlan({
+      local,
+      remote,
+      meta: metaWith(
+        { [bankRowKey(HASH_A)]: local.banks.get(HASH_A)!.contentHash },
+        normalizeGeneralSnapshot({ library: [{ hash: HASH_A, name: "旧名字" }] }),
+      ),
+    });
+
+    expect(plan.actions[0].verdict).toBe("skip");
+    expect(plan.settingsChanged).toBe(true);
+  });
+});
+
 describe("把云端文件解成状态", () => {
   test("分片里的题库、general、以及认不出来的文件都认得清", async () => {
     const snapshot = {
@@ -1011,7 +1145,7 @@ describe("同步目标", () => {
         gistUrl: "",
         autoSync: true,
       }).error,
-    ).toContain("还没填");
+    ).toContain("未填写");
   });
 });
 

@@ -51,6 +51,7 @@ import {
   type SyncPlan,
 } from "./merge";
 import { decodePayload, encodePayload } from "./payload";
+import { describeSyncResult, type SyncTransferSummary } from "./summary";
 import {
   applyRemoteValue,
   clearMtime,
@@ -93,11 +94,7 @@ export interface SyncEvent {
   result?: SyncTransferResult;
 }
 
-export interface SyncOutcome {
-  /** 上传的题库数 */
-  pushed: number;
-  /** 下载的题库数 */
-  pulled: number;
+export interface SyncOutcome extends SyncTransferSummary {
   /** 没能自动解决的冲突（题库 hash） */
   conflicts: string[];
   /** 拉取是否真的改动了本地内容（决定要不要刷新页面） */
@@ -107,6 +104,10 @@ export interface SyncOutcome {
 const IDLE_OUTCOME: SyncOutcome = {
   pushed: 0,
   pulled: 0,
+  newOnCloud: 0,
+  newLocally: 0,
+  removed: 0,
+  settingsChanged: false,
   conflicts: [],
   changedLocal: false,
 };
@@ -132,6 +133,7 @@ export class SyncEngine {
     phase: "idle",
     message: "还没同步过",
     at: 0,
+    lastSyncAt: 0,
     remoteCount: 0,
     remoteBanks: 0,
     conflicts: [],
@@ -145,6 +147,13 @@ export class SyncEngine {
    * （`computePendingChanges`）。
    */
   pendingChanges: boolean = $state(true);
+
+  /**
+   * 目标那条例代码片段已经不在了（被删 / 令牌换了账号）。
+   *
+   * 面板靠它把那条 id 划掉、旁边标「（已被删除）」——**不写一段说明文字**。
+   */
+  targetMissing: boolean = $state(false);
 
   /**
    * 这台设备的本地存储写不进去（隐私模式 / 系统拦截）。
@@ -226,6 +235,13 @@ export class SyncEngine {
 
     installStorageHook();
     this.watchConfig();
+
+    // 「上次同步」是盘上的事实（`quiz_app_sync_meta`），重开页面先把它读进来，
+    // 别等这一轮同步跑完才显示
+    this.status = {
+      ...this.status,
+      lastSyncAt: loadSyncMeta().lastSyncedAt,
+    };
 
     this.unlisten.push(
       onLocalChange(() => {
@@ -366,11 +382,14 @@ export class SyncEngine {
    */
   selectGist(gistId: string, gistUrl = ""): void {
     this.config.update({ gistId: gistId.trim(), gistUrl: gistUrl.trim() });
+    this.targetMissing = false;
     clearSyncMeta();
     this.status = {
       phase: "idle",
-      message: "已选定云端，点「立即同步」开始",
+      message: "已选定目标仓库",
       at: Date.now(),
+      // 换了云端 = 换了基准，旧的「上次同步」不再作数
+      lastSyncAt: 0,
       remoteCount: 0,
       remoteBanks: 0,
       conflicts: [],
@@ -379,12 +398,25 @@ export class SyncEngine {
 
   /** 丢弃本地记的 Gist ID，下次同步重新建一条云端（不动旧的）。 */
   forgetGist(): void {
-    this.config.update({ gistId: "" });
+    this.config.update({ gistId: "", gistUrl: "" });
+    this.clearSyncState("已断开目标仓库");
+  }
+
+  /**
+   * 把盘上的同步记账（`quiz_app_sync_meta`）也删掉，并把内存状态复位。
+   *
+   * 「清空配置」走这条：清完记账之后配置本身由面板整个删掉（
+   * `syncConfigStore.clear()` 连 localStorage 的键都不留）。**令牌、本地题库与
+   * 进度一概不动**——这里只清「上次同步到哪」这本账。
+   */
+  clearSyncState(message: string): void {
+    this.targetMissing = false;
     clearSyncMeta();
     this.status = {
       phase: "idle",
-      message: "已断开云端，下次同步会重新创建一条",
+      message,
       at: Date.now(),
+      lastSyncAt: 0,
       remoteCount: 0,
       remoteBanks: 0,
       conflicts: [],
@@ -406,15 +438,34 @@ export class SyncEngine {
     return await new GiteeClient(target).listGists();
   }
 
-  /** 连接自检：令牌能用吗、云端在不在、里面有几个题库。 */
-  async testConnection(): Promise<{
+  /**
+   * 连接自检：令牌能用吗、云端在不在、里面有几个题库。
+   *
+   * `draftToken` 是**编辑态里还没保存**的令牌。传了它就完全按草稿走：
+   * 不发请求之前先不动配置、也不碰引擎状态——「没点保存就不该生效」，
+   * 否则用户在编辑框里试一下就等于把令牌存下来了。
+   */
+  async testConnection(draftToken?: string): Promise<{
     ok: boolean;
     message: string;
     fileCount: number;
     bankCount: number;
   }> {
-    this.setStatus("checking", "正在检查连接…");
-    const target = this.ensureTarget();
+    const draft = draftToken?.trim();
+    if (draft === undefined) this.setStatus("checking", "正在检查连接…");
+    /**
+     * 两种自检**不是一回事**：
+     *
+     *   - 展示模式（不传草稿）：验令牌 **+ 当前目标仓库**还在不在 —— 平时就看这个；
+     *   - 编辑模式（传草稿令牌）：**只验令牌**（`gistId: ""`，走列表接口）。
+     *
+     * 编辑模式绝不能带上旧的 gistId：目标被删的时候，用户正是要换一条，
+     * 如果这时候还要求旧目标合法，他就会卡在「测试不通过 → 选不了新的 → 存不了」
+     * ——等于把钥匙锁在门里面。
+     */
+    const target = this.ensureTarget(
+      draft === undefined ? undefined : { token: draft, gistId: "" },
+    );
     if (!target) {
       return { ok: false, message: this.status.message, fileCount: 0, bankCount: 0 };
     }
@@ -423,6 +474,10 @@ export class SyncEngine {
     const result = await client.ping();
     let bankCount = 0;
 
+    // 只有「查当前目标」的那种自检才有资格改这个状态位：
+    // 草稿自检压根没看目标，不能把它清掉
+    if (draft === undefined) this.targetMissing = result.missingTarget === true;
+
     if (result.ok && result.gist) {
       // 顺手数一下云端有几个题库（同一份响应里就有全部文件内容，不用再请求）
       const remote = buildRemoteState(
@@ -430,30 +485,53 @@ export class SyncEngine {
       );
       bankCount = remote.banks.size;
 
-      // 令牌与 Gist 都通的情况下顺手回填 id 与它的网页地址
-      const patch: { gistId?: string; gistUrl?: string } = {};
-      if (client.id !== this.config.value.gistId) patch.gistId = client.id;
-      if (!this.config.value.gistUrl && result.gist.htmlUrl) {
-        patch.gistUrl = result.gist.htmlUrl;
+      // 令牌与 Gist 都通的情况下顺手回填 id 与它的网页地址。
+      // 草稿模式不回填：那些值还没被用户保存过。
+      if (draft === undefined) {
+        const patch: { gistId?: string; gistUrl?: string } = {};
+        if (client.id !== this.config.value.gistId) patch.gistId = client.id;
+        if (!this.config.value.gistUrl && result.gist.htmlUrl) {
+          patch.gistUrl = result.gist.htmlUrl;
+        }
+        if (Object.keys(patch).length > 0) this.patchConfig(patch);
       }
-      if (Object.keys(patch).length > 0) this.config.update(patch);
     }
 
     const message = result.ok
       ? result.fileCount > 0
-        ? `连接正常 · 云端 ${bankCount} 个题库 / ${result.fileCount} 个文件`
-        : "连接正常 · 云端还空着，第一次同步会创建"
+        ? `连接正常 · 云端 ${bankCount} 个题库`
+        : "连接正常 · 云端为空"
       : (result.error ?? "连接失败");
 
-    this.status = {
-      phase: result.ok ? "idle" : "error",
-      message,
-      at: Date.now(),
-      remoteCount: result.fileCount,
-      remoteBanks: bankCount,
-      conflicts: [],
-    };
+    if (draft === undefined) {
+      this.status = {
+        phase: result.ok ? "idle" : "error",
+        message,
+        at: Date.now(),
+        // 自检不是同步：别让「上次同步」跟着跳（用户会以为它偷偷同步了一次）
+        lastSyncAt: this.status.lastSyncAt,
+        remoteCount: result.fileCount,
+        remoteBanks: bankCount,
+        conflicts: [],
+      };
+    }
     return { ok: result.ok, message, fileCount: result.fileCount, bankCount };
+  }
+
+  /**
+   * 删掉云端某条代码片段。
+   *
+   * 面板上每条候选右边那个垃圾桶走这里。删的 id 由调用方给（用户可能正在看
+   * 另一条）；`draftToken` 是编辑态里还没保存的令牌——列表就是用它列出来的，
+   * 删除也得用同一个，否则第一次配置时（配置里还没有令牌）根本删不动。
+   */
+  async deleteGist(gistId: string, draftToken?: string): Promise<void> {
+    const id = gistId.trim();
+    if (!id) return;
+    const draft = draftToken?.trim();
+    const target = this.ensureTarget(draft ? { token: draft } : undefined);
+    if (!target) throw new Error(this.status.message);
+    await new GiteeClient({ ...target, gistId: id }).deleteGist();
   }
 
   // ── 内部实现 ──────────────────────────────────────────────────────────────
@@ -466,12 +544,19 @@ export class SyncEngine {
   /** 还没同步过时状态行该显示什么（配好了就不该再出现「点测试连接开始」）。 */
   private idleMessage(): string {
     if (!this.config.value.enabled) return "云同步已关闭";
-    if (this.config.value.token.length === 0) return "点「测试连接」开始";
+    if (this.config.value.token.length === 0) return "请先测试连接";
     return "还没同步过";
   }
 
-  private ensureTarget(): SyncTarget | null {
-    const { target, error } = resolveSyncTarget(this.config.value, this.apiBase);
+  /**
+   * 解析出同步目标。
+   *
+   * `override` 用来按**还没保存的草稿**试一次（编辑态里的令牌），
+   * 不传就是配置里那份。
+   */
+  private ensureTarget(override?: Partial<SyncConfig>): SyncTarget | null {
+    const config = override ? { ...this.config.value, ...override } : this.config.value;
+    const { target, error } = resolveSyncTarget(config, this.apiBase);
     if (!target) {
       this.setStatus("error", error ?? "同步配置不完整");
       return null;
@@ -481,6 +566,19 @@ export class SyncEngine {
 
   private setStatus(phase: SyncStatus["phase"], message: string): void {
     this.status = { ...this.status, phase, message, at: Date.now() };
+  }
+
+  /**
+   * 写回配置——**除非配置已经被清空了**。
+   *
+   * 同步 / 自检跑到一半时用户可能点了「清空配置」（它会连 localStorage 的键一起删）。
+   * 那一下必须算数：一个在飞的请求不能把刚删掉的键又写回来。
+   * 判据用「开关关着且令牌是空的」——那正是 `clear()` 之后的形状，
+   * 而「只是关掉开关」的人令牌还在，回填 gistUrl 这类操作照旧。
+   */
+  private patchConfig(patch: Partial<SyncConfig>): void {
+    if (!this.isOn() && this.config.value.token.length === 0) return;
+    this.config.update(patch);
   }
 
   private emit(event: SyncEvent): void {
@@ -521,6 +619,7 @@ export class SyncEngine {
 
   /** 关掉总开关：把内存里的同步状态清空（盘上的基准线不动）。 */
   private clearDisabledState(): void {
+    this.targetMissing = false;
     if (this.pushTimer !== null) {
       clearTimeout(this.pushTimer);
       this.pushTimer = null;
@@ -533,6 +632,7 @@ export class SyncEngine {
       phase: "disabled",
       message: "云同步已关闭",
       at: Date.now(),
+      lastSyncAt: this.status.lastSyncAt,
       remoteCount: 0,
       remoteBanks: 0,
       conflicts: [],
@@ -645,21 +745,24 @@ export class SyncEngine {
       // ── 还没有云端：建一条，把本地推上去 ──
       if (!client.id) {
         if (local.banks.size === 0 && !local.generalHasEdits) {
-          this.setStatus("idle", "本地还没有题库，导入一份再同步");
+          this.setStatus("idle", "本地暂无题库");
           return IDLE_OUTCOME;
         }
         const files = filesOfState(local);
         const gist = await client.createGist(await this.encodeAll(files));
-        this.config.update({ gistId: gist.id, gistUrl: gist.htmlUrl });
+        this.targetMissing = false;
+        this.patchConfig({ gistId: gist.id, gistUrl: gist.htmlUrl });
         saveSyncMeta(baselineMeta(local, gist.updatedAt));
         const outcome: SyncOutcome = {
           ...IDLE_OUTCOME,
           pushed: local.banks.size,
+          // 云端刚建出来，这些题库对它来说全是「新增」
+          newOnCloud: local.banks.size,
         };
         this.finishStatus(outcome, gist.files.size, local.banks.size);
         this.emit({
           kind: "synced",
-          message: "已把本地数据备份到云端",
+          message: "已备份到云端",
           result: { pushed: outcome.pushed, pulled: 0 },
         });
         return outcome;
@@ -667,15 +770,15 @@ export class SyncEngine {
 
       const gist = await client.getGist();
       if (!gist) {
-        this.setStatus(
-          "error",
-          "云端那条 Gist 不见了（被删了，或令牌换了账号）。在「更多操作」里点「重建云端」新建一条并重传本地数据。",
-        );
+        // 目标没了：卡片上会把那条 id 划掉标「已被删除」，这里只留一句给通知用的话
+        this.targetMissing = true;
+        this.setStatus("error", "目标仓库不存在");
         return IDLE_OUTCOME;
       }
+      this.targetMissing = false;
       // 老版本只存过 id，顺手把网页地址补上（避免自己拼用户名拼错）
       if (!this.config.value.gistUrl && gist.htmlUrl) {
-        this.config.update({ gistUrl: gist.htmlUrl });
+        this.patchConfig({ gistUrl: gist.htmlUrl });
       }
 
       const remote = buildRemoteState(await this.readRemoteFiles(gist.files));
@@ -774,7 +877,6 @@ export class SyncEngine {
         const bank = remote.banks.get(action.hash);
         if (!bank) continue;
         writeBankLocally(bank);
-        outcome.pulled += 1;
         outcome.changedLocal = true;
       } else if (action.verdict === "deleteLocal") {
         removeBankLocally(action.hash);
@@ -824,10 +926,30 @@ export class SyncEngine {
       }),
     );
 
-    outcome.pushed = plan.actions.filter(
-      (action) =>
-        action.verdict === "push" && settledThisRound(plan, action),
-    ).length;
+    // 这一轮到底动了什么——四个数互斥：新题库只算「新增」，不算「上传 / 下载」。
+    // 冲突冻住的分片不算（`settledThisRound`），和基准线的写法保持一致。
+    for (const action of plan.actions) {
+      if (!settledThisRound(plan, action)) continue;
+      switch (action.verdict) {
+        case "push":
+          outcome.pushed += 1;
+          // 云端原来没有这个题库 = 这台设备新导入的
+          if (action.remoteHash === undefined) outcome.newOnCloud += 1;
+          break;
+        case "pull":
+          outcome.pulled += 1;
+          // 本地原来没有 = 别的设备新导入的
+          if (action.localHash === undefined) outcome.newLocally += 1;
+          break;
+        case "deleteLocal":
+        case "deleteRemote":
+          outcome.removed += 1;
+          break;
+        default:
+          break;
+      }
+    }
+    outcome.settingsChanged = plan.settingsChanged;
 
     this.finishStatus(outcome, fileCount, remoteBankCount(plan));
     if (outcome.changedLocal) this.reloadForAppliedChanges();
@@ -844,15 +966,13 @@ export class SyncEngine {
     // 走到这里说明这一轮正常收尾了：按真实数据重算「还有没有没推上去的东西」
     this.pendingChanges = this.computePendingChanges();
 
-    const summary =
-      outcome.pushed === 0 && outcome.pulled === 0
-        ? "已是最新"
-        : `上传 ${outcome.pushed} · 下载 ${outcome.pulled}`;
+    const summary = describeSyncResult(outcome);
 
     this.status = {
       phase: "idle",
       message: summary,
       at: Date.now(),
+      lastSyncAt: Date.now(),
       remoteCount,
       remoteBanks,
       conflicts: [],
@@ -860,7 +980,13 @@ export class SyncEngine {
     this.lastConflictSignature = "";
     this.lastErrorSignature = "";
 
-    if (outcome.pushed > 0 || outcome.pulled > 0) {
+    // 「设置也动了」也算同步出了结果——否则拖一下顺序同步完，事件里什么都不报
+    if (
+      outcome.pushed > 0 ||
+      outcome.pulled > 0 ||
+      outcome.removed > 0 ||
+      outcome.settingsChanged
+    ) {
       this.emit({
         kind: "synced",
         message: summary,
@@ -887,8 +1013,10 @@ export class SyncEngine {
 
     this.status = {
       phase: "conflict",
-      message: `${conflicts.length} 个题库两边都改过，需要你选择保留哪一边`,
+      message: `${conflicts.length} 个题库存在冲突`,
       at: Date.now(),
+      // 冲突这一轮什么都没写，当然也不算「同步过」
+      lastSyncAt: this.status.lastSyncAt,
       remoteCount,
       remoteBanks,
       conflicts: conflicts.map(toConflict),
@@ -898,7 +1026,7 @@ export class SyncEngine {
       this.lastConflictSignature = signature;
       this.emit({
         kind: "conflict",
-        message: `${conflicts.length} 个题库两边都改过，请在设置里选择保留哪一边`,
+        message: `${conflicts.length} 个题库存在冲突`,
       });
     }
   }
@@ -916,7 +1044,7 @@ export class SyncEngine {
     this.status = {
       ...this.status,
       phase: offline ? "offline" : "error",
-      message: offline ? "当前离线，联网后会自动重试" : message,
+      message: offline ? "当前离线" : message,
       at: Date.now(),
     };
     if (!offline && message !== this.lastErrorSignature) {

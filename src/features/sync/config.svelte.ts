@@ -103,6 +103,22 @@ export class SyncConfigStore {
     this.notify();
   }
 
+  /**
+   * 彻底删掉配置——连 `localStorage` 里的键一起，回到「从没配过」。
+   *
+   * 只写一遍 `token: ""` 是不够的：键还躺在盘上，下次打开仍然会读出一份
+   * 「配置过、但都是空的」记录（`enabled` 甚至会沿用上一次的 true）。
+   */
+  clear(): void {
+    this.value = { ...EMPTY_SYNC_CONFIG };
+    try {
+      localStorage.removeItem(STORAGE_KEY_SYNC_CONFIG);
+    } catch (e) {
+      console.warn("Failed to clear sync config:", e);
+    }
+    this.notify();
+  }
+
   private notify(): void {
     for (const listener of [...this.listeners]) {
       try {

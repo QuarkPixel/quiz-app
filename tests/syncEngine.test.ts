@@ -49,6 +49,10 @@ describe("引擎（端到端，对着替身）", () => {
     h.save("A");
 
     expect(outcome.pushed).toBe(1);
+    // 云端原来没有这个题库 → 算「新增」，不算「上传」（两个数不能重复计）
+    expect(outcome.newOnCloud).toBe(1);
+    expect(outcome.newLocally).toBe(0);
+    expect(outcome.removed).toBe(0);
     const gistId = h.store("A").value.gistId;
     expect(gistId).toBeTruthy();
 
@@ -59,10 +63,10 @@ describe("引擎（端到端，对着替身）", () => {
     // 「云端 N 个题库 / M 个文件」必须真的记下来（线上表现：永远 0）
     expect(engine.status.remoteBanks).toBe(1);
     expect(engine.status.remoteCount).toBeGreaterThan(0);
-    expect(engine.status.message).toBe("上传 1 · 下载 0");
+    expect(engine.status.message).toBe("新增 1");
   });
 
-  test("第二次同步：没改动就报「已是最新」，不会重复上传", async () => {
+  test("第二次同步：没改动就报「题库没有改动」，不会重复上传", async () => {
     h.freshDevice("A");
     const engine = h.open("A");
     h.seedBank(HASH_A, "英语短语", "make progress");
@@ -76,12 +80,13 @@ describe("引擎（端到端，对着替身）", () => {
     expect(again.pushed).toBe(0);
     expect(again.pulled).toBe(0);
     expect(again.conflicts).toEqual([]);
-    expect(engine.status.message).toBe("已是最新");
+    // 四件事都没发生时的说法（见 `describeSyncResult`）
+    expect(engine.status.message).toBe("题库没有改动");
   });
 
-  test("导入新题库后再同步：报「上传 1」，云端真的多出这个题库", async () => {
+  test("导入新题库后再同步：报「新增 1」，云端真的多出这个题库", async () => {
     // 线上 bug：`execute` 把 `recordPushed` 的返回值丢了，明明传上去了却报
-    // 「上传 0 · 下载 0」，用户以为同步没工作。
+    // 「上传 0 · 下载 0」，用户以为同步没工作。现在按四件事分别数。
     h.freshDevice("A");
     const engine = h.open("A");
     h.seedBank(HASH_A, "题库一", "first");
@@ -244,6 +249,116 @@ describe("引擎（端到端，对着替身）", () => {
     expect(result.fileCount).toBeGreaterThan(0);
     expect(engine.status.remoteBanks).toBe(1);
     expect(h.store("A").value.gistUrl).toBeTruthy();
+  });
+
+  test("测试连接不是同步：「上次同步」的时间不许跟着跳", async () => {
+    // 线上疑问：「点一下测试连接，卡片上的『上次同步』就变成刚刚，
+    // 它是不是偷偷同步了一次？」——没有。自检只读云端，所以 lastSyncAt 必须不动。
+    h.freshDevice("A");
+    const engine = h.open("A", { gistId: "" });
+    h.seedBank(HASH_A, "题库一", "first");
+
+    await engine.sync();
+    h.tick();
+    h.save("A");
+    const syncedAt = engine.status.lastSyncAt;
+    expect(syncedAt, "真的同步过才会有这个时间").toBeGreaterThan(0);
+
+    h.tick();
+    const result = await engine.testConnection();
+    h.save("A");
+
+    expect(result.ok).toBe(true);
+    expect(
+      engine.status.lastSyncAt,
+      "自检只读云端，一个字节都没写，不该算「同步过」",
+    ).toBe(syncedAt);
+    // 但它该更新的东西照旧更新：云端有多少题库、gist 地址
+    expect(engine.status.remoteBanks).toBe(1);
+    expect(h.store("A").value.gistUrl).toBeTruthy();
+  });
+
+  test("两种自检不是一回事：展示模式查目标，编辑模式只验令牌", async () => {
+    // 线上卡死过：目标仓库被删之后，编辑态的「测试连接」也跟着失败，
+    // 于是「改不了 → 存不了」，钥匙被锁在门里面。
+    h.freshDevice("A");
+    const engine = h.open("A", { gistId: "gone-forever" });
+
+    // 展示模式：令牌 + 目标都要查 → 目标不在就如实报
+    const display = await engine.testConnection();
+    expect(display.ok).toBe(false);
+    expect(engine.targetMissing).toBe(true);
+
+    // 编辑模式：只验令牌 → 通过；而且不许把「目标不存在」这个状态抹掉
+    const draft = await engine.testConnection("tok");
+    expect(draft.ok, "令牌是好的就该通过").toBe(true);
+    expect(engine.targetMissing, "草稿自检没看目标，不能改这个状态").toBe(true);
+  });
+
+  test("目标被删之后还能换：编辑态自检通过 → 选新建 → 保存 → 同步成功", async () => {
+    h.freshDevice("A");
+    const engine = h.open("A", { gistId: "gone-forever" });
+    h.seedBank(HASH_A, "题库一", "first");
+
+    // 编辑态自检只验令牌：能过，才谈得上换目标
+    await engine.testConnection("tok");
+
+    // 用户选了「新建」→ 配置里 gistId 变空 → 同步建一条新的
+    engine.selectGist("");
+    const outcome = await engine.sync();
+    h.save("A");
+
+    expect(h.store("A").value.gistId).toBeTruthy();
+    expect(h.store("A").value.gistId).not.toBe("gone-forever");
+    expect(outcome.pushed).toBe(1);
+    expect(engine.targetMissing, "换了目标就不再是「已删除」").toBe(false);
+  });
+
+  test("草稿令牌自检：不写配置、也不动引擎状态（没点保存就不该生效）", async () => {
+    // 面板的编辑态把令牌当草稿传进来试。以前它先 `update({token})` 落盘再试，
+    // 于是「没点保存，刷新一下令牌也被换了」。
+    h.freshDevice("A");
+    const engine = h.open("A", { gistId: "" });
+    const before = { ...engine.status };
+
+    const wrong = await engine.testConnection("wrong-token");
+    expect(wrong.ok).toBe(false);
+
+    expect(h.store("A").value.token, "草稿令牌不该被写进配置").toBe("tok");
+    expect(engine.status.phase, "草稿自检失败不该把引擎标成报错").toBe(
+      before.phase,
+    );
+    expect(engine.status.message).toBe(before.message);
+
+    // 草稿对的时候也一样：只回报结果
+    const right = await engine.testConnection("tok");
+    expect(right.ok).toBe(true);
+    expect(h.store("A").value.token).toBe("tok");
+    expect(engine.status.message).toBe(before.message);
+  });
+
+  test("删掉云端某条代码片段：删的是给的那条，不是配置里那条", async () => {
+    h.freshDevice("A");
+    const engine = h.open("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    await engine.sync();
+    const keep = h.store("A").value.gistId;
+    h.tick();
+    h.save("A");
+
+    // 再造一条（把本地记的 id 丢掉，同步时就会新建一条），旧的先留着别删
+    h.store("A").update({ gistId: "" });
+    await engine.sync();
+    const extra = h.store("A").value.gistId;
+    expect(extra).not.toBe(keep);
+    expect(h.fake.has(keep)).toBe(true);
+
+    await engine.deleteGist(keep);
+    h.save("A");
+
+    expect(h.fake.has(keep)).toBe(false);
+    expect(h.fake.has(extra), "配置里那条不该被牵连").toBe(true);
+    expect(h.store("A").value.gistId).toBe(extra);
   });
 
   test("从老格式升级：只有文件级基准时也能判方向，并在这一轮换成题库行", async () => {
@@ -412,10 +527,11 @@ describe("引擎（端到端，对着替身）", () => {
     h.save("A");
     expect(failed.pushed).toBe(0);
     expect(engine.status.phase).toBe("error");
-    expect(engine.status.message).toContain("Gist");
-    expect(engine.status.message).toContain("重建云端");
+    // 文案只说明事实（原因由通知和卡片上的「已被删除」负责），别写成一段说明
+    expect(engine.status.message).toBe("目标仓库不存在");
+    expect(engine.targetMissing, "面板靠这个状态位把 id 划掉").toBe(true);
 
-    // 「重建云端」= 断开（丢掉 id 与记账）→ 再同步一次就会新建一条
+    // 在面板上选「新建」，等于断开（丢掉 id 与记账）→ 再同步就新建一条
     engine.forgetGist();
     const rebuilt = await engine.sync();
     h.save("A");
@@ -427,6 +543,23 @@ describe("引擎（端到端，对着替身）", () => {
     expect(await h.cloudBanks(secondId)).toEqual([HASH_A]);
   });
 
+  test("同步跑到一半时清空配置：不许把刚删掉的配置键写回来", async () => {
+    h.freshDevice("A");
+    const engine = h.open("A", { gistId: "" });
+    h.seedBank(HASH_A, "题库一", "first");
+
+    // 这一轮会去建 Gist；就在请求在飞的时候，用户点了「清空配置」
+    const running = engine.sync();
+    h.store("A").clear();
+    expect(localStorage.getItem("quiz_app_sync_config")).toBeNull();
+    await running;
+
+    expect(
+      localStorage.getItem("quiz_app_sync_config"),
+      "在飞的请求不能把键写回来",
+    ).toBeNull();
+  });
+
   test("本地什么都没有时不建空的 Gist", async () => {
     h.freshDevice("A");
     const engine = h.open("A");
@@ -436,7 +569,7 @@ describe("引擎（端到端，对着替身）", () => {
 
     expect(outcome.pushed).toBe(0);
     expect(h.store("A").value.gistId).toBe("");
-    expect(engine.status.message).toContain("还没有题库");
+    expect(engine.status.message).toContain("暂无题库");
   });
 });
 

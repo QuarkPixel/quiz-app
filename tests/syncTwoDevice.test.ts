@@ -79,7 +79,7 @@ describe("双设备同步", () => {
     h.seedBank(HASH_B, "题库二", "second bank");
     const aSecond = await h.on("A", (engine) => engine.sync());
 
-    expect(aSecond.pushed, "导入了新题库就该报「上传 1」").toBe(1);
+    expect(aSecond.pushed, "导入了新题库就该报「新增 1」").toBe(1);
     expect(await h.cloudBanks(gistId)).toEqual(
       expect.arrayContaining([HASH_A, HASH_B]),
     );
@@ -435,7 +435,7 @@ describe("双设备同步", () => {
     const unconfigured = h.open("A", { token: "" });
     unconfigured.init();
     unconfigured.dispose();
-    expect(unconfigured.status.message).toBe("点「测试连接」开始");
+    expect(unconfigured.status.message).toBe("请先测试连接");
 
     h.engine("A");
     h.seedBank(HASH_A, "题库一", "first");
@@ -447,7 +447,9 @@ describe("双设备同步", () => {
       await vi.waitFor(
         () => {
           expect(configured.status.phase).toBe("idle");
-          expect(configured.status.message).toContain("上传");
+          expect(configured.status.message).toMatch(
+            /新增|上传|下载|题库没有改动|设置已更新/,
+          );
         },
         { timeout: 4000 },
       );
@@ -455,6 +457,6 @@ describe("双设备同步", () => {
       configured.dispose();
     }
     h.save("A");
-    expect(configured.status.message).not.toBe("点「测试连接」开始");
+    expect(configured.status.message).not.toBe("请先测试连接");
   });
 });

@@ -73,17 +73,17 @@ export function describeHttpError(status: number, body: string): string {
 
   switch (status) {
     case 401:
-      return "Gitee 令牌无效或过期——重新生成一个（勾 gists 权限）后填进来";
+      return "令牌无效或已过期";
     case 403:
-      return "Gitee 拒绝了这次请求——确认令牌勾了 gists 权限";
+      return "令牌权限不足（需要 gists）";
     case 404:
-      return "那条 Gist 不见了——可能是被删掉了。在「更多操作」里点「重新创建云端」";
+      return "目标仓库不存在";
     case 422:
-      return `Gitee 说请求内容不合法${message ? `：${message}` : ""}`;
+      return `请求不合法${message ? `：${message}` : ""}`;
     case 429:
-      return "请求太频繁，被 Gitee 限流了，稍后再试";
+      return "请求过于频繁，稍后再试";
     default:
-      return `Gitee 返回 HTTP ${status}${message ? `：${message}` : ""}`;
+      return `请求失败（HTTP ${status}）${message ? `：${message}` : ""}`;
   }
 }
 
@@ -132,7 +132,7 @@ export class GiteeClient {
       return await fetch(this.url(path), { ...init, headers: this.headers(true) });
     } catch (error) {
       throw new GiteeError(
-        "连不上 Gitee——检查网络，或确认能打开 gitee.com",
+        "连接 Gitee 失败",
         0,
         error instanceof Error ? error.message : String(error),
       );
@@ -244,14 +244,14 @@ export class GiteeClient {
     if (!response.ok) throw await this.readError(response);
 
     const gist = this.parseGist(await response.json());
-    if (!gist) throw new GiteeError("Gitee 没返回 gist id，创建失败", 0);
+    if (!gist) throw new GiteeError("创建失败：未返回 id", 0);
     this.gistId = gist.id;
     return gist;
   }
 
   /** 读当前 Gist；返回 null 表示它不存在（被删了）。 */
   async getGist(): Promise<GiteeGist | null> {
-    if (!this.gistId) throw new GiteeError("还没有云端 Gist", 0);
+    if (!this.gistId) throw new GiteeError("尚未选定目标仓库", 0);
 
     const response = await this.request(`/gists/${encodeURIComponent(this.gistId)}`, {
       method: "GET",
@@ -260,7 +260,7 @@ export class GiteeClient {
     if (!response.ok) throw await this.readError(response);
 
     const gist = this.parseGist(await response.json());
-    if (!gist) throw new GiteeError("Gitee 返回的 Gist 格式看不懂", 0);
+    if (!gist) throw new GiteeError("Gist 格式无法识别", 0);
     return gist;
   }
 
@@ -271,7 +271,7 @@ export class GiteeClient {
    * A 文件的内容与存在性都不受影响。
    */
   async updateFiles(files: Record<string, string>): Promise<GiteeGist> {
-    if (!this.gistId) throw new GiteeError("还没有云端 Gist", 0);
+    if (!this.gistId) throw new GiteeError("尚未选定目标仓库", 0);
 
     const response = await this.request(`/gists/${encodeURIComponent(this.gistId)}`, {
       method: "PATCH",
@@ -284,7 +284,7 @@ export class GiteeClient {
     if (!response.ok) throw await this.readError(response);
 
     const gist = this.parseGist(await response.json());
-    if (!gist) throw new GiteeError("Gitee 返回的 Gist 格式看不懂", 0);
+    if (!gist) throw new GiteeError("Gist 格式无法识别", 0);
     return gist;
   }
 
@@ -295,7 +295,7 @@ export class GiteeClient {
    */
   async deleteFiles(names: readonly string[]): Promise<void> {
     if (names.length === 0) return;
-    if (!this.gistId) throw new GiteeError("还没有云端 Gist", 0);
+    if (!this.gistId) throw new GiteeError("尚未选定目标仓库", 0);
 
     const body = {
       files: Object.fromEntries(names.map((name) => [name, null])),
@@ -303,6 +303,19 @@ export class GiteeClient {
     const response = await this.request(`/gists/${encodeURIComponent(this.gistId)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
+    });
+    if (!response.ok) throw await this.readError(response);
+  }
+
+  /**
+   * 整个删掉一条代码片段。
+   *
+   * 不可恢复——面板那边是二次确认（垃圾桶图标点两下）之后才走到这里。
+   */
+  async deleteGist(): Promise<void> {
+    if (!this.gistId) throw new GiteeError("尚未选定目标仓库", 0);
+    const response = await this.request(`/gists/${encodeURIComponent(this.gistId)}`, {
+      method: "DELETE",
     });
     if (!response.ok) throw await this.readError(response);
   }
@@ -318,6 +331,8 @@ export class GiteeClient {
     fileCount: number;
     gist?: GiteeGist;
     error?: string;
+    /** 目标 Gist 已经不在了（被删 / 换了账号）——面板会把那条 id 划掉 */
+    missingTarget?: boolean;
   }> {
     try {
       if (!this.gistId) {
@@ -327,7 +342,7 @@ export class GiteeClient {
         return { ok: true, fileCount: 0 };
       }
       const gist = await this.getGist();
-      if (!gist) return { ok: false, fileCount: 0, error: "云端 Gist 不存在（可能被删了）" };
+      if (!gist) return { ok: false, fileCount: 0, error: "目标仓库不存在", missingTarget: true };
       return { ok: true, fileCount: gist.files.size, gist };
     } catch (error) {
       return {

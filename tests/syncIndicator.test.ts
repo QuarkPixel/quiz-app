@@ -167,7 +167,7 @@ describe("头部的云同步指示点", () => {
 
       // 点了不给任何提示：变绿就是反馈，不许弹 toast / alert
       expect(document.body.textContent).not.toContain("同步完成");
-      expect(document.body.textContent).not.toContain("已是最新");
+      expect(document.body.textContent).not.toContain("题库没有改动");
       expect(document.querySelector('[role="alert"]')).toBeNull();
     } finally {
       await h.stop();

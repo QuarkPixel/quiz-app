@@ -120,6 +120,13 @@ export interface SyncPlan {
   generalPush: boolean;
   /** 本地的 general 需不需要改写 */
   generalChangedLocal: boolean;
+  /**
+   * 列表 / 设置是不是真的变了（**不看题库的增删**）。
+   *
+   * 只用来给用户报一句「设置已更新」：题库的增删已经有「新增 / 删除」在报了，
+   * 再按 general 文件变没变来报，就会变成「导入了 1 个题库」也顺带说「设置已更新」。
+   */
+  settingsChanged: boolean;
   /** 需要重建并上传的分片下标（重建后内容没变就不传） */
   pushShards: number[];
   /** 应当从云端删掉的文件（分片空了 / 旧格式残留） */
@@ -138,6 +145,7 @@ export function emptyPlan(general: GeneralSnapshot): SyncPlan {
     general,
     generalPush: false,
     generalChangedLocal: false,
+    settingsChanged: false,
     pushShards: [],
     deleteRemoteFiles: [],
     conflicts: [],
@@ -245,6 +253,9 @@ export function forcePushPlan(
     });
   }
   plan.generalPush = true;
+  // 云端原来那份设置会被本地这份盖掉（云端还没有 general 时不算「变了」）
+  plan.settingsChanged =
+    remote.general !== null && !sameSettings(plan.general, remote.general);
   plan.pushShards = shardsToPush(plan.actions, []);
   plan.remoteShards = [...remote.shardBanks].map(([index, banks]) => ({
     name: shardFileName(index),
@@ -289,6 +300,8 @@ export function forcePullPlan(
   }
   // 云端为准：不回推 general，但要把合并后的 general 落到本地
   plan.generalChangedLocal = true;
+  // 本地这份设置会被云端那份盖掉
+  plan.settingsChanged = !sameSettings(local.general, plan.general);
   return plan;
 }
 
@@ -380,6 +393,10 @@ export function buildSyncPlan(params: {
     general,
     generalPush,
     generalChangedLocal: stableHash(general) !== local.generalHash,
+    settingsChanged:
+      // 本地那份会被改写（设置从云端下来了），或者云端那份会被改写（本地设置推上去）
+      !sameSettings(local.general, general) ||
+      (remote.general !== null && !sameSettings(general, remote.general)),
     pushShards: shardsToPush(actions, conflicts),
     deleteRemoteFiles: emptyRemoteFiles(
       actions,
@@ -502,6 +519,45 @@ function summarize(
  * 各自导入的题库都要在列表里出现，被删掉的要消失。名字与顺序这类元数据
  * 才走「哪边改过听哪边」。
  */
+/**
+ * 两份 general 的「设置部分」是不是一样——**不看题库的增删**。
+ *
+ * 比的是：当前题库 / 全局设置 / 默认设置，题库列表里**两边都有**的那些条目的
+ * 字段（改名、换模式、题数都算），以及这些条目之间的**相对顺序**（拖一下顺序
+ * 也是改动，而且是最容易同步不过去的那种）。
+ *
+ * 只在一边出现的题库条目**不比**：那是「新增 / 删除」，由题库那两项在报；
+ * 掺进来就会变成「导入一个题库」也顺带说「设置已更新」。
+ */
+export function sameSettings(a: GeneralSnapshot, b: GeneralSnapshot): boolean {
+  if (
+    stableHash([a.activeBank, a.defaultSettings, a.globalSettings]) !==
+    stableHash([b.activeBank, b.defaultSettings, b.globalSettings])
+  ) {
+    return false;
+  }
+
+  const fingerprint = (snapshot: GeneralSnapshot): Map<string, string> => {
+    const map = new Map<string, string>();
+    for (const entry of snapshot.library) {
+      const { hash, ...rest } = entry;
+      map.set(hash, stableHash(rest));
+    }
+    return map;
+  };
+
+  const aMap = fingerprint(a);
+  const bMap = fingerprint(b);
+  const shared = new Set([...aMap.keys()].filter((hash) => bMap.has(hash)));
+  for (const hash of shared) {
+    if (aMap.get(hash) !== bMap.get(hash)) return false;
+  }
+
+  const sequence = (snapshot: GeneralSnapshot): string[] =>
+    snapshot.library.map((entry) => entry.hash).filter((hash) => shared.has(hash));
+  return sameList(sequence(a), sequence(b));
+}
+
 export function mergeGeneral(params: {
   local: GeneralSnapshot;
   remote: GeneralSnapshot | null;

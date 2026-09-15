@@ -37,7 +37,7 @@ export function resolveSyncTarget(
 ): ResolveResult {
   const token = config.token.trim();
   if (!token) {
-    return { target: null, error: "还没填 Gitee 令牌" };
+    return { target: null, error: "未填写 Gitee 令牌" };
   }
 
   return {
