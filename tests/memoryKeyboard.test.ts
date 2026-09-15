@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { isInsideDialog } from "../src/features/quiz/keyboard";
 import {
   hasSelectedTextToCopy,
-  isInsideDialog,
   isMemoryShortcutIgnored,
   shouldDeferMemoryAction,
 } from "../src/features/memory/keyboard";

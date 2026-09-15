@@ -17,6 +17,7 @@
 import {
   hasSelectedText,
   isEditingTarget,
+  isInsideDialog,
   isInteractiveTarget,
 } from "@/features/quiz";
 import type { QuestionKeyboardAction } from "@/quiz/types/types";
@@ -26,15 +27,6 @@ export function isMemoryShortcutIgnored(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.isComposing) return true;
   if (isEditingTarget(event)) return true;
   return isInsideDialog(event);
-}
-
-/** 焦点是否在打开的对话框里（此时只允许对话框自己的 Esc / Enter 生效）。 */
-export function isInsideDialog(event: KeyboardEvent): boolean {
-  const target = event.target;
-  if (typeof Element === "undefined" || !(target instanceof Element)) {
-    return false;
-  }
-  return target.closest('[role="dialog"]') !== null;
 }
 
 /**

@@ -54,6 +54,17 @@ export function isInteractiveTarget(event: KeyboardEvent): boolean {
   );
 }
 
+/**
+ * 焦点是否在打开的对话框里（此时只允许对话框自己的 Esc / Enter 生效）。
+ * 刷题 / 记忆两个模式的处理器共用同一口径。
+ */
+export function isInsideDialog(event: KeyboardEvent): boolean {
+  const target = eventTargetElement(event);
+  if (!target) return false;
+
+  return target.closest('[role="dialog"]') !== null;
+}
+
 export function hasSelectedText(): boolean {
   if (typeof window === "undefined" || !window.getSelection) return false;
   return (window.getSelection()?.toString().length ?? 0) > 0;

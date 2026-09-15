@@ -1,6 +1,7 @@
 /**
  * 快捷键配置。
  * 修饰键固定为 ⌘ (Mac) / Ctrl (其他)，下面是配合修饰键使用的具体字母（单字符，小写）。
+ * 只有 `toggleGlobalSettings` 例外——它还要额外按住 ⇧（见 `@/features/globalSettingsShortcut`）。
  *
  * 注意：sidebar 的快捷键由 src/lib/components/ui/sidebar/constants.ts 导入此值后生效，
  * 改这里就会同步生效。
@@ -16,6 +17,8 @@ export const SHORTCUTS = {
   copyQuestion: "c",
   /** 切换设置 */
   toggleSettings: "i",
+  /** 打开全局设置（⌘⇧I） */
+  toggleGlobalSettings: "i",
   /** 切换"答对自动下一题" */
   toggleAutoNext: "n",
   /** 切换音效 */

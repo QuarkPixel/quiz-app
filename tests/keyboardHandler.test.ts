@@ -9,7 +9,10 @@ import type { Question } from "../src/types";
 
 // QuizSession 是 class，但 keyboardHandler 只用其上的几个方法 + showResult 字段。
 // 用最小 stub 模拟，避免引入 svelte 运行时。
-function makeQuestion(type: Question["type"] = "single"): Question {
+function makeQuestion(
+  type: Question["type"] = "single",
+  optionCount = 3,
+): Question {
   if (type === "blank") {
     return {
       id: "b1",
@@ -30,9 +33,18 @@ function makeQuestion(type: Question["type"] = "single"): Question {
     id: "s1",
     type,
     question: "choice",
-    options: [{ text: "A" }, { text: "B" }, { text: "C" }],
+    options: Array.from({ length: optionCount }, (_, index) => ({
+      text: String.fromCharCode(65 + index),
+    })),
     answer: type === "multiple" ? [0, 2] : [1],
   };
+}
+
+function makeShuffledOptions(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    text: String.fromCharCode(65 + index),
+    originalIndex: index,
+  }));
 }
 
 function makeSessionStub(
@@ -42,18 +54,17 @@ function makeSessionStub(
     autoSubmitOnSelection?: boolean;
     selectedAnswers?: number[];
     isPreviewingNewQuestion?: boolean;
+    /** 选项条数：默认 3，回归「⌘⇧I 撞上第 9 个选项」时需要 9 条 */
+    optionCount?: number;
   } = {},
 ) {
+  const optionCount = options.optionCount ?? 3;
   return {
     showResult,
     isPreviewingNewQuestion: options.isPreviewingNewQuestion ?? false,
-    currentQuestion: makeQuestion(options.questionType),
-    currentNewQuestion: makeQuestion(options.questionType),
-    shuffledOptions: [
-      { text: "A", originalIndex: 0 },
-      { text: "B", originalIndex: 1 },
-      { text: "C", originalIndex: 2 },
-    ],
+    currentQuestion: makeQuestion(options.questionType, optionCount),
+    currentNewQuestion: makeQuestion(options.questionType, optionCount),
+    shuffledOptions: makeShuffledOptions(optionCount),
     selectedAnswers: options.selectedAnswers ?? [],
     blankAnswerInputs: [""],
     globalSettings: {
@@ -253,6 +264,24 @@ describe("Mod 快捷键派发", () => {
       mkEvent({ metaKey: true, shiftKey: true, key: SHORTCUTS.togglePool }),
     );
     expect(session.togglePool).not.toHaveBeenCalled();
+  });
+
+  it("Cmd+Shift+I（全局设置）→ 整套让给应用级处理，不落进题目级分发", () => {
+    // 9 个选项时 `i` 正好是第 9 个选项的字母：这里没拦住的话，
+    // ⌘⇧I 会顺手选中 I 选项，开着自动提交还会把答案提交掉。
+    const session = makeSessionStub(false, { optionCount: 9 });
+    const ui = makeUiStub();
+    const ev = mkEvent({
+      metaKey: true,
+      shiftKey: true,
+      key: SHORTCUTS.toggleGlobalSettings.toUpperCase(),
+    });
+    createKeyboardHandler(session, ui)(ev);
+    expect(session.selectedAnswers).toEqual([]);
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(ui.toggleSettings).not.toHaveBeenCalled();
+    // 不吃按键：拦下它、打开全局设置的是窗口级的应用快捷键
+    expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 });
 

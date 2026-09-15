@@ -7,6 +7,7 @@ export { buildFilterOptions, getTypeName, normalizeFilterType } from "./filters"
 export {
   hasSelectedText,
   isEditingTarget,
+  isInsideDialog,
   isInteractiveTarget,
 } from "./keyboard";
 export {

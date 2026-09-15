@@ -8,8 +8,10 @@
 import {
   hasSelectedText,
   isEditingTarget,
+  isInsideDialog,
   isInteractiveTarget,
 } from "@/features/quiz";
+import { isGlobalSettingsShortcut } from "@/features/globalSettingsShortcut";
 import { SHORTCUTS } from "@/config";
 import { QUESTION_TYPES_LOGIC } from "@/quiz/types/registry-logic";
 import { QuestionCopyPattern } from "@/quiz/types/types";
@@ -27,12 +29,17 @@ export function createKeyboardHandler(
   return (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing) return;
 
+    // ⌘⇧I 是应用级快捷键（打开全局设置，见 `@/features/globalSettingsShortcut`）。
+    // 必须在这里就放行：下面的题目级分发不认修饰键，`i` 在第 9 个选项存在时
+    // 正好是它的字母——拦不住就会顺手选中 I 选项，开着自动提交还会直接提交。
+    if (isGlobalSettingsShortcut(event)) return;
+
     const isMod = event.metaKey || event.ctrlKey;
     const target =
       typeof Element !== "undefined" && event.target instanceof Element
         ? event.target
         : null;
-    const inDialog = target?.closest('[role="dialog"]') !== null;
+    const inDialog = isInsideDialog(event);
     const inBlankInput = target?.classList.contains("blank-input") === true;
 
     // Cmd/Ctrl + 单键：全局快捷键。
