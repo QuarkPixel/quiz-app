@@ -29,6 +29,8 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
+    "@dicebear/core": "^10.7.0",
+    "@dicebear/styles": "^10.6.0",
     "@number-flow/svelte": "^0.4.0",
     "@tabler/icons-svelte": "^3.44.0",
     "@tanstack/svelte-virtual": "^3.13.29",
