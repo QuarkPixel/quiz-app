@@ -1,8 +1,8 @@
 <script lang="ts">
     import type { MemoryBank } from "@/source/types";
+    import { toastStore } from "@/features/toast.svelte";
     import { MemorySession } from "@/features/memory/MemorySession.svelte";
     import { provideMemorySession } from "@/features/memory/context";
-    import AlertToast from "../layout/AlertToast.svelte";
     import FlashContainer from "../quiz/FlashContainer.svelte";
     import MemoryHome from "./MemoryHome.svelte";
     import MemoryQuestionArea from "./MemoryQuestionArea.svelte";
@@ -22,13 +22,13 @@
         isMemoryShortcutIgnored,
         shouldDeferMemoryAction,
     } from "@/features/memory/keyboard";
+    import { isGlobalSettingsShortcut } from "@/features/globalSettingsShortcut";
 
     // 版面与 QuizView.svelte 完全一致：同一个滚动容器、同一个居中列宽、
     // 同一个底部工具栏（左：设置；右：总览），只是内容区在「首页」和
     // 「答题区」之间切换，并额外多一个「结束本轮」按钮。
     let { bank }: { bank: MemoryBank } = $props();
 
-    let toast: AlertToast;
     let flashContainer: FlashContainer;
     const soundPlayer = createSoundPlayer();
 
@@ -39,7 +39,7 @@
     const session = new MemorySession(bank, {
         flash: (correct) => flashContainer?.flash(correct),
         toast: (title, description, variant) =>
-            toast?.show(title, description, variant),
+            toastStore.show(title, description, variant),
         sound: soundPlayer,
     });
     provideMemorySession(session);
@@ -62,6 +62,11 @@
      */
     function handleKeydown(event: KeyboardEvent): void {
         if (isMemoryShortcutIgnored(event)) return;
+
+        // ⌘⇧I 是应用级快捷键（打开全局设置，见 `@/features/globalSettingsShortcut`）。
+        // 下面的 `mod` 分支只看字母，不看 ⇧——不先放行的话它会命中
+        // `SHORTCUTS.toggleSettings`，把记忆模式设置也一起切了。
+        if (isGlobalSettingsShortcut(event)) return;
 
         const mod = event.metaKey || event.ctrlKey;
         if (mod) {
@@ -179,7 +184,6 @@
 
 <svelte:window onkeydown={handleKeydown} />
 <FlashContainer bind:this={flashContainer} />
-<AlertToast bind:this={toast} />
 
 {#snippet leftControls()}
     <div class="flex items-center gap-1">

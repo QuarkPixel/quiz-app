@@ -9,9 +9,9 @@
     import { Separator } from "$lib/components/ui/separator";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import * as Tooltip from "$lib/components/ui/tooltip";
-    import AlertToast from "../layout/AlertToast.svelte";
     import SyncSettings from "./SyncSettings.svelte";
     import { IconInfoCircle } from "@tabler/icons-svelte";
+    import { toastStore } from "@/features/toast.svelte";
     import { globalSettingsStore } from "@/features/globalSettings.svelte";
     import { createSoundPlayer, setSoundEnabledPreference } from "@/sound";
     import type { SoundPlayer } from "@/sound/types";
@@ -25,7 +25,6 @@
     // 这个 dialog 挂在侧边栏，不依赖具体题库的 QuizSession，所以直接读写共享 store。
     const settings = globalSettingsStore;
 
-    let toast: AlertToast;
     let soundPlayer: SoundPlayer | null = null;
 
     function ensureSoundPlayer(): SoundPlayer {
@@ -38,7 +37,7 @@
         description?: string,
         variant?: "default" | "success" | "destructive",
     ): void {
-        toast?.show(title, description, variant);
+        toastStore.show(title, description, variant);
     }
 
     function setSoundEnabled(next: boolean): void {
@@ -57,8 +56,8 @@
         showToast(
             next ? "答对自动下一题已开启" : "答对自动下一题已关闭",
             next
-                ? "答对后会立即进入下一题，无需手动点击。"
-                : "答对后停留在结果页，按空格 / 回车继续。",
+                ? "答对后自动进入下一题。"
+                : "答对后停留在结果页（按空格继续）。",
         );
     }
 
@@ -67,7 +66,6 @@
     }
 </script>
 
-<AlertToast bind:this={toast} />
 
 <Dialog.Root bind:open>
     <Dialog.Content

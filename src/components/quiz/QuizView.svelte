@@ -1,10 +1,10 @@
 <script lang="ts">
+    import { toastStore } from "@/features/toast.svelte";
     import { onMount } from "svelte";
     import FlashContainer from "./FlashContainer.svelte";
     import ReviewView from "../review/ReviewView.svelte";
     import Settings from "../settings/Settings.svelte";
     import PoolPanel from "./PoolPanel.svelte";
-    import AlertToast from "../layout/AlertToast.svelte";
     import ProgressBar from "./ProgressBar.svelte";
     import QuestionArea from "./QuestionArea.svelte";
 
@@ -30,7 +30,6 @@
     let { bank }: { bank: QuizBank } = $props();
 
     let flashContainer: FlashContainer;
-    let toast: AlertToast;
     const soundPlayer = createSoundPlayer();
 
     // session 在挂载前构造 —— 此时 flash/toast 还未 bind，回调里走 ?. 兜底。
@@ -39,7 +38,7 @@
     const session = new QuizSession(bank, {
         flash: (correct) => flashContainer?.flash(correct),
         toast: (title, description, variant) =>
-            toast?.show(title, description, variant),
+            toastStore.show(title, description, variant),
         sound: soundPlayer,
     });
     provideQuizSession(session);
@@ -161,7 +160,6 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <FlashContainer bind:this={flashContainer} />
-<AlertToast bind:this={toast} />
 
 {#snippet leftControls()}
     <div class="flex items-center gap-1">
@@ -402,7 +400,7 @@
     open={showReview}
     onOpenChange={(o) => (showReview = o)}
     onToast={(title, description, variant) =>
-        toast?.show(title, description, variant)}
+        toastStore.show(title, description, variant)}
 />
 
 <!-- 导入确认 dialog -->

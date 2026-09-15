@@ -1,11 +1,13 @@
 <script lang="ts">
+    import { onMount, type Component } from "svelte";
     import * as Sidebar from "$lib/components/ui/sidebar";
     import * as Dialog from "$lib/components/ui/dialog";
     import * as ContextMenu from "$lib/components/ui/context-menu";
     import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
     import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
-    import AlertToast from "./AlertToast.svelte";
+    import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
+    import { modKeyLabel } from "$lib/platform";
     import { writeText } from "clipboard-polyfill";
     import IconExport from "@tabler/icons-svelte/icons/upload";
     import IconAdd from "@tabler/icons-svelte/icons/circle-dashed-plus";
@@ -19,9 +21,43 @@
     import IconArrowUp from "@tabler/icons-svelte/icons/arrow-big-up-lines";
     import IconBooks from "@tabler/icons-svelte/icons/books";
     import IconAdjustments from "@tabler/icons-svelte/icons/adjustments";
-    import GlobalSettings from "../settings/GlobalSettings.svelte";
+    import { toastStore } from "@/features/toast.svelte";
+
+    /**
+     * 全局设置对话框是**按需加载**的。
+     *
+     * 它一直挂在侧边栏上（哪怕从没打开过），而里面是「设置 + 云同步」两整块 UI。
+     * 现在改成：首屏之后空闲时预热一次（不跟首屏抢带宽），真要用（点齿轮 / 快捷键）
+     * 时确保它在加载——通常预热早就完成了，所以打开时感觉不到等待。
+     */
+    let SettingsDialog = $state<Component<{ open: boolean }> | null>(null);
+    let loadingDialog = false;
+
+    function loadSettingsDialog(): void {
+        if (loadingDialog || SettingsDialog !== null) return;
+        loadingDialog = true;
+        void import("../settings/GlobalSettings.svelte").then((module) => {
+            SettingsDialog = module.default;
+        });
+    }
+
+    $effect(() => {
+        if (globalSettingsDialog.open) loadSettingsDialog();
+    });
+
+    onMount(() => {
+        // 空闲了再拉：不抢首屏带宽，但用户点齿轮时基本已经就绪
+        if (typeof requestIdleCallback === "function") {
+            const handle = requestIdleCallback(() => loadSettingsDialog());
+            return () => cancelIdleCallback(handle);
+        }
+        const timer = setTimeout(loadSettingsDialog, 2000);
+        return () => clearTimeout(timer);
+    });
     import { syncEngine } from "@/features/sync/engine.svelte";
     import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
+    import { handleGlobalSettingsShortcut } from "@/features/globalSettingsShortcut";
+    import { SHORTCUTS } from "@/config";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import {
         exportBank,
@@ -96,19 +132,18 @@
     const syncIssue = $derived.by(() => {
         if (!syncConfigStore.value.enabled) return "";
         if (syncEngine.storageBlocked) {
-            return "这台设备写不了本地存储，做题进度不会保存";
+            return "本地存储不可写，进度无法保存";
         }
         const status = syncEngine.status;
         if (status.conflicts.length > 0) {
-            return `云同步有 ${status.conflicts.length} 个题库冲突待处理`;
+            return `云同步：${status.conflicts.length} 个题库冲突`;
         }
-        if (status.phase === "error") return `云同步出错：${status.message}`;
+        if (status.phase === "error") return `云同步：${status.message}`;
         return "";
     });
     let importSession = $state<BankImportSession | null>(null);
     let importMessage = $state<BankFileMessage | null>(null);
     let overwriteRequest = $state<OverwriteImportRequest | null>(null);
-    let toast: AlertToast;
 
     let selectedHashes = $state<string[]>([]);
     let selectionAnchorHash = $state<string | null>(null);
@@ -224,15 +259,15 @@
         const prompt = getBankPrompt(mode);
         try {
             await writeText(prompt);
-            toast?.show(
+            toastStore.show(
                 `已复制「${BANK_PROMPT_META[mode].label}」Prompt`,
-                "粘贴到与 AI 的对话中，在后面附上原始内容，让 AI 按格式生成题库 JSON。",
+                "粘贴到 AI 对话中，并附上原始内容",
                 "success",
             );
         } catch {
-            toast?.show(
+            toastStore.show(
                 "复制失败",
-                "浏览器未允许访问剪贴板，请检查权限后重试。",
+                "剪贴板不可用，请检查权限",
                 "destructive",
             );
         }
@@ -609,6 +644,7 @@
 {/snippet}
 
 <svelte:window
+    onkeydown={handleGlobalSettingsShortcut}
     ondragenter={onWindowDragEnter}
     ondragover={onWindowDragOver}
     ondragleave={onWindowDragLeave}
@@ -839,9 +875,19 @@
         <Sidebar.Menu>
             <Sidebar.MenuItem>
                 <Sidebar.MenuButton
-                    tooltipContent={syncIssue || "全局设置"}
                     onclick={() => globalSettingsDialog.show()}
                 >
+                    {#snippet tooltipContent()}
+                        <span>{syncIssue || "全局设置"}</span>
+                        <!-- 侧边栏收成图标栏时只剩这条 tooltip，快捷键只在这儿露出来 -->
+                        <KbdGroup>
+                            <Kbd>{modKeyLabel}</Kbd>
+                            <Kbd>⇧</Kbd>
+                            <Kbd
+                                >{SHORTCUTS.toggleGlobalSettings.toUpperCase()}</Kbd
+                            >
+                        </KbdGroup>
+                    {/snippet}
                     <span class="relative inline-flex">
                         <IconAdjustments size={18} stroke={1.75} />
                         {#if syncIssue}
@@ -862,9 +908,10 @@
     <Sidebar.Rail />
 </Sidebar.Root>
 
-<GlobalSettings bind:open={globalSettingsDialog.open} />
+{#if SettingsDialog}
+    <SettingsDialog bind:open={globalSettingsDialog.open} />
+{/if}
 
-<AlertToast bind:this={toast} />
 
 <input
     bind:this={fileInput}

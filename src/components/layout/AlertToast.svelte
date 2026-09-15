@@ -1,94 +1,45 @@
-<script lang="ts" module>
-    export type ToastVariant = "default" | "success" | "destructive";
-</script>
-
 <script lang="ts">
     import * as AlertUI from "$lib/components/ui/alert";
     import { cn } from "$lib/utils";
-    import { TOAST_DURATION_MS, TOAST_FADE_MS } from "@/config";
     import IconCheck from "@tabler/icons-svelte/icons/check";
     import IconAlertTriangle from "@tabler/icons-svelte/icons/alert-triangle";
     import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
+    import { toastStore } from "@/features/toast.svelte";
 
-    type Toast = {
-        title: string;
-        description?: string;
-        variant: ToastVariant;
-    };
-
-    let current = $state<Toast | null>(null);
-    let visible = $state(false);
-    let showTimer: ReturnType<typeof setTimeout> | null = null;
-    let clearTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function startHideTimer() {
-        if (showTimer) clearTimeout(showTimer);
-
-        showTimer = setTimeout(() => {
-            visible = false;
-
-            clearTimer = setTimeout(() => {
-                current = null;
-                clearTimer = null;
-            }, TOAST_FADE_MS);
-
-            showTimer = null;
-        }, TOAST_DURATION_MS);
-    }
-
-    export function show(
-        title: string,
-        description?: string,
-        variant: ToastVariant = "default",
-    ): void {
-        if (showTimer) clearTimeout(showTimer);
-        if (clearTimer) clearTimeout(clearTimer);
-
-        current = { title, description, variant };
-        visible = true;
-
-        startHideTimer();
-    }
+    // 这里只负责「画」：内容和计时都在 `toastStore` 里，全应用只渲染这一份
+    // （挂在 `App.svelte` 根上）。见 `src/features/toast.svelte.ts` 的说明。
 </script>
 
 <div
     class={cn(
         "pointer-events-none fixed top-4 right-4 z-[80] transition-all will-change-transform",
-        visible
+        toastStore.visible
             ? "opacity-100 translate-y-0 duration-500 ease-spring"
             : "opacity-0 -translate-y-3 scale-[0.97] duration-200 ease-spring-out",
     )}
     role="status"
     aria-live="polite"
-    onmouseenter={() => {
-        if (showTimer) {
-            clearTimeout(showTimer);
-            showTimer = null;
-        }
-    }}
-    onmouseleave={() => {
-        if (visible) {
-            startHideTimer();
-        }
-    }}
+    onmouseenter={() => toastStore.hold()}
+    onmouseleave={() => toastStore.release()}
 >
-    {#if current}
+    {#if toastStore.current}
         <AlertUI.Root
-            variant={current.variant === "destructive"
+            variant={toastStore.current.variant === "destructive"
                 ? "destructive"
                 : "default"}
             class="pointer-events-auto bg-popover ring-foreground/10 max-w-xs shadow-lg ring-1"
         >
-            {#if current.variant === "success"}
+            {#if toastStore.current.variant === "success"}
                 <IconCheck class="text-success" />
-            {:else if current.variant === "destructive"}
+            {:else if toastStore.current.variant === "destructive"}
                 <IconAlertTriangle />
             {:else}
                 <IconInfoCircle class="text-muted-foreground" />
             {/if}
-            <AlertUI.Title>{current.title}</AlertUI.Title>
-            {#if current.description}
-                <AlertUI.Description>{current.description}</AlertUI.Description>
+            <AlertUI.Title>{toastStore.current.title}</AlertUI.Title>
+            {#if toastStore.current.description}
+                <AlertUI.Description>{toastStore.current
+                    .description}</AlertUI.Description>
             {/if}
         </AlertUI.Root>
     {/if}

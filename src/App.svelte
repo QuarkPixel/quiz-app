@@ -5,6 +5,7 @@
     import QuizView from "./components/quiz/QuizView.svelte";
     import MemoryView from "./components/memory/MemoryView.svelte";
     import AppShell from "./components/layout/AppShell.svelte";
+    import AlertToast from "./components/layout/AlertToast.svelte";
     import Sidebar from "./components/layout/Sidebar.svelte";
     import HeaderSidebarTrigger from "./components/layout/HeaderSidebarTrigger.svelte";
     import * as SidebarUI from "$lib/components/ui/sidebar";
@@ -69,3 +70,6 @@
         {@render contentBody()}
     </SidebarUI.Inset>
 </SidebarUI.Provider>
+
+<!-- 全局提示：整个应用只有这一份（挂在弹窗之外，所以不会被 Dialog 夹住） -->
+<AlertToast />
