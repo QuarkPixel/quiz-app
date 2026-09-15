@@ -2,7 +2,7 @@
     import * as Tooltip from "$lib/components/ui/tooltip";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { Button } from "$lib/components/ui/button";
-    import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
+    import PanelLeftIcon from "@tabler/icons-svelte/icons/layout-sidebar";
     import { useSidebar } from "$lib/components/ui/sidebar/context.svelte";
     import { modKeyLabel } from "$lib/platform";
     import { SHORTCUTS } from "@/config";

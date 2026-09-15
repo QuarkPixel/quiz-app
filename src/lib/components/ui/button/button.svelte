@@ -19,6 +19,10 @@
                 ghost: "hover:bg-muted hover:text-foreground dark:hover:bg-muted/50 aria-expanded:bg-muted aria-expanded:text-foreground",
                 destructive:
                     "bg-destructive/10 hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/20 text-destructive focus-visible:border-destructive/40 dark:hover:bg-destructive/30",
+                // 「成了」的状态色（云同步的「测试连接」验过之后变绿用它）。
+                // 形状是照着 destructive 抄的，只换颜色——两种状态看起来才是一家人
+                success:
+                    "bg-success/10 hover:bg-success/20 focus-visible:ring-success/20 dark:focus-visible:ring-success/40 dark:bg-success/20 text-success focus-visible:border-success/40 dark:hover:bg-success/30",
                 link: "text-primary underline-offset-4 hover:underline",
             },
             size: {

@@ -209,6 +209,15 @@ export default defineConfig(async () => ({
     include: ["tests/**/*.test.ts"],
     environment: "happy-dom",
     setupFiles: ["./tests/_setup.ts"],
+    // 这几个包默认会被 externalize（走 node 的条件解析），而测试跑的是 Svelte 的
+    // **浏览器**构建；两边混在一起时，**动态 import** 它们的模块图会一直挂着不 resolve
+    // （`await import("vaul-svelte")` 直接超时）。inline 之后走 vite 的 transform，
+    // 条件解析统一成 browser，动态 import 就正常了。
+    server: {
+      deps: {
+        inline: [/bits-ui/, /vaul-svelte/, /runed/, /svelte-toolbelt/],
+      },
+    },
   },
   build: {
     target: "esnext",
