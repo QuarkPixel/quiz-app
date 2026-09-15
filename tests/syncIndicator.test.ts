@@ -174,7 +174,7 @@ describe("头部的云同步指示点", () => {
     }
   });
 
-  test("绿色（已同步）时点不动，也不吃 hover", async () => {
+  test("绿色（已同步）时也能点：点一下手动同步一次（想主动拉云端改动）", async () => {
     const h = new SyncHarness();
     await h.start();
     try {
@@ -194,14 +194,93 @@ describe("头部的云同步指示点", () => {
       flushSync();
       expect(dot()?.className).toContain("bg-success");
 
-      // 已经同步过 → aria-disabled，hover 的提亮 / 光晕样式都不该在
-      expect(indicator()?.getAttribute("aria-disabled")).toBe("true");
-      expect(dot()?.className).not.toContain("group-hover:brightness-125");
+      // 绿色照样可点、照样吃 hover：绿了以后主动同步一次是常见需求
+      expect(indicator()?.getAttribute("aria-disabled")).toBe("false");
+      expect(dot()?.className).toContain("group-hover:brightness-125");
       expect(dot()?.className).toContain("shadow-[0_0_6px_var(--success)]");
+      expect(dot()?.className).toContain("group-hover:shadow-[0_0_12px_var(--success)]");
 
-      const spy = vi.spyOn(syncEngine, "sync");
+      const spy = vi.spyOn(syncEngine, "sync").mockResolvedValue(undefined);
       indicator()?.click();
-      expect(spy, "绿色时不该触发同步").not.toHaveBeenCalled();
+      expect(spy, "绿色时点一下应该触发一次同步").toHaveBeenCalledTimes(1);
+      // 绿色点击是同步，不是把人送去设置
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.querySelector('[role="alert"]')).toBeNull();
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("从绿色点一下：跑的过程中不会先闪成黄色（跑完仍是绿的）", async () => {
+    const h = new SyncHarness();
+    await h.start();
+    try {
+      vi.stubEnv("VITE_GITEE_API_BASE", h.apiBase);
+      h.freshDevice("A");
+      h.seedBank(HASH, "题库一", "first");
+      h.save("A");
+      syncConfigStore.update({
+        enabled: true,
+        token: "tok",
+        gistId: "",
+        autoSync: false,
+      });
+
+      render();
+      await syncEngine.sync();
+      flushSync();
+      expect(dot()?.className).toContain("bg-success");
+
+      indicator()?.click();
+      // 同步是同步的：`phase` 已经变成 syncing，但颜色必须还是绿的
+      // （正在跑用圆点脉冲表示，不该让人以为突然冒出了没传上去的改动）
+      expect(syncEngine.status.phase).toBe("syncing");
+      flushSync();
+      expect(dot()?.className).toContain("bg-success");
+      expect(dot()?.className).not.toContain("bg-warning");
+      expect(dot()?.className).toContain("animate-pulse");
+
+      await syncEngine.sync();
+      flushSync();
+      expect(syncEngine.status.phase).toBe("idle");
+      expect(dot()?.className).toContain("bg-success");
+      expect(dot()?.className).not.toContain("animate-pulse");
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("报错后重试期间一直是红的（不闪绿也不闪黄）", async () => {
+    const h = new SyncHarness();
+    await h.start();
+    try {
+      vi.stubEnv("VITE_GITEE_API_BASE", h.apiBase);
+      h.freshDevice("A");
+      h.seedBank(HASH, "题库一", "first");
+      h.save("A");
+      syncConfigStore.update({
+        enabled: true,
+        token: "tok",
+        gistId: "g1",
+        autoSync: false,
+      });
+
+      render();
+      // 让这一轮失败：Gist 不存在（引擎会记成 error → 红）
+      await syncEngine.sync();
+      flushSync();
+      expect(dot()?.className).toContain("bg-destructive");
+
+      // 再同步一次（后台轮询 / 用户手动都会走到这儿）：跑的过程中还是红的
+      void syncEngine.sync();
+      flushSync();
+      expect(dot()?.className).toContain("bg-destructive");
+      expect(dot()?.className).not.toContain("bg-success");
+      expect(dot()?.className).not.toContain("bg-warning");
+
+      await syncEngine.sync();
+      flushSync();
+      expect(dot()?.className).toContain("bg-destructive");
     } finally {
       await h.stop();
     }

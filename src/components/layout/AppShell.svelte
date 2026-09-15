@@ -18,7 +18,7 @@
 
     /** 云同步关掉时整个指示点都不出现。 */
     const syncEnabled = $derived(syncConfigStore.value.enabled);
-    /** 绿 = 和云端一致；黄 = 还有没同步上去的东西（或正在跑 / 出错 / 有冲突）。 */
+    /** 绿 = 和云端一致；黄 = 还有没同步上去的东西（或正在跑 / 离线）。 */
     const inSync = $derived(syncEngine.inSync);
     const syncing = $derived(syncEngine.status.phase === "syncing");
     const conflicts = $derived(syncEngine.status.conflicts.length);
@@ -35,25 +35,47 @@
      */
     const storageBlocked = $derived(syncEngine.storageBlocked);
 
+    /** 指示点的三种状态。 */
+    type Tone = "ok" | "pending" | "danger";
+
     /**
      * 指示点的三种状态：
      *   - `ok`（绿）  和云端一致
-     *   - `pending`（黄）还有没同步上去的东西 / 正在跑 / 离线
-     *   - `danger`（红）**需要用户操心**：有冲突等着拍板，或者同步报错了
+     *   - `pending`（黄）还有没同步上去的东西 / 离线
+     *   - `danger`（红）**需要用户操心**：有冲突等着拍板、同步报错了，
+     *     或者这台设备根本写不了本地存储
      */
-    const tone = $derived<"ok" | "pending" | "danger">(
-        hasConflicts || failed || storageBlocked ? "danger" : inSync ? "ok" : "pending",
-    );
+    function settledToneNow(): Tone {
+        return hasConflicts || failed || storageBlocked
+            ? "danger"
+            : inSync
+              ? "ok"
+              : "pending";
+    }
+    const settledTone = $derived(settledToneNow());
 
     /**
-     * 绿色 = 已经和云端一致，没有可做的事，点了也没意义，所以它既不吃 hover
-     * 也点不动；红色（有冲突）和黄色（还没同步）都能点；正在同步时不给点。
+     * 正在同步时**保留跑之前那个颜色**，只用圆点脉冲表示「在跑」。
+     *
+     * 不这么做的话，从绿色点一下会先闪一下黄再变回绿：那一瞬间的黄来自
+     * `phase === "syncing"`，而黄的意思是「有没传上去的改动」——那会儿其实没有，
+     * 看着就像刚点就出问题了。红的同理：报错后重试期间也该一直是红的。
      */
-    const clickable = $derived(syncEnabled && !syncing && tone !== "ok");
+    let toneWhileRunning = $state<Tone>(settledToneNow());
+    $effect(() => {
+        if (!syncing) toneWhileRunning = settledTone;
+    });
+    const tone = $derived<Tone>(syncing ? toneWhileRunning : settledTone);
+
+    /**
+     * 三种状态都能点：黄 / 绿点一下是手动同步一次（绿的时候也常用——想主动把
+     * 云端的改动拉下来），红点一下去设置里处理冲突或报错。正在同步时不给点。
+     */
+    const clickable = $derived(syncEnabled && !syncing);
 
     /** 每种状态一套：底色 + 常态光晕 + hover 时更强的光晕（颜色跟着状态走）。 */
     const TONE_CLASS = {
-        ok: "bg-success shadow-[0_0_6px_var(--success)]",
+        ok: "bg-success shadow-[0_0_6px_var(--success)] group-hover:shadow-[0_0_12px_var(--success)]",
         pending:
             "bg-warning shadow-[0_0_6px_var(--warning)] group-hover:shadow-[0_0_12px_var(--warning)]",
         danger: "bg-destructive shadow-[0_0_6px_var(--destructive)] group-hover:shadow-[0_0_12px_var(--destructive)]",
@@ -71,7 +93,7 @@
                 : syncEngine.status.phase === "offline"
                   ? "云同步：当前离线 · 点击重试"
                   : inSync
-                    ? "云同步：已同步"
+                    ? "云同步：已同步 · 点击手动同步一次"
                     : "云同步：还没同步 · 点击同步",
     );
 
@@ -79,7 +101,8 @@
      * 点一下：
      *   - **红色**（有冲突 / 报错）：把人送到全局设置。冲突要在那儿选保留哪一边；
      *     报错（令牌失效、Gist 被删……）也是在那儿修——这两件事再同步一次都解决不了。
-     *   - 黄色（还没同步 / 离线）：手动同步一次（跟设置面板里的「立即同步」同一个入口）。
+     *   - 黄 / 绿（还没同步 / 已同步 / 离线）：手动同步一次（跟设置面板里的
+     *     「立即同步」同一个入口）。
      *
      * **刻意不弹任何提示**：成功了它自己就变绿（那就是反馈）；出错就变红并保持，
      * 悬浮看一眼标题就知道是什么错。
@@ -158,8 +181,8 @@
                                 "size-1.5 rounded-full transition-[filter,box-shadow,width,height] duration-150",
                                 TONE_CLASS[tone],
                                 syncing && "animate-pulse",
-                                // 只有能点（黄 / 红）的时候才吃 hover：提亮 + 光晕变强
-                                // + 稍微长大一点；绿色状态这些 class 根本不在
+                                // 能点的时候才吃 hover：提亮 + 光晕变强 + 稍微长大
+                                // 一点；正在同步时这些 class 根本不在
                                 clickable &&
                                     "group-hover:brightness-125 group-hover:size-2",
                             )}

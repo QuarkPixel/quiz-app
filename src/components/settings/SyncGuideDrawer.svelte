@@ -76,8 +76,10 @@
                 <p class="text-muted-foreground">
                     页头右上角那颗点就是状态：
                     <strong class="text-foreground">绿</strong>=已同步、
-                    <strong class="text-foreground">黄</strong>=还有没传上去的改动（点它手动同步）、
+                    <strong class="text-foreground">黄</strong>=还有没传上去的改动、
                     <strong class="text-foreground">红</strong>=要你处理（点它打开设置）。
+                    <strong class="text-foreground">绿和黄都能点</strong>，点了就是手动同步一次
+                    ——绿的时候点，是主动把云端的改动拉下来。
                 </p>
                 <p class="text-muted-foreground">
                     自动同步的时机：打开 / 刷新页面时对一次账，本地改动<strong
