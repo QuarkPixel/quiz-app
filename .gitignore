@@ -1,11 +1,6 @@
 # macOS
 .DS_Store
 
-# Agent instructions
-CLAUDE.md
-.claude
-AGENTS.md
-
 # Quiz data files (except example file)
 banks/*
 !banks/questions.example.json
