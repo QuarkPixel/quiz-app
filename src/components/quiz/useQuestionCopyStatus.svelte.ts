@@ -1,25 +1,18 @@
 import type { Question } from "@/types";
 import type {
-  CopyQuestionOptions,
-  CopyQuestionResult,
+  CopyQuestionSession,
   CopyQuestionStatus,
-} from "@/quiz/session/QuizSession.svelte";
+} from "@/quiz/session/types";
 import { QuestionCopyPattern } from "@/quiz/types/types";
+import { COPY_STATUS_RESET_MS } from "@/config";
 
 /**
- * 这个 store 只用到 session 的 `copyQuestion`，所以按**结构**声明依赖：
- * 刷题模式的 `QuizSession` 与记忆模式的 `MemorySession` 都满足它，调用方不用
- * 再写 `as never` 之类把类型检查关掉的断言（那会掩盖签名不一致）。
+ * 每道题的复制按钮状态机：成功 / 失败后短暂展示，再回 idle。
+ *
+ * 依赖按**结构**声明（`CopyQuestionSession`）：刷题模式的 `QuizSession` 与
+ * 记忆模式的 `MemorySession` 都满足它，调用方不用写 `as never` 之类把类型
+ * 检查关掉的断言（那会掩盖签名不一致）。
  */
-export interface CopyQuestionSession {
-  copyQuestion(
-    question: Question,
-    options?: CopyQuestionOptions,
-    pattern?: QuestionCopyPattern,
-  ): Promise<CopyQuestionResult>;
-}
-
-/** 每道题的复制按钮状态机：成功 / 失败后短暂展示，再回 idle。 */
 export class QuestionCopyStatusStore {
   private statuses = $state<Record<string, CopyQuestionStatus>>({});
   private timers: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -40,7 +33,7 @@ export class QuestionCopyStatusStore {
       this.timers[id] = setTimeout(() => {
         this.statuses[id] = "idle";
         delete this.timers[id];
-      }, 1800);
+      }, COPY_STATUS_RESET_MS);
     }
   }
 

@@ -3,6 +3,7 @@
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Separator } from "$lib/components/ui/separator";
+    import SettingsSection from "./SettingsSection.svelte";
 
     // 两个模式的设置面板共用这一段：修改侧边栏里展示的题库名称。
     // 名称来源是 App 的 activeBank（重命名后会自动更新），所以这里只接
@@ -35,12 +36,7 @@
     }
 </script>
 
-<section class="flex flex-col gap-2.5">
-    <h3
-        class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
-    >
-        题库
-    </h3>
+<SettingsSection title="题库">
     <div class="flex items-center justify-between gap-3">
         <Label for="bank-name" class="text-sm font-normal">名称</Label>
         <Input
@@ -58,6 +54,6 @@
             class="h-7 w-44"
         />
     </div>
-</section>
+</SettingsSection>
 
 <Separator />

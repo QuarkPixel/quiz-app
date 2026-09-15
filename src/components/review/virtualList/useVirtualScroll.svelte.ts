@@ -15,6 +15,16 @@ function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
+export interface VirtualScrollOptions {
+  /**
+   * 是否给列表插题型分组头（默认 true，刷题模式）。
+   *
+   * 记忆模式只有一种题型，用户不要那条标题条，于是传 false。
+   * 构造时定死：列表长什么样属于调用方的版面选择，中途改只会白算一遍布局。
+   */
+  withHeaders?: boolean;
+}
+
 /**
  * 虚拟滚动控制器：持有响应式滚动 / 高度状态，以及命令式跳转收敛逻辑。
  *
@@ -31,7 +41,17 @@ export class VirtualScroll {
   /** 持久化的真实高度：渲染过的题目高度缓存，切换筛选后仍可复用。 */
   actualHeights = $state<Record<string, number>>({});
 
-  flatItems = $derived<FlatItem[]>(buildFlatItems(this.grouped));
+  /**
+   * 是否插题型分组头（默认 true，刷题模式）。记忆模式只有一种题型，构造时传 false。
+   *
+   * 做成 `$state` 只是为了让 `flatItems` 跟着它算（构造完就不再改：列表长什么样
+   * 属于调用方的版面选择，中途换只会白算一遍布局）。
+   */
+  private withHeaders = $state(true);
+
+  flatItems = $derived<FlatItem[]>(
+    buildFlatItems(this.grouped, { withHeaders: this.withHeaders }),
+  );
   sections = $derived(buildSections(this.flatItems));
 
   /** 高度解析：真实测量值优先，回退到估算。供 layout 纯函数与跳转逻辑共用。 */
@@ -43,7 +63,9 @@ export class VirtualScroll {
   );
   idToRank = $derived(buildIdToRank(this.flatItems));
 
-  constructor() {
+  constructor(options: VirtualScrollOptions = {}) {
+    this.withHeaders = options.withHeaders ?? true;
+
     // 每当 measureHeight 更新了某 item，就写入 actualHeights 以备布局使用
     $effect(() => {
       for (const [id, h] of Object.entries(this.measuredHeights)) {

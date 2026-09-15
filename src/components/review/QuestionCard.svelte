@@ -5,7 +5,7 @@
     import CopyQuestionButton from "../quiz/CopyQuestionButton.svelte";
     import QuestionPreview from "../quiz/QuestionPreview.svelte";
     import type { ReviewIndicator } from "./virtualList/types";
-    import type { CopyQuestionStatus } from "@/quiz/session/QuizSession.svelte";
+    import type { CopyQuestionStatus } from "@/quiz/session/types";
 
     interface Props {
         question: Question;

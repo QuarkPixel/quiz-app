@@ -12,7 +12,6 @@ import { tick } from "svelte";
 import type {
   ActivePoolItem,
   GlobalSettings,
-  Option,
   Question,
   QuestionType,
   RuntimeState,
@@ -51,6 +50,7 @@ import {
   readProgressFromClipboard,
 } from "@/features/quiz/progressActions";
 import {
+  COPY_STATUS_RESET_MS,
   EXPORT_STATUS_ERROR_RESET_MS,
   EXPORT_STATUS_SUCCESS_RESET_MS,
 } from "@/config";
@@ -59,35 +59,31 @@ import type { QuestionTypeDef } from "../types/types";
 import {
   QuestionCopyPattern,
   type QuestionCopyContext,
+  type ShuffledOption,
 } from "../types/types";
-import {
-  maybePlayAnswerSound,
-  maybePlaySuccessSound,
-  setSoundEnabledPreference,
-} from "@/sound";
+import { maybePlayAnswerSound, maybePlaySuccessSound } from "@/sound";
 import type { SoundPlayer } from "@/sound/types";
+import type { Toast } from "@/features/toast.svelte";
+import {
+  applySoundEnabledPreference,
+  toggleAutoNextPreference,
+} from "@/features/globalSettingsActions";
+import type {
+  CopyQuestionOptions,
+  CopyQuestionResult,
+  CopyQuestionStatus,
+} from "@/quiz/session/types";
 
 export type ExportStatus = "idle" | "copied" | "error";
-export type CopyQuestionStatus = "idle" | "copied" | "error";
-export type CopyQuestionResult = "copied" | "error" | "unavailable";
-
-export type ToastVariant = "default" | "success" | "destructive";
 
 export interface QuizSessionDeps {
   /** 提交答案后触发全屏闪烁 */
   flash(isCorrect: boolean): void;
   /** 显示 toast 提示 */
-  toast(title: string, description?: string, variant?: ToastVariant): void;
+  toast: Toast;
   /** 播放音效 */
   sound: SoundPlayer;
 }
-
-export interface CopyQuestionOptions {
-  /** 快捷键触发时用 toast 提供反馈；按钮触发时用按钮状态反馈。 */
-  announce?: boolean;
-}
-
-export type ShuffledOption = Option & { originalIndex: number };
 
 const EMPTY_COPY_CONTEXT: QuestionCopyContext = {
   shuffledOptions: [],
@@ -400,14 +396,7 @@ export class QuizSession {
   // ── 全局设置（写入共享 store） ────────────────────────────────────
 
   toggleAutoNext(): void {
-    const next = !this.globalSettings.autoNextOnCorrect;
-    this.globalSettingsRef.update({ autoNextOnCorrect: next });
-    this.deps.toast(
-      next ? "答对自动下一题已开启" : "答对自动下一题已关闭",
-      next
-        ? "答对后自动进入下一题。"
-        : "答对后停留在结果页（按空格继续）。",
-    );
+    toggleAutoNextPreference(this.globalSettingsRef, this.deps.toast);
   }
 
   setAutoSubmitOnSelection(next: boolean): void {
@@ -420,10 +409,9 @@ export class QuizSession {
   }
 
   setSoundEnabled(next: boolean): void {
-    setSoundEnabledPreference(
-      this.globalSettings,
+    applySoundEnabledPreference(
+      this.globalSettingsRef,
       next,
-      () => this.globalSettingsRef.persist(),
       this.deps.toast,
       this.deps.sound,
     );
@@ -643,7 +631,7 @@ export class QuizSession {
     this.copyQuestionResetTimer = setTimeout(() => {
       this.copyQuestionStatus = "idle";
       this.copyQuestionResetTimer = null;
-    }, 1800);
+    }, COPY_STATUS_RESET_MS);
   }
 
   private getCurrentQuestionCopyContext(): QuestionCopyContext {

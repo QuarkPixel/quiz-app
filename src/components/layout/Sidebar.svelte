@@ -51,13 +51,13 @@
             const handle = requestIdleCallback(() => loadSettingsDialog());
             return () => cancelIdleCallback(handle);
         }
-        const timer = setTimeout(loadSettingsDialog, 2000);
+        const timer = setTimeout(loadSettingsDialog, IDLE_PREFETCH_MS);
         return () => clearTimeout(timer);
     });
     import { syncEngine } from "@/features/sync/engine.svelte";
     import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
     import { handleGlobalSettingsShortcut } from "@/features/globalSettingsShortcut";
-    import { SHORTCUTS } from "@/config";
+    import { IDLE_PREFETCH_MS, SHORTCUTS } from "@/config";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import {
         exportBank,
@@ -654,7 +654,7 @@
 {#if isDraggingFile}
     <!-- 拖入文件时的投放提示：纯提示层，不拦截鼠标事件 -->
     <div
-        class="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-background/70 backdrop-blur-[2px]"
+        class="pointer-events-none fixed inset-0 z-(--z-blocker) flex items-center justify-center bg-background/70 backdrop-blur-[2px]"
     >
         <div class="text-center">
             <p class="text-foreground text-lg font-semibold">松开以导入题库</p>

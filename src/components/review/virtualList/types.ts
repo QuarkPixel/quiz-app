@@ -37,10 +37,30 @@ export interface FlatQuestion {
 
 export type FlatItem = FlatHeader | FlatQuestion;
 
-/** 一个题型 section：sticky 头 + 该题型的题目列表。 */
+/**
+ * section 头。
+ *
+ * `null` = 这段没有分组头（记忆模式只有一种题型，用户不要那条标题条）：
+ * 布局里它的高度按 0 算，渲染时跳过 sticky 头。
+ */
+export type SectionHeader = FlatHeader | null;
+
+/** 一个 section：sticky 头（可能没有）+ 该段的题目列表。 */
 export interface Section {
-  header: FlatHeader;
+  header: SectionHeader;
   questionItems: FlatQuestion[];
+}
+
+/**
+ * 自定义行渲染（`QuestionListSection` 的 `row` snippet）拿到的上下文。
+ *
+ * 传了 `row` 就由调用方画整行（记忆模式的「状态 + 题号」），列表只负责
+ * 把它放进虚拟布局里、并在跳转时透传高亮。
+ */
+export interface QuestionRowContext {
+  question: Question;
+  /** 是不是刚从热力图跳过来的那一张（计时在调用方，列表只透传） */
+  highlight: boolean;
 }
 
 /** 带绝对布局信息的 section，用于虚拟滚动定位。 */

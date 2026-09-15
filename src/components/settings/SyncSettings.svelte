@@ -25,6 +25,7 @@
     import IconEyeOff from "@tabler/icons-svelte/icons/eye-off";
     import IconChevronDown from "@tabler/icons-svelte/icons/chevron-down";
     import IconCheck from "@tabler/icons-svelte/icons/check";
+    import { SYNC_VERIFIED_FLASH_MS } from "@/config";
     import { toastStore } from "@/features/toast.svelte";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import { syncEngine } from "@/features/sync/engine.svelte";
@@ -101,9 +102,6 @@
      * 左边缘才对得齐。（"撑满行高"那套 CSS 在浏览器里会把图标整个弄没，不折腾了。）
      */
     const ICON_SIZE = 30;
-
-    /** 展示页那个小按钮验过之后，绿勾亮多久（毫秒）。 */
-    const VERIFIED_FLASH_MS = 2000;
 
     /** 顶部「目标仓库」卡片里那张 identicon 的边长（px），比列表里的稍大一点。 */
     const CARD_ICON_SIZE = 40;
@@ -182,7 +180,7 @@
         revertTimer = setTimeout(() => {
             justVerified = false;
             revertTimer = null;
-        }, VERIFIED_FLASH_MS);
+        }, SYNC_VERIFIED_FLASH_MS);
     }
 
     onDestroy(() => {
@@ -732,7 +730,7 @@
 
                         <!--
                             这里原来挂的是 shadcn 的 Select。它在这个面板里注定难用：
-                            弹层要在 Dialog（z-[60]、overflow-hidden）里开，既要压 z-index、
+                            弹层要在 Dialog（z-(--z-dialog)、overflow-hidden）里开，既要压 z-index、
                             又会被祖先的 overflow 裁；条目还是单行 nowrap，长长一条 id
                             就把弹层撑得比面板还宽，触发器里的字也被硬切掉。
                             干脆摊成一份常驻的单选列表，每条两行：一行说「选哪条」，

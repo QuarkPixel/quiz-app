@@ -1,20 +1,24 @@
 <script lang="ts">
-    import * as ToggleGroup from "$lib/components/ui/toggle-group";
-    import * as Tooltip from "$lib/components/ui/tooltip";
-    import { Button } from "$lib/components/ui/button";
-    import { Input } from "$lib/components/ui/input";
-    import IconAlignBoxLeftStretch from "@tabler/icons-svelte/icons/align-box-left-stretch";
-    import IconSearch from "@tabler/icons-svelte/icons/search";
-    import IconFilter from "@tabler/icons-svelte/icons/filter-2";
-    import IconFilterSpark from "@tabler/icons-svelte/icons/filter-2-spark";
-    import IconDatabaseExport from "@tabler/icons-svelte/icons/database-export";
     import type { Correctness, LearningStatus } from "@/features/quiz";
     import { type ReviewFilterState } from "@/features/quiz/reviewFilters";
-    import { cn } from "tailwind-variants";
     import type { QuestionType } from "@/types";
     import { QUESTION_TYPES } from "@/quiz/types/registry";
     import type { QuestionTypeDef } from "@/quiz/types/types";
+    import FilterBar, {
+        type FilterGroupDef,
+    } from "@/components/shared/FilterBar.svelte";
+    import { cn } from "$lib/utils";
+    import * as Tooltip from "$lib/components/ui/tooltip";
+    import { Button } from "$lib/components/ui/button";
+    import IconDatabaseExport from "@tabler/icons-svelte/icons/database-export";
 
+    /**
+     * 刷题模式总览的筛选栏。
+     *
+     * 外壳在 `components/shared/FilterBar.svelte`；这里只提供刷题模式的口径：
+     * 分组是「学习进度 / 答题正误 / 题目类型（多种题型时才出现）」，
+     * 展开面板右侧是「导出为新题库」。
+     */
     interface Props {
         filter: ReviewFilterState;
         onFilterChange: (next: ReviewFilterState) => void;
@@ -41,49 +45,18 @@
         resultCount,
     }: Props = $props();
 
-    // 筛选栏展开状态（点击筛选按钮切换）
-    let showFilters = $state(false);
+    // 有筛选 / 有搜索词、且结果非空时才放出导出
+    const showExport = $derived(canExport && scopeApplied && resultCount !== 0);
 
-    // 是否有任何“导出作用域”被应用（搜索和结构化筛选同级）
-    let showExport = $derived(canExport && scopeApplied && resultCount !== 0);
-
-    let learningValues = $derived<string[]>([...filter.learning]);
-    let correctnessValues = $derived<string[]>([...filter.correctness]);
-    let typeValues = $derived<string[]>([...filter.types]);
-
-    function onLearningChange(values: string[]): void {
-        onFilterChange({
-            ...filter,
-            learning: new Set(values as LearningStatus[]),
-        });
-    }
-
-    function onCorrectnessChange(values: string[]): void {
-        onFilterChange({
-            ...filter,
-            correctness: new Set(values as Correctness[]),
-        });
-    }
-
-    function onTypeChange(values: string[]): void {
-        onFilterChange({
-            ...filter,
-            types: new Set(values as QuestionType[]),
-        });
-    }
-
-    type FilterGroup = {
-        label: string;
-        values: string[];
-        handler: (v: string[]) => void;
-        items: { value: string; label: string; name?: string; icon?: any }[];
-    };
-
-    let filterGroups = $derived<FilterGroup[]>([
+    const groups: FilterGroupDef[] = $derived([
         {
             label: "学习进度",
-            values: learningValues,
-            handler: onLearningChange,
+            values: [...filter.learning],
+            onChange: (values) =>
+                onFilterChange({
+                    ...filter,
+                    learning: new Set(values as LearningStatus[]),
+                }),
             items: [
                 { value: "mastered", label: "已掌握" },
                 { value: "learning", label: "学习中" },
@@ -92,27 +65,35 @@
         },
         {
             label: "答题正误",
-            values: correctnessValues,
-            handler: onCorrectnessChange,
+            values: [...filter.correctness],
+            onChange: (values) =>
+                onFilterChange({
+                    ...filter,
+                    correctness: new Set(values as Correctness[]),
+                }),
             items: [
                 { value: "correct", label: "正确" },
                 { value: "incorrect", label: "错误" },
             ],
         },
-        // 只有当 availableTypes 长度大于 1 时才显示题目类型筛选
+        // 只有一种题型时这一组没有意义，直接不显示
         ...(availableTypes.length > 1
             ? [
                   {
                       label: "题目类型",
-                      values: typeValues,
-                      handler: onTypeChange,
+                      values: [...filter.types],
+                      onChange: (values: string[]) =>
+                          onFilterChange({
+                              ...filter,
+                              types: new Set(values as QuestionType[]),
+                          }),
                       items: availableTypes.map((type) => {
-                          const qt = QUESTION_TYPES[type] as QuestionTypeDef;
+                          const def = QUESTION_TYPES[type] as QuestionTypeDef;
                           return {
-                              value: qt.id,
-                              label: qt.shortName,
-                              name: qt.name,
-                              icon: qt.icon,
+                              value: def.id,
+                              label: def.shortName,
+                              name: def.name,
+                              icon: def.icon,
                           };
                       }),
                   },
@@ -121,119 +102,38 @@
     ]);
 </script>
 
-<div class="flex flex-col gap-1">
-    <div class="flex flex-wrap items-center gap-x-2 gap-y-3">
-        <IconAlignBoxLeftStretch
-            size={16}
-            stroke={1.75}
-            class="text-muted-foreground shrink-0"
-        />
-        <span class="shrink-0 text-sm font-medium">展示题目</span>
-        <span class="dotted-leader text-muted-foreground/40 min-w-8 flex-1"
-        ></span>
-        <div class="relative w-full sm:w-72">
-            <IconSearch
-                class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-            />
-            <Input
-                bind:ref={inputRef}
-                value={searchTerm}
-                oninput={(e) => onSearchChange(e.currentTarget.value)}
-                class="pl-8"
-                placeholder="搜索 编号、题干、正确答案"
-                aria-label="搜索题目"
-            />
-        </div>
-
+<FilterBar
+    subject="展示题目"
+    {searchTerm}
+    {onSearchChange}
+    searchPlaceholder="搜索 编号、题干、正确答案"
+    searchLabel="搜索题目"
+    {groups}
+    {scopeApplied}
+    bind:inputRef
+>
+    {#snippet actions()}
         <Tooltip.Root>
             <Tooltip.Trigger>
                 {#snippet child({ props })}
                     <Button
                         {...props}
-                        type="button"
-                        variant={showFilters ? "secondary" : "ghost"}
+                        variant="outline"
+                        size="xs"
+                        onclick={onExport}
                         class={cn(
-                            (scopeApplied || showFilters) && "text-success",
+                            "tracking-normal rounded-full",
+                            !showExport && "opacity-0 pointer-events-none",
                         )}
-                        size="icon-sm"
-                        aria-pressed={showFilters}
-                        aria-label="筛选"
-                        onclick={() => (showFilters = !showFilters)}
                     >
-                        {#if scopeApplied}
-                            <IconFilterSpark size={16} stroke={2} />
-                        {:else}
-                            <IconFilter size={16} stroke={2} />
-                        {/if}
+                        <IconDatabaseExport size={16} stroke={1.75} />
+                        导出为新题库
                     </Button>
                 {/snippet}
             </Tooltip.Trigger>
             <Tooltip.Content side="top">
-                <span>筛选</span>
+                <span>筛选结果另存为新题库</span>
             </Tooltip.Content>
         </Tooltip.Root>
-    </div>
-
-    <div class="filter-collapsible" class:expanded={showFilters}>
-        <div class="filter-collapsible-inner">
-            <div
-                class="flex justify-between gap-1 bg-foreground/3 p-2 rounded-md"
-            >
-                <div class="flex flex-wrap items-center gap-6">
-                    {#each filterGroups as group}
-                        <div class="flex flex-col items-start gap-1">
-                            <span class="text-xs opacity-50">{group.label}</span
-                            >
-                            <ToggleGroup.Root
-                                type="multiple"
-                                value={group.values}
-                                spacing={1}
-                                onValueChange={(v) =>
-                                    group.handler((v ?? []) as string[])}
-                                variant="outline"
-                                size="sm"
-                                class="*:data-[state=on]:bg-primary/80 *:data-[state=on]:text-primary-foreground *:data-[state=on]:border-transparent"
-                            >
-                                {#each group.items as item}
-                                    <ToggleGroup.Item
-                                        value={item.value}
-                                        aria-label={item.name ?? item.label}
-                                    >
-                                        {#if item.icon}
-                                            <item.icon />
-                                        {/if}
-                                        <span class="text-xs">{item.label}</span
-                                        >
-                                    </ToggleGroup.Item>
-                                {/each}
-                            </ToggleGroup.Root>
-                        </div>
-                    {/each}
-                </div>
-                <Tooltip.Root>
-                    <Tooltip.Trigger>
-                        {#snippet child({ props })}
-                            <Button
-                                {...props}
-                                variant="outline"
-                                size="xs"
-                                onclick={onExport}
-                                class={cn(
-                                    "tracking-normal rounded-full",
-                                    !showExport &&
-                                        "opacity-0 pointer-events-none",
-                                )}
-                            >
-                                <IconDatabaseExport size={16} stroke={1.75} />
-                                导出为新题库
-                            </Button>
-                        {/snippet}
-                    </Tooltip.Trigger>
-                    <Tooltip.Content side="top">
-                        <span>筛选结果另存为新题库</span>
-                    </Tooltip.Content>
-                </Tooltip.Root>
-            </div>
-        </div>
-    </div>
-</div>
+    {/snippet}
+</FilterBar>

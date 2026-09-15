@@ -8,9 +8,10 @@
  * 与 `SHORTCUTS.toggleSettings`（⌘I = 当前题库设置）只差一个 ⇧，
  * 两边不要写混。
  *
- * **两个模态视图必须先把它让出去**（`quiz/session/keyboardHandler.ts` 与
- * `components/memory/MemoryView.svelte`）：题目级分发不认修饰键，`i` 在第 9 个
- * 选项存在时正好是它的字母——不让的话 ⌘⇧I 会顺手选中 I 选项、甚至直接提交。
+ * **两个模态视图必须先把它让出去**（刷题与记忆共用 `features/appShortcuts.ts`
+ * 的 `createAppKeyboardHandler`，那里有一行早退）：题目级分发不认修饰键，
+ * `i` 在第 9 个选项存在时正好是它的字母——不让的话 ⌘⇧I 会顺手选中 I 选项、
+ * 甚至直接提交。
  */
 
 import { SHORTCUTS } from "@/config";

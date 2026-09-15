@@ -1,101 +1,59 @@
+<script module lang="ts">
+    /**
+     * 热力图的一个小方块。
+     *
+     * 定义在 `<script module>` 里，两个模式的包装组件才能 import 这个类型
+     * （实例 script 的 export 是拿不到的）。
+     */
+    export interface HeatmapCell {
+        id: string;
+        /** 状态描述（**不要**自己带 id 前缀，无障碍标签由本组件统一拼） */
+        status: string;
+        /** 纯色格子用它（Tailwind 类，如 `bg-success`） */
+        className?: string;
+        /** 需要插值的格子用它（`background-color: …`） */
+        style?: string;
+    }
+</script>
+
 <script lang="ts">
     import { cn } from "$lib/utils";
-    import { useMemorySession } from "@/features/memory/context";
-    import { reviewProgress } from "@/features/memory/algorithm";
-    import type { MemoryProgress } from "@/types";
     import IconAccessPoint from "@tabler/icons-svelte/icons/access-point";
     import IconChevronDown from "@tabler/icons-svelte/icons/chevron-down";
 
     /**
-     * 记忆模式的答题热力图。逻辑与刷题模式的 `HeatmapSection.svelte` 一一对应，
-     * 只是「状态 → 颜色」的映射换成记忆模式那一套：
+     * 热力图：折叠标题 + 小方块网格 + 轻量 tooltip。
      *
-     *   未学习 / 学习中 → 灰色（`bg-foreground/15`）
-     *   复习中         → 橙色 → 绿色按复习进度插值（复习到第几级 / 掌握阈值）
-     *   已掌握         → 绿色（`bg-success`）
+     * 刷题与记忆两个模式的热力图**只有「状态 → 颜色」的映射不同**，外壳（折叠、
+     * 网格、悬浮提示的定位、无障碍标签）完全一样。以前是两份近 200 行的重复实现，
+     * 连 aria-label 的拼法都漂了（一份拼 `${id}：${status}`，另一份的 status 里自带 id）。
+     * 现在外壳只此一份，调用方只负责把题目算成 `cells`。
      */
     interface Props {
+        /** 折叠条上的标题，如「答题热力图」/「卡片热力图」 */
+        title: string;
+        /**
+         * 单元格数据。
+         *
+         * 传函数而不是数组，是为了保留原来的懒加载：收起时**不计算**颜色
+         * （题库大时每个格子都要查一次进度，白白算一遍没有意义）。
+         */
+        cells: (expanded: boolean) => HeatmapCell[];
         onJump?: (id: string) => void;
     }
 
-    let { onJump }: Props = $props();
-
-    const session = useMemorySession();
+    let { title, cells, onJump }: Props = $props();
 
     let expanded = $state(false);
 
-    const threshold = $derived(Math.max(1, session.memorySettings.graduateLevel));
+    const currentCells = $derived(cells(expanded));
 
-    /**
-     * 复习中的橙色 → 绿色插值。进度直接用算法的 `reviewProgress`
-     * （`(level - 1) / threshold`），别在 UI 里再抄一份公式。
-     */
-    function reviewColor(item: MemoryProgress): string {
-        const t = reviewProgress(item, threshold);
-        return `color-mix(in oklab, var(--success) ${(t * 100).toFixed(1)}%, var(--warning))`;
-    }
-
-    function describe(item: MemoryProgress | undefined, id: string): string {
-        if (!item) return `${id}：未学习`;
-        if (item.state === "mastered") return `${id}：已掌握`;
-        if (item.state === "learning") return `${id}：学习中`;
-        return `${id}：复习中 ${item.level - 1}/${threshold}`;
-    }
-
-    interface CellInfo {
-        id: string;
-        status: string;
-        className: string;
-        style: string;
-    }
-
-    // 懒加载：收起时不计算 cells
-    const cells = $derived.by((): CellInfo[] => {
-        if (!expanded) return [];
-        return session.questions.map((question) => {
-            const item = session.progress[question.id];
-
-            if (!item || item.state === "learning") {
-                // 未学习与学习中共用灰色
-                return {
-                    id: question.id,
-                    status: describe(item, question.id),
-                    className: "bg-foreground/15",
-                    style: "",
-                };
-            }
-
-            if (item.state === "mastered") {
-                return {
-                    id: question.id,
-                    status: describe(item, question.id),
-                    className: "bg-success",
-                    style: "",
-                };
-            }
-
-            return {
-                id: question.id,
-                status: describe(item, question.id),
-                className: "",
-                style: `background-color: ${reviewColor(item)}`,
-            };
-        });
-    });
-
-    // ── 共享轻量 tooltip ──
-
+    // ── 轻量 tooltip：自己算位置，不走浮层组件（在 Dialog 里会被层级 / 裁剪坑到）──
     let hoveredCellId = $state<string | null>(null);
     let tooltipX = $state(0);
     let tooltipY = $state(0);
     let anchorEl: HTMLElement | null = null;
     let sectionEl: HTMLElement | null = null;
-
-    const hoveredCell = $derived(
-        hoveredCellId != null
-            ? (cells.find((c) => c.id === hoveredCellId) ?? null)
-            : null,
-    );
 
     function updateTooltipPosition() {
         if (!anchorEl || !sectionEl) return;
@@ -115,10 +73,6 @@
         hoveredCellId = null;
         anchorEl = null;
     }
-
-    function onGridScroll() {
-        updateTooltipPosition();
-    }
 </script>
 
 <div bind:this={sectionEl} class="relative flex flex-col gap-2">
@@ -133,7 +87,7 @@
             stroke={1.75}
             class="text-muted-foreground shrink-0"
         />
-        <span class="shrink-0 text-sm font-medium">卡片热力图</span>
+        <span class="shrink-0 text-sm font-medium">{title}</span>
         <span class="dotted-leader text-muted-foreground/40 flex-1"></span>
         <IconChevronDown
             size={16}
@@ -149,15 +103,15 @@
         <div class="heatmap-collapsible-inner">
             <div
                 class="max-h-56 overflow-y-auto rounded-md border bg-muted/20 p-3"
-                onscroll={onGridScroll}
+                onscroll={updateTooltipPosition}
             >
                 {#if expanded}
                     <div class="heatmap-grid grid">
-                        {#each cells as cell (cell.id)}
+                        {#each currentCells as cell (cell.id)}
                             <button
                                 type="button"
                                 class="block size-4 border-0 p-0.5 group"
-                                aria-label={cell.status}
+                                aria-label="{cell.id}：{cell.status}"
                                 onclick={() => onJump?.(cell.id)}
                                 onmouseenter={(e) => onCellEnter(cell.id, e)}
                                 onmouseleave={onCellLeave}
@@ -177,12 +131,12 @@
         </div>
     </div>
 
-    {#if hoveredCell}
+    {#if hoveredCellId}
         <div
             class="heatmap-tooltip pointer-events-none absolute z-(--z-tooltip) -translate-x-1/2 -translate-y-full rounded-md bg-foreground px-3 py-1.5 text-xs text-background"
             style="left: {tooltipX}px; top: {tooltipY}px;"
         >
-            <span class="font-mono">{hoveredCell.id}</span>
+            <span class="font-mono">{hoveredCellId}</span>
         </div>
     {/if}
 </div>

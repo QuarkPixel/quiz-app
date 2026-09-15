@@ -16,10 +16,10 @@
 
 <Drawer.Root bind:open>
     <!--
-        z-index 要盖住设置面板（Dialog 用 z-[60]），但留在 Toast（z-[80]）之下 ——
+        z-index 要盖住设置面板（Dialog 用 z-(--z-dialog)），但留在 Toast（z-(--z-tooltip)）之下 ——
         这个抽屉是从设置面板里打开的，层级低了就会被压在下面。
     -->
-    <Drawer.Content class="z-70 max-h-[85vh] overflow-hidden">
+    <Drawer.Content class="z-(--z-drawer) max-h-[85vh] overflow-hidden">
         <Drawer.Header class="border-b px-5 py-3.5 text-start">
             <Drawer.Title class="text-base font-semibold"
                 >云同步说明</Drawer.Title

@@ -15,7 +15,7 @@
 
 <div
     style="--opacity: 0.08"
-    class="fixed inset-0 pointer-events-none z-1024
+    class="fixed inset-0 pointer-events-none z-(--z-flash)
     mix-blend-multiply dark:mix-blend-screen
     *:absolute *:inset-0 *:will-change-[opacity]"
 >

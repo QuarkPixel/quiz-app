@@ -18,7 +18,7 @@
         type ReviewFilterState,
     } from "@/features/quiz/reviewFilters";
     import { useQuizSource } from "@/source/context";
-    import type { ToastVariant } from "@/quiz/session/QuizSession.svelte";
+    import type { ToastVariant } from "@/features/toast.svelte";
     import * as Card from "$lib/components/ui/card";
     import * as Dialog from "$lib/components/ui/dialog";
     import { QUESTION_TYPE_ORDER } from "@/quiz/types/registry";

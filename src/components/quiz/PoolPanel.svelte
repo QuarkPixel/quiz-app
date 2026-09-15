@@ -3,6 +3,8 @@
     import { getRequiredStreak } from "@/features/quiz";
     import { QUESTION_TYPES } from "@/quiz/types/registry";
     import {
+        POOL_ANSWER_POINTER_REVEAL_MS,
+        POOL_ANSWER_POINTER_TAP_TOLERANCE_PX,
         POOL_ITEM_FLIP_DURATION_MS,
         POOL_ITEM_OUT_DURATION_MS,
     } from "@/config";
@@ -23,9 +25,6 @@
     const questionMap = $derived(
         new Map(session.questions.map((q) => [q.id, q])),
     );
-
-    const ANSWER_POINTER_REVEAL_MS = 3000;
-    const ANSWER_POINTER_TAP_MOVE_TOLERANCE_PX = 10;
 
     type PoolEntry = {
         item: ActivePoolItem;
@@ -73,7 +72,7 @@
             if (revealAnswerTimers.get(id) !== timer) return;
             revealAnswerTimers.delete(id);
             hideRevealedAnswer(id);
-        }, ANSWER_POINTER_REVEAL_MS);
+        }, POOL_ANSWER_POINTER_REVEAL_MS);
         revealAnswerTimers.set(id, timer);
     }
 
@@ -98,7 +97,7 @@
 
         const dx = event.clientX - pointerTapState.startX;
         const dy = event.clientY - pointerTapState.startY;
-        if (Math.hypot(dx, dy) > ANSWER_POINTER_TAP_MOVE_TOLERANCE_PX) {
+        if (Math.hypot(dx, dy) > POOL_ANSWER_POINTER_TAP_TOLERANCE_PX) {
             pointerTapStates.delete(event.pointerId);
         }
     }

@@ -14,6 +14,19 @@ import { TOAST_DURATION_MS, TOAST_FADE_MS } from "@/config";
 
 export type ToastVariant = "default" | "success" | "destructive";
 
+/**
+ * 抛一条提示的入口签名。
+ *
+ * `toastStore.show` 本身就是这个形状，各 session 的 `deps.toast` 也是——
+ * 全项目只此一份定义，别在别处再写一遍（曾经 `sound/` 与 `QuizSession`
+ * 各抄过一份）。
+ */
+export type Toast = (
+  title: string,
+  description?: string,
+  variant?: ToastVariant,
+) => void;
+
 export interface ToastMessage {
   title: string;
   description?: string;

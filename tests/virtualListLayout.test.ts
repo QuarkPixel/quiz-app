@@ -197,3 +197,79 @@ describe("buildIdToRank", () => {
     expect(rank.get("s1")).toBe(4);
   });
 });
+
+/** 记忆模式只有一种题型，列表不要分组标题条：整段没有 header。 */
+describe("无分组头（withHeaders: false）", () => {
+  function flatWithoutHeaders() {
+    return buildFlatItems(groups(), { withHeaders: false });
+  }
+
+  function layoutsWithoutHeaders() {
+    const sections = buildSections(flatWithoutHeaders());
+    const resolve = resolveFromMap({ j1: 100, j2: 100, s1: 100 });
+    return { sections, resolve, layouts: buildSectionLayouts(sections, resolve) };
+  }
+
+  it("不插 header，题目跨组保持原顺序", () => {
+    const flat = flatWithoutHeaders();
+    expect(flat.map((f) => f.type)).toEqual([
+      "question",
+      "question",
+      "question",
+    ]);
+    expect(flat.map((f) => f.id)).toEqual(["j1", "j2", "s1"]);
+  });
+
+  it("首项是题目 → 收成一段 header 为 null 的 section", () => {
+    const sections = buildSections(flatWithoutHeaders());
+    expect(sections.length).toBe(1);
+    expect(sections[0].header).toBeNull();
+    expect(sections[0].questionItems.map((q) => q.id)).toEqual([
+      "j1",
+      "j2",
+      "s1",
+    ]);
+  });
+
+  it("headerHeight 为 0，题目从 section 顶部开始累计", () => {
+    const { layouts } = layoutsWithoutHeaders();
+    expect(layouts[0].y).toBe(0);
+    expect(layouts[0].headerHeight).toBe(0);
+    expect(layouts[0].questionOffsets).toEqual([0, 100, 200]);
+    expect(layouts[0].questionsTotalHeight).toBe(300);
+  });
+
+  it("不去查 header 的高度（null 头不该进 resolveHeight）", () => {
+    const { sections } = layoutsWithoutHeaders();
+    const resolve: ResolveHeight = (id, fallback) => {
+      if (id.startsWith("header-")) throw new Error("无头段不该查 header 高度");
+      return fallback;
+    };
+    expect(() => buildSectionLayouts(sections, resolve)).not.toThrow();
+  });
+
+  it("getVisibleRange 照常按题目位置给范围", () => {
+    const { layouts, resolve } = layoutsWithoutHeaders();
+    expect(getVisibleRange(layouts[0], 0, 200, resolve)).toEqual({
+      start: 0,
+      end: 2,
+    });
+  });
+
+  it("findQuestionTop 不含 header 高度", () => {
+    const { layouts, resolve } = layoutsWithoutHeaders();
+    // j2: y=0，无头，offset=100，高 100 → 100 - 200/2 + 100/2 = 50
+    expect(findQuestionTop(layouts, "j2", 200, resolve)).toBe(50);
+  });
+
+  it("有头无头混排：首项是题目时补 null 段，遇到 header 再另起一段", () => {
+    const [j1] = flatWithoutHeaders();
+    const sections = buildSections([j1, ...buildFlatItems([groups()[0]])]);
+    expect(sections.map((s) => s.header?.id ?? null)).toEqual([
+      null,
+      "header-judgment",
+    ]);
+    expect(sections[0].questionItems.map((q) => q.id)).toEqual(["j1"]);
+    expect(sections[1].questionItems.map((q) => q.id)).toEqual(["j1", "j2"]);
+  });
+});

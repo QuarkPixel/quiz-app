@@ -1,14 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  createKeyboardHandler,
-  type KeyboardUiActions,
-} from "../src/quiz/session/keyboardHandler";
+  createAppKeyboardHandler,
+  type KeyboardSession,
+} from "../src/features/appShortcuts";
+import type { KeyboardUiActions } from "../src/quiz/session/types";
 import { SHORTCUTS } from "../src/config";
-import type { QuizSession } from "../src/quiz/session/QuizSession.svelte";
 import type { Question } from "../src/types";
 
-// QuizSession 是 class，但 keyboardHandler 只用其上的几个方法 + showResult 字段。
-// 用最小 stub 模拟，避免引入 svelte 运行时。
+// 分发层只依赖 `KeyboardSession` 这个结构化接口（上面那几个方法 + 几个字段），
+// 所以用最小 stub 模拟即可，不必把真实的 QuizSession / svelte 运行时拖进来。
 function makeQuestion(
   type: Question["type"] = "single",
   optionCount = 3,
@@ -27,6 +27,14 @@ function makeQuestion(
       type,
       question: "judgment",
       answer: true,
+    };
+  }
+  if (type === "memory") {
+    return {
+      id: "m1",
+      type,
+      question: "取得进步",
+      answer: "make progress",
     };
   }
   return {
@@ -83,7 +91,7 @@ function makeSessionStub(
     toggleSound: vi.fn(),
     startImport: vi.fn(),
     exportProgress: vi.fn(),
-  } as unknown as QuizSession & {
+  } as unknown as KeyboardSession & {
     submit: ReturnType<typeof vi.fn>;
     selectNext: ReturnType<typeof vi.fn>;
     advanceQuestionFlow: ReturnType<typeof vi.fn>;
@@ -135,7 +143,7 @@ describe("Mod 快捷键派发", () => {
   it("Cmd+P → togglePool", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    const handler = createKeyboardHandler(session, ui);
+    const handler = createAppKeyboardHandler(session, ui);
     handler(mkEvent({ metaKey: true, key: SHORTCUTS.togglePool }));
     expect(session.togglePool).toHaveBeenCalledOnce();
   });
@@ -143,7 +151,7 @@ describe("Mod 快捷键派发", () => {
   it("Cmd+D → toggleReview", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ metaKey: true, key: SHORTCUTS.toggleReview }),
     );
     expect(ui.toggleReview).toHaveBeenCalledOnce();
@@ -153,7 +161,7 @@ describe("Mod 快捷键派发", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
     const ev = mkEvent({ metaKey: true, key: SHORTCUTS.copyQuestion });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.copyCurrentQuestion).toHaveBeenCalledWith({
       announce: true,
     });
@@ -166,7 +174,7 @@ describe("Mod 快捷键派发", () => {
     });
     const ui = makeUiStub();
     const ev = mkEvent({ metaKey: true, key: SHORTCUTS.copyQuestion });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.copyPreviewQuestion).toHaveBeenCalledOnce();
     expect(session.copyCurrentQuestion).not.toHaveBeenCalled();
     expect(ev.preventDefault).toHaveBeenCalledOnce();
@@ -181,7 +189,7 @@ describe("Mod 快捷键派发", () => {
       key: SHORTCUTS.copyQuestion,
       target: input,
     });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.copyCurrentQuestion).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
   });
@@ -193,7 +201,7 @@ describe("Mod 快捷键派发", () => {
       toString: () => "selected text",
     } as Selection);
     const ev = mkEvent({ metaKey: true, key: SHORTCUTS.copyQuestion });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.copyCurrentQuestion).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
   });
@@ -201,7 +209,7 @@ describe("Mod 快捷键派发", () => {
   it("Cmd+I → toggleSettings", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ metaKey: true, key: SHORTCUTS.toggleSettings }),
     );
     expect(ui.toggleSettings).toHaveBeenCalledOnce();
@@ -216,7 +224,7 @@ describe("Mod 快捷键派发", () => {
       key: SHORTCUTS.togglePool,
       target: input,
     });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.togglePool).toHaveBeenCalledOnce();
     expect(ev.preventDefault).toHaveBeenCalledOnce();
   });
@@ -224,7 +232,7 @@ describe("Mod 快捷键派发", () => {
   it("Cmd+A → toggleAutoNext", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ metaKey: true, key: SHORTCUTS.toggleAutoNext }),
     );
     expect(session.toggleAutoNext).toHaveBeenCalledOnce();
@@ -233,7 +241,7 @@ describe("Mod 快捷键派发", () => {
   it("Cmd+I → startImport", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ metaKey: true, key: SHORTCUTS.importProgress }),
     );
     expect(session.startImport).toHaveBeenCalledOnce();
@@ -242,7 +250,7 @@ describe("Mod 快捷键派发", () => {
   it("Cmd+E → exportProgress", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ metaKey: true, key: SHORTCUTS.exportProgress }),
     );
     expect(session.exportProgress).toHaveBeenCalledOnce();
@@ -252,7 +260,7 @@ describe("Mod 快捷键派发", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
     const ev = mkEvent({ metaKey: true, key: SHORTCUTS.sidebar });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.togglePool).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
   });
@@ -260,7 +268,7 @@ describe("Mod 快捷键派发", () => {
   it("Cmd+Shift+P → 不触发（要求纯 Cmd+key 组合）", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ metaKey: true, shiftKey: true, key: SHORTCUTS.togglePool }),
     );
     expect(session.togglePool).not.toHaveBeenCalled();
@@ -276,7 +284,7 @@ describe("Mod 快捷键派发", () => {
       shiftKey: true,
       key: SHORTCUTS.toggleGlobalSettings.toUpperCase(),
     });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.selectedAnswers).toEqual([]);
     expect(session.submit).not.toHaveBeenCalled();
     expect(ui.toggleSettings).not.toHaveBeenCalled();
@@ -293,7 +301,7 @@ describe("Space / Enter 全局快捷键", () => {
   it("Space (showResult=false) → submit", () => {
     const session = makeSessionStub(false);
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Space", key: " " }),
     );
     expect(session.submit).toHaveBeenCalledOnce();
@@ -303,7 +311,7 @@ describe("Space / Enter 全局快捷键", () => {
   it("Space (showResult=true) → advanceQuestionFlow", () => {
     const session = makeSessionStub(true);
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Space", key: " " }),
     );
     expect(session.advanceQuestionFlow).toHaveBeenCalledOnce();
@@ -313,7 +321,7 @@ describe("Space / Enter 全局快捷键", () => {
   it("Enter (showResult=false) → submit", () => {
     const session = makeSessionStub(false);
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Enter", key: "Enter" }),
     );
     expect(session.submit).toHaveBeenCalledOnce();
@@ -324,7 +332,7 @@ describe("Space / Enter 全局快捷键", () => {
     const ui = makeUiStub();
     const button = document.createElement("button");
     const ev = mkEvent({ code: "Enter", key: "Enter", target: button });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.advanceQuestionFlow).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
@@ -336,7 +344,7 @@ describe("Space / Enter 全局快捷键", () => {
     const button = document.createElement("div");
     button.setAttribute("role", "button");
     const ev = mkEvent({ code: "Space", key: " ", target: button });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.advanceQuestionFlow).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
@@ -350,7 +358,7 @@ describe("Space / Enter 全局快捷键", () => {
       key: "Enter",
       isComposing: true,
     });
-    createKeyboardHandler(session, ui)(ev);
+    createAppKeyboardHandler(session, ui)(ev);
     expect(session.submit).not.toHaveBeenCalled();
     expect(ev.preventDefault).not.toHaveBeenCalled();
   });
@@ -358,7 +366,7 @@ describe("Space / Enter 全局快捷键", () => {
   it("其他键 → 不触发", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "KeyZ", key: "z" }),
     );
     expect(session.submit).not.toHaveBeenCalled();
@@ -368,7 +376,7 @@ describe("Space / Enter 全局快捷键", () => {
   it("填空题未聚焦输入框时按 Space → submit", () => {
     const session = makeSessionStub(false, { questionType: "blank" });
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Space", key: " " }),
     );
     expect(session.submit).toHaveBeenCalledOnce();
@@ -378,7 +386,7 @@ describe("Space / Enter 全局快捷键", () => {
   it("填空题上的 Enter → submit", () => {
     const session = makeSessionStub(false, { questionType: "blank" });
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Enter", key: "Enter" }),
     );
     expect(session.submit).toHaveBeenCalledOnce();
@@ -401,7 +409,7 @@ describe("Dialog 内 Enter 行为", () => {
 
     const session = makeSessionStub();
     const ui = makeUiStub();
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Enter", key: "Enter", target: input }),
     );
     expect(blurSpy).toHaveBeenCalled();
@@ -415,7 +423,7 @@ describe("题型级字母快捷键", () => {
     const session = makeSessionStub(false, { questionType: "single" });
     const ui = makeUiStub();
 
-    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyA", key: "a" }));
+    createAppKeyboardHandler(session, ui)(mkEvent({ code: "KeyA", key: "a" }));
 
     expect(session.selectedAnswers).toEqual([0]);
     expect(session.submit).toHaveBeenCalledOnce();
@@ -428,7 +436,7 @@ describe("题型级字母快捷键", () => {
     });
     const ui = makeUiStub();
 
-    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
+    createAppKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
 
     expect(session.selectedAnswers).toEqual([1]);
     expect(session.submit).not.toHaveBeenCalled();
@@ -441,11 +449,11 @@ describe("题型级字母快捷键", () => {
     });
     const ui = makeUiStub();
 
-    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
+    createAppKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
     expect(session.selectedAnswers).toEqual([0, 1]);
     expect(session.submit).not.toHaveBeenCalled();
 
-    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyA", key: "a" }));
+    createAppKeyboardHandler(session, ui)(mkEvent({ code: "KeyA", key: "a" }));
     expect(session.selectedAnswers).toEqual([1]);
   });
 
@@ -453,7 +461,7 @@ describe("题型级字母快捷键", () => {
     const session = makeSessionStub(false, { questionType: "single" });
     const ui = makeUiStub();
 
-    createKeyboardHandler(session, ui)(mkEvent({ code: "Digit2", key: "2" }));
+    createAppKeyboardHandler(session, ui)(mkEvent({ code: "Digit2", key: "2" }));
 
     expect(session.selectedAnswers).toEqual([1]);
     expect(session.submit).toHaveBeenCalledOnce();
@@ -466,7 +474,7 @@ describe("题型级字母快捷键", () => {
     });
     const ui = makeUiStub();
 
-    createKeyboardHandler(session, ui)(mkEvent({ code: "Digit2", key: "2" }));
+    createAppKeyboardHandler(session, ui)(mkEvent({ code: "Digit2", key: "2" }));
 
     expect(session.selectedAnswers).toEqual([0, 1]);
     expect(session.submit).not.toHaveBeenCalled();
@@ -476,7 +484,7 @@ describe("题型级字母快捷键", () => {
     const session = makeSessionStub(false, { questionType: "judgment" });
     const ui = makeUiStub();
 
-    createKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
+    createAppKeyboardHandler(session, ui)(mkEvent({ code: "KeyB", key: "b" }));
 
     expect(session.selectedAnswers).toEqual([1]);
     expect(session.submit).toHaveBeenCalledOnce();
@@ -485,7 +493,7 @@ describe("题型级字母快捷键", () => {
   it("判断题按 1 / 2 → 分别对应正确 / 错误", () => {
     const session = makeSessionStub(false, { questionType: "judgment" });
     const ui = makeUiStub();
-    const handler = createKeyboardHandler(session, ui);
+    const handler = createAppKeyboardHandler(session, ui);
 
     handler(mkEvent({ code: "Digit1", key: "1" }));
     expect(session.selectedAnswers).toEqual([0]);
@@ -499,7 +507,7 @@ describe("题型级字母快捷键", () => {
     const ui = makeUiStub();
     const input = document.createElement("input");
 
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "KeyA", key: "a", target: input }),
     );
 
@@ -516,7 +524,7 @@ describe("题型级字母快捷键", () => {
     const input = document.createElement("input");
     input.classList.add("blank-input");
 
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Enter", key: "Enter", target: input }),
     );
 
@@ -532,11 +540,82 @@ describe("题型级字母快捷键", () => {
     const input = document.createElement("input");
     input.classList.add("blank-input");
 
-    createKeyboardHandler(session, ui)(
+    createAppKeyboardHandler(session, ui)(
       mkEvent({ code: "Space", key: " ", target: input }),
     );
 
     expect(session.submit).not.toHaveBeenCalled();
     expect(session.selectNext).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 模式能力分发：只有某一个模式有的动作不该互相牵制
+// ---------------------------------------------------------------------------
+
+describe("模式能力分发", () => {
+  it("宿主没有活动池（记忆模式）→ ⌘P 既不吃按键也不报错", () => {
+    const session = makeSessionStub();
+    delete (session as { togglePool?: unknown }).togglePool;
+    const ui = makeUiStub();
+    const ev = mkEvent({ metaKey: true, key: SHORTCUTS.togglePool });
+
+    createAppKeyboardHandler(session, ui)(ev);
+
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("⌘S / ⌘N 走同一份分发表，两个模式都会命中", () => {
+    const session = makeSessionStub();
+    const ui = makeUiStub();
+    const handler = createAppKeyboardHandler(session, ui);
+
+    handler(mkEvent({ metaKey: true, key: SHORTCUTS.toggleSound }));
+    handler(mkEvent({ metaKey: true, key: SHORTCUTS.toggleAutoNext }));
+
+    expect(session.toggleSound).toHaveBeenCalledOnce();
+    expect(session.toggleAutoNext).toHaveBeenCalledOnce();
+  });
+
+  it("Esc：会话进行中才结束本轮", () => {
+    const session = makeSessionStub() as unknown as KeyboardSession & {
+      exitSession: ReturnType<typeof vi.fn>;
+      isSessionActive?: boolean;
+    };
+    session.exitSession = vi.fn();
+    session.isSessionActive = true;
+
+    createAppKeyboardHandler(session, makeUiStub())(
+      mkEvent({ key: "Escape", code: "Escape" }),
+    );
+    expect(session.exitSession).toHaveBeenCalledOnce();
+
+    session.isSessionActive = false;
+    createAppKeyboardHandler(session, makeUiStub())(
+      mkEvent({ key: "Escape", code: "Escape" }),
+    );
+    expect(session.exitSession).toHaveBeenCalledOnce();
+  });
+
+  it("Esc：刷题模式没有会话概念，不该被吃掉", () => {
+    const session = makeSessionStub();
+    const ev = mkEvent({ key: "Escape", code: "Escape" });
+
+    createAppKeyboardHandler(session, makeUiStub())(ev);
+
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+    expect(session.submit).not.toHaveBeenCalled();
+  });
+
+  it("题型给出记忆模式专属动作时，宿主没实现就不吃按键", () => {
+    // 刷题模式不会收到 mark-wrong / mark-fuzzy（那是记忆题型的动作），
+    // 这里直接用一个记忆题型 + 没有该方法的宿主来验证兜底。
+    const session = makeSessionStub(true, { questionType: "memory" });
+    delete (session as { markAsWrong?: unknown }).markAsWrong;
+    const ev = mkEvent({ key: ";", code: "Semicolon" });
+
+    createAppKeyboardHandler(session, makeUiStub())(ev);
+
+    expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 });

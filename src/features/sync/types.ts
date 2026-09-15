@@ -309,33 +309,11 @@ export const EMPTY_SYNC_CONFIG: SyncConfig = {
   autoSync: true,
 };
 
-/** 同步相关存储键。前缀 `quiz_app_sync_` 一律不进云端。 */
-export const STORAGE_KEY_SYNC_CONFIG = "quiz_app_sync_config";
-export const STORAGE_KEY_SYNC_META = "quiz_app_sync_meta";
-export const SYNC_STORAGE_PREFIX = "quiz_app_sync_";
-
-/**
- * 本地改动后，等这么久没有新改动就自动上传（毫秒）。
- *
- * 是**防抖**不是节流：连续答题时定时器会一直被推后，所以真正兜底的是
- * `SYNC_POLL_INTERVAL_MS`（3 分钟）与切回页面时那次检查。
- * 20 秒是刻意的：做题时每次保存进度都写 localStorage，2 秒一传太吵。
+/*
+ * 存储键与时间间隔（`SYNC_*_MS` / `STORAGE_KEY_SYNC_*`）统一放在
+ * `@/config/storage.ts` 与 `@/config/sync.ts`——它们是跨模块的全局调参。
+ * 这里只留与实现绑定的协议常量（Gist 文件名、分片数、payload 版本）。
  */
-export const SYNC_PUSH_DEBOUNCE_MS = 20_000;
-
-/** 空闲时轮询云端的间隔（毫秒）。 */
-export const SYNC_POLL_INTERVAL_MS = 3 * 60 * 1000;
-
-/**
- * `localStorage` 钩子不生效时的兜底检查间隔（毫秒）。
- *
- * 正常情况下用不着：写入会直接通知引擎「本地脏了」。这条只在探针发现
- * 「写得进去但钩子不通知」时启用（iOS 上踩过），代价是定期比一遍内容哈希。
- */
-export const SYNC_LOCAL_POLL_MS = 5000;
-
-/** 窗口重新获得焦点时，两次检查之间至少间隔这么久（毫秒）。 */
-export const SYNC_FOCUS_THROTTLE_MS = 30 * 1000;
 
 /** 云端一个文件都没有时的元数据默认值。 */
 export function emptySyncMeta(): SyncMeta {

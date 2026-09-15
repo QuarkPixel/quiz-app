@@ -33,20 +33,33 @@ export function estimateQuestionHeight(question: Question): number {
 }
 
 /** 把按题型分组的题目扁平化成 header + questions 序列。 */
-export function buildFlatItems(grouped: QuestionGroup[]): FlatItem[] {
+export interface BuildFlatItemsOptions {
+  /**
+   * 是否插入题型头。记忆模式只有一种题型，`false` 时整段没有分组头，
+   * `buildSections` 会给出一个 `header: null` 的 section。
+   */
+  withHeaders?: boolean;
+}
+
+export function buildFlatItems(
+  grouped: QuestionGroup[],
+  { withHeaders = true }: BuildFlatItemsOptions = {},
+): FlatItem[] {
   return grouped.flatMap((group) => {
-    const header: FlatHeader = {
-      type: "header",
-      id: `header-${group.type}`,
-      questionType: group.type,
-      count: group.items.length,
-    };
     const questions: FlatQuestion[] = group.items.map((item) => ({
       type: "question",
       id: item.question.id,
       question: item.question,
       indicator: item.indicator,
     }));
+    if (!withHeaders) return questions;
+
+    const header: FlatHeader = {
+      type: "header",
+      id: `header-${group.type}`,
+      questionType: group.type,
+      count: group.items.length,
+    };
     return [header, ...questions];
   });
 }
@@ -60,7 +73,12 @@ export function buildSections(flatItems: FlatItem[]): Section[] {
       current = { header: item, questionItems: [] };
       result.push(current);
     } else {
-      current?.questionItems.push(item);
+      // 没有分组头时首项就是题目：先开一段 header 为 null 的 section
+      if (!current) {
+        current = { header: null, questionItems: [] };
+        result.push(current);
+      }
+      current.questionItems.push(item);
     }
   }
   return result;
@@ -79,10 +97,10 @@ export function buildSectionLayouts(
 ): SectionLayout[] {
   let y = 0;
   return sections.map((section) => {
-    const headerHeight = resolveHeight(
-      section.header.id,
-      ESTIMATED_HEADER_HEIGHT,
-    );
+    // 没有分组头 → 高度 0，题目区直接从 section 顶部开始
+    const headerHeight = section.header
+      ? resolveHeight(section.header.id, ESTIMATED_HEADER_HEIGHT)
+      : 0;
     const questionHeights = section.questionItems.map((q) =>
       resolveHeight(q.id, estimateQuestionHeight(q.question)),
     );

@@ -7,11 +7,8 @@
  * Gist ID 不需要用户填：第一次同步时自动创建并回填。
  */
 
-import {
-  EMPTY_SYNC_CONFIG,
-  STORAGE_KEY_SYNC_CONFIG,
-  type SyncConfig,
-} from "./types";
+import { STORAGE_KEY_SYNC_CONFIG } from "@/config";
+import { EMPTY_SYNC_CONFIG, type SyncConfig } from "./types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);

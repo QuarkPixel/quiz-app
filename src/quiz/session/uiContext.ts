@@ -1,9 +1,14 @@
 import { getContext, setContext } from "svelte";
+import type { KeyboardUiActions } from "./types";
 
-export interface QuizUiActions {
+/**
+ * 容器（`QuizView`）注入的 UI 动作。
+ *
+ * 键盘层要用的那两个（总览 / 设置）在 `KeyboardUiActions` 里声明，两个模式
+ * 共用；`openReview` 是刷题模式自己的（「所有题目已掌握」空态里那颗按钮）。
+ */
+export interface QuizUiActions extends KeyboardUiActions {
   openReview: () => void;
-  toggleReview: () => void;
-  toggleSettings: () => void;
 }
 
 const KEY = Symbol("QuizUiActions");

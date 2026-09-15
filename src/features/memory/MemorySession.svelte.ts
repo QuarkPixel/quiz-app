@@ -59,7 +59,7 @@ import {
 import type {
   CopyQuestionOptions,
   CopyQuestionResult,
-} from "@/quiz/session/QuizSession.svelte";
+} from "@/quiz/session/types";
 import { buildRuntimeState, loadStoredState, saveState } from "@/store";
 import {
   createDefaultBankSettings,

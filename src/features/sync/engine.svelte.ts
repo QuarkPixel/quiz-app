@@ -67,11 +67,13 @@ import {
 } from "./storage";
 import { resolveSyncTarget } from "./target";
 import {
-  GIST_GENERAL_FILE,
   SYNC_FOCUS_THROTTLE_MS,
   SYNC_LOCAL_POLL_MS,
   SYNC_POLL_INTERVAL_MS,
   SYNC_PUSH_DEBOUNCE_MS,
+} from "@/config";
+import {
+  GIST_GENERAL_FILE,
   bankRowKey,
   shardFileName,
   shardIndexOf,

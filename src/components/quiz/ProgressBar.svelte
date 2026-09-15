@@ -11,11 +11,40 @@
     interface Props {
         stats: Stats;
         learningSegments: LearningSegment[];
-        focused: boolean;
-        onToggleFocus: () => void;
+        /** 聚焦态（只有刷题模式用得上：点一下就放大学习中那一段） */
+        focused?: boolean;
+        onToggleFocus?: () => void;
+        /**
+         * 中间不显示百分比，改成这句文案（记忆模式用来显示「3/5」）。
+         */
+        label?: string;
+        /**
+         * 右侧数字的覆盖值。
+         *
+         * 默认是「进度范围末端」= 已掌握 + 剩余（刷题模式的口径：左「已掌握」、
+         * 右「还没掌握的」）。记忆模式的口径是「已完成 / 本轮总数」，所以显式
+         * 传 total 进来，而不是让两边各自实现一套数字行。
+         */
+        rightValue?: number;
+        /**
+         * 是否可交互（默认 true）。记忆模式的进度条是纯展示，不做聚焦放大，
+         * 传 false 就渲染成非按钮、不吃 hover / 点击。
+         */
+        interactive?: boolean;
+        /** 非交互态的 aria-label（交互态用「聚焦/显示完整进度」那两句） */
+        ariaLabel?: string;
     }
 
-    let { stats, learningSegments, focused, onToggleFocus }: Props = $props();
+    let {
+        stats,
+        learningSegments,
+        focused = false,
+        onToggleFocus,
+        label,
+        rightValue,
+        interactive = true,
+        ariaLabel = "进度",
+    }: Props = $props();
 
     type SegmentWidths = {
         mastered: number;
@@ -72,7 +101,9 @@
         return (weightedPercent / 100) * (learningWidth / 100);
     }
 
-    let barFocused = $derived(focused && stats.mastered !== stats.total);
+    let barFocused = $derived(
+        interactive && focused && stats.mastered !== stats.total,
+    );
     let segmentWidths = $derived(getSegmentWidths());
     let displayWidths = $derived(getDisplayWidths(segmentWidths, barFocused));
 
@@ -84,7 +115,7 @@
 
     let progressRangeStart = $derived(stats.mastered);
     let progressRangeEnd = $derived(
-        barFocused ? stats.pending : stats.learning + stats.pending,
+        rightValue ?? (barFocused ? stats.pending : stats.learning + stats.pending),
     );
     let progressPercent = $derived(
         stats.total > 0
@@ -107,28 +138,25 @@
     });
 </script>
 
-<button
-    type="button"
-    class={cn(
-        "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
-        barFocused && "focused",
-    )}
-    onclick={onToggleFocus}
-    disabled={stats.learning === 0}
-    aria-label={barFocused ? "显示完整进度" : "聚焦学习中进度"}
->
+{#snippet barContent()}
     <div
         class="text-muted-foreground mb-1.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end text-xs tabular-nums"
     >
         <div class="justify-self-start">
             <NumberFlow plugins={[continuous]} value={progressRangeStart} />
         </div>
-        <NumberFlow
-            plugins={[continuous]}
-            value={progressPercent}
-            format={{ style: "percent", maximumFractionDigits: 2 }}
-            class="justify-self-center text-[smaller] font-mono opacity-70"
-        />
+        {#if label !== undefined}
+            <span class="justify-self-center text-[smaller] font-mono opacity-70">
+                {label}
+            </span>
+        {:else}
+            <NumberFlow
+                plugins={[continuous]}
+                value={progressPercent}
+                format={{ style: "percent", maximumFractionDigits: 2 }}
+                class="justify-self-center text-[smaller] font-mono opacity-70"
+            />
+        {/if}
         <div class="justify-self-end">
             <NumberFlow plugins={[continuous]} value={progressRangeEnd} />
         </div>
@@ -168,7 +196,34 @@
             style="width: {displayWidths.pending}%"
         ></div>
     </div>
-</button>
+{/snippet}
+
+{#if interactive}
+    <button
+        type="button"
+        class={cn(
+            "group focus-visible:outline-foreground block w-full h-[42px] cursor-pointer rounded-md py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-4 disabled:cursor-default",
+            barFocused && "focused",
+        )}
+        onclick={onToggleFocus}
+        disabled={stats.learning === 0}
+        aria-label={barFocused ? "显示完整进度" : "聚焦学习中进度"}
+    >
+        {@render barContent()}
+    </button>
+{:else}
+    <!-- 纯展示形态（记忆模式）：同一个条、同一套数字动画，只是不可点 -->
+    <div
+        class="block w-full h-[42px] py-1.5 text-left"
+        role="progressbar"
+        aria-label={ariaLabel}
+        aria-valuenow={stats.mastered}
+        aria-valuemin={0}
+        aria-valuemax={stats.total}
+    >
+        {@render barContent()}
+    </div>
+{/if}
 
 <style>
     .group:not(:disabled):hover .progress-bar {

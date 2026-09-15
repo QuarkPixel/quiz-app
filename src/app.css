@@ -39,6 +39,24 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0 0 0 / 7.8%);
     --sidebar-ring: oklch(0.708 0 0);
+
+    /*
+     * 浮层层级阶梯。**所有浮层只能引用这里的变量**（Tailwind 写法
+     * `z-(--z-dialog)`），不要再各写各的 `z-[..]`。
+     *
+     * 空隙是刻意留的：bits-ui 的 Select / Popover / DropdownMenu 默认 `z-50`，
+     * 必须落在内容之上、Dialog 之下——以前就是在设置弹窗里开 Select 被弹窗
+     * 盖住，才额外加了一堆 `z-[70]` 补丁。
+     *
+     * 数值与 `@/config/layout` 的 `Z_LAYER` 一一对应。
+     */
+    --z-content-chrome: 20; /* 视图内固定在底部的工具栏与渐变遮罩 */
+    --z-dialog: 60; /* shadcn Dialog（设置 / 总览） */
+    --z-drawer: 70; /* 说明抽屉：盖住 Dialog，低于 Toast */
+    --z-tooltip: 80;
+    --z-toast: 80;
+    --z-blocker: 90; /* 侧边栏拖拽 / 导入时的全屏遮罩 */
+    --z-flash: 1024; /* 答题对错的整屏闪烁：永远最上面 */
 }
 
 @media (prefers-color-scheme: dark) {

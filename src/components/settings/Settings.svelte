@@ -5,11 +5,11 @@
     import { Button } from "$lib/components/ui/button";
     import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import { Switch } from "$lib/components/ui/switch";
-    import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Separator } from "$lib/components/ui/separator";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import QuestionFilters from "./QuestionFilters.svelte";
+    import ShortcutHelp from "./ShortcutHelp.svelte";
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
@@ -19,6 +19,9 @@
     import BankNameSetting from "./BankNameSetting.svelte";
     import { IconInfoCircle } from "@tabler/icons-svelte";
     import { getLearningLevelColor } from "@/features/quiz/learningProgress";
+    import SettingsDialog from "./SettingsDialog.svelte";
+    import SettingsSection from "./SettingsSection.svelte";
+    import SettingNumberRow from "./SettingNumberRow.svelte";
 
     interface Props {
         open?: boolean;
@@ -47,237 +50,185 @@
     });
 </script>
 
-<Dialog.Root bind:open>
-    <Dialog.Content
-        onOpenAutoFocus={(e) => {
-            // 默认行为是把焦点丢给第一个可聚焦元素（也就是「修改名称」输入框）——
-            // 打开设置时不该抢焦点、更不该直接进输入态。需要聚焦搜索框的是总览。
-            e.preventDefault();
-        }}
-        class="bg-card flex max-h-[calc(100vh-4rem)] w-[calc(100vw-2rem)] max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
-    >
-        <Dialog.Header class="border-b px-5 py-3.5">
-            <Dialog.Title class="text-base font-semibold"
-                >当前题库设置</Dialog.Title
+<SettingsDialog bind:open>
+    <BankNameSetting {hash} name={bankName} />
+
+    <!-- ── 当前题库设置：跟着题库走。全局设置在侧边栏左下角 ── -->
+    <SettingsSection title="题型筛选">
+        <QuestionFilters
+            options={session.filterOptions}
+            activeType={session.appState.filterType}
+            onSelect={(t) => session.setFilter(t)}
+        />
+    </SettingsSection>
+
+    <Separator />
+
+    <SettingsSection title="刷题顺序">
+        <QuestionOrder
+            activeOrder={session.appState.settings.selectionMode}
+            onSelect={(v) => {
+                session.appState.settings.selectionMode = v;
+                session.handleAlgorithmChange();
+            }}
+        />
+    </SettingsSection>
+
+    <Separator />
+
+    <SettingsSection title="答题行为">
+        <div class="flex items-center justify-between gap-3">
+            <Label
+                for="notify-new-question"
+                class="text-sm font-normal flex items-center gap-1"
             >
-        </Dialog.Header>
-
-        <div class="flex flex-col gap-4 overflow-y-auto px-5 py-4">
-            <BankNameSetting {hash} name={bankName} />
-
-            <!-- ── 当前题库设置：跟着题库走。全局设置在侧边栏左下角 ── -->
-            <section class="flex flex-col gap-2.5">
-                <h3
-                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
-                >
-                    题型筛选
-                </h3>
-                <QuestionFilters
-                    options={session.filterOptions}
-                    activeType={session.appState.filterType}
-                    onSelect={(t) => session.setFilter(t)}
-                />
-            </section>
-
-            <Separator />
-
-            <section class="flex flex-col gap-2.5">
-                <h3
-                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
-                >
-                    刷题顺序
-                </h3>
-                <QuestionOrder
-                    activeOrder={session.appState.settings.selectionMode}
-                    onSelect={(v) => {
-                        session.appState.settings.selectionMode = v;
-                        session.handleAlgorithmChange();
-                    }}
-                />
-            </section>
-
-            <Separator />
-
-            <section class="flex flex-col gap-2.5">
-                <h3
-                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
-                >
-                    答题行为
-                </h3>
-                <div class="flex items-center justify-between gap-3">
-                    <Label
-                        for="notify-new-question"
-                        class="text-sm font-normal flex items-center gap-1"
-                    >
-                        新题入池时预览
-                        <Tooltip.Root>
-                            <Tooltip.Trigger>
-                                {#snippet child({ props })}
-                                    <button
-                                        {...props}
-                                        type="button"
-                                        class="text-muted-foreground hover:text-foreground inline-flex items-center justify-center"
-                                        aria-label="关于新题入池预览"
-                                    >
-                                        <IconInfoCircle size={14} stroke={1.5} />
-                                    </button>
-                                {/snippet}
-                            </Tooltip.Trigger>
-                            <Tooltip.Content side="top" align="center">
-                                <span class="max-w-56 text-pretty">
-                                    有新题进入活动题池时插入预览
-                                </span>
-                            </Tooltip.Content>
-                        </Tooltip.Root>
-                    </Label>
-                    <Switch
-                        id="notify-new-question"
-                        bind:checked={
-                            session.appState.settings.notifyNewQuestionInPool
-                        }
-                        onCheckedChange={() => session.handlePreferenceChange()}
-                        size="sm"
-                    />
-                </div>
-            </section>
-
-            <Separator />
-
-            <section class="flex flex-col gap-2.5">
-                <h3
-                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
-                >
-                    学习算法
-                </h3>
-                <div class="flex items-center justify-between gap-3">
-                    <Label for="pool-size" class="text-sm font-normal">
-                        活动题目池大小
-                        <div class="w-8 h-1 flex rounded-full overflow-hidden">
-                            {#each [0, 1, 2] as level}
-                                <div
-                                    style:background-color={getLearningLevelColor(
-                                        level,
-                                        2,
-                                    )}
-                                    class="h-full w-1/3"
-                                ></div>
-                            {/each}
-                        </div>
-                    </Label>
-                    <Input
-                        id="pool-size"
-                        type="number"
-                        min={5}
-                        max={100}
-                        bind:value={session.appState.settings.activePoolSize}
-                        onchange={() => session.handleAlgorithmChange()}
-                        class="h-7 w-20 text-center"
-                    />
-                </div>
-                <div class="flex items-center justify-between gap-3">
-                    <Label for="streak-master" class="text-sm font-normal">
-                        首次掌握需正确次数
-                        <div class="w-2 h-2 bg-success rounded-full"></div>
-                    </Label>
-                    <Input
-                        id="streak-master"
-                        type="number"
-                        min={1}
-                        max={10}
-                        bind:value={
-                            session.appState.settings.correctStreakToMaster
-                        }
-                        onchange={() => session.handleAlgorithmChange()}
-                        class="h-7 w-20 text-center"
-                    />
-                </div>
-                <div class="flex items-center justify-between gap-3">
-                    <Label for="streak-mistake" class="text-sm font-normal">
-                        答错后需正确次数 <div
-                            class="w-2 h-2 bg-warning rounded-full"
-                        ></div>
-                    </Label>
-                    <Input
-                        id="streak-mistake"
-                        type="number"
-                        min={1}
-                        max={20}
-                        bind:value={
-                            session.appState.settings.correctStreakAfterMistake
-                        }
-                        onchange={() => session.handleAlgorithmChange()}
-                        class="h-7 w-20 text-center"
-                    />
-                </div>
-            </section>
-
-            <Separator />
-
-            <section class="flex flex-col gap-2.5">
-                <h3
-                    class="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase"
-                >
-                    进度备份
-                </h3>
-                <div class="flex gap-2">
-                    <Button
-                        variant={session.exportStatus === "copied"
-                            ? "default"
-                            : session.exportStatus === "error"
-                              ? "destructive"
-                              : "outline"}
-                        size="sm"
-                        class="flex-1 justify-between gap-2"
-                        onclick={() => session.exportProgress()}
-                        disabled={session.exportStatus !== "idle"}
-                    >
-                        <span class="flex items-center gap-1.5">
-                            <IconCopy size={14} stroke={1.75} />
-                            {#if session.exportStatus === "copied"}已复制
-                            {:else if session.exportStatus === "error"}导出失败
-                            {:else}导出{/if}
+                新题入池时预览
+                <Tooltip.Root>
+                    <Tooltip.Trigger>
+                        {#snippet child({ props })}
+                            <button
+                                {...props}
+                                type="button"
+                                class="text-muted-foreground hover:text-foreground inline-flex items-center justify-center"
+                                aria-label="关于新题入池预览"
+                            >
+                                <IconInfoCircle size={14} stroke={1.5} />
+                            </button>
+                        {/snippet}
+                    </Tooltip.Trigger>
+                    <Tooltip.Content side="top" align="center">
+                        <span class="max-w-56 text-pretty">
+                            有新题进入活动题池时插入预览
                         </span>
-                        <KbdGroup class="text-[10px]">
-                            <Kbd>{modKeyLabel}</Kbd>
-                            <Kbd>{SHORTCUTS.exportProgress.toUpperCase()}</Kbd>
-                        </KbdGroup>
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        class="flex-1 justify-between gap-2"
-                        onclick={() => session.startImport()}
-                    >
-                        <span class="flex items-center gap-1.5">
-                            <IconClipboard size={14} stroke={1.75} />
-                            导入
-                        </span>
-                        <KbdGroup class="text-[10px]">
-                            <Kbd>{modKeyLabel}</Kbd>
-                            <Kbd>{SHORTCUTS.importProgress.toUpperCase()}</Kbd>
-                        </KbdGroup>
-                    </Button>
-                </div>
-            </section>
-
-            <Separator />
-
-            <ConfirmActionButton
-                bind:this={resetButton}
-                variant="destructive"
+                    </Tooltip.Content>
+                </Tooltip.Root>
+            </Label>
+            <Switch
+                id="notify-new-question"
+                bind:checked={
+                    session.appState.settings.notifyNewQuestionInPool
+                }
+                onCheckedChange={() => session.handlePreferenceChange()}
                 size="sm"
-                class="w-full"
-                confirmClass="ring-destructive/40 ring-2"
-                onConfirm={() => session.reset()}
-            >
-                {#snippet children({ confirming })}
-                    <IconRefresh size={14} stroke={1.75} />
-                    {confirming ? "再次点击以确认" : "重置所有进度"}
-                {/snippet}
-            </ConfirmActionButton>
+            />
         </div>
-    </Dialog.Content>
-</Dialog.Root>
+    </SettingsSection>
+
+    <Separator />
+
+    <SettingsSection title="学习算法">
+        <SettingNumberRow
+            id="pool-size"
+            label="活动题目池大小"
+            min={5}
+            max={100}
+            bind:value={session.appState.settings.activePoolSize}
+            onChange={() => session.handleAlgorithmChange()}
+        >
+            <div class="w-8 h-1 flex rounded-full overflow-hidden">
+                {#each [0, 1, 2] as level}
+                    <div
+                        style:background-color={getLearningLevelColor(level, 2)}
+                        class="h-full w-1/3"
+                    ></div>
+                {/each}
+            </div>
+        </SettingNumberRow>
+        <SettingNumberRow
+            id="streak-master"
+            label="首次掌握需正确次数"
+            min={1}
+            max={10}
+            bind:value={session.appState.settings.correctStreakToMaster}
+            onChange={() => session.handleAlgorithmChange()}
+        >
+            <div class="w-2 h-2 bg-success rounded-full"></div>
+        </SettingNumberRow>
+        <SettingNumberRow
+            id="streak-mistake"
+            label="答错后需正确次数"
+            min={1}
+            max={20}
+            bind:value={session.appState.settings.correctStreakAfterMistake}
+            onChange={() => session.handleAlgorithmChange()}
+        >
+            <div class="w-2 h-2 bg-warning rounded-full"></div>
+        </SettingNumberRow>
+    </SettingsSection>
+
+    <Separator />
+
+    <SettingsSection title="进度备份">
+        <div class="flex gap-2">
+            <Button
+                variant={session.exportStatus === "copied"
+                    ? "default"
+                    : session.exportStatus === "error"
+                      ? "destructive"
+                      : "outline"}
+                size="sm"
+                class="flex-1 justify-between gap-2"
+                onclick={() => session.exportProgress()}
+                disabled={session.exportStatus !== "idle"}
+            >
+                <span class="flex items-center gap-1.5">
+                    <IconCopy size={14} stroke={1.75} />
+                    {#if session.exportStatus === "copied"}已复制
+                    {:else if session.exportStatus === "error"}导出失败
+                    {:else}导出{/if}
+                </span>
+                <KbdGroup class="text-[10px]">
+                    <Kbd>{modKeyLabel}</Kbd>
+                    <Kbd>{SHORTCUTS.exportProgress.toUpperCase()}</Kbd>
+                </KbdGroup>
+            </Button>
+            <Button
+                variant="outline"
+                size="sm"
+                class="flex-1 justify-between gap-2"
+                onclick={() => session.startImport()}
+            >
+                <span class="flex items-center gap-1.5">
+                    <IconClipboard size={14} stroke={1.75} />
+                    导入
+                </span>
+                <KbdGroup class="text-[10px]">
+                    <Kbd>{modKeyLabel}</Kbd>
+                    <Kbd>{SHORTCUTS.importProgress.toUpperCase()}</Kbd>
+                </KbdGroup>
+            </Button>
+        </div>
+    </SettingsSection>
+
+    <Separator />
+
+    <!-- 快捷键说明：与记忆模式的设置面板共用同一个组件，
+         应用级那部分直接读 `@/config` 的注册表 -->
+    <ShortcutHelp
+        answerRows={[
+            { label: "提交答案 / 下一题", keys: ["Space", "Enter"] },
+            // 字母与数字都能选中选项（见题型层的 getChoiceAnswerIndexForKey）。
+            // 合成一行写：拆成字母 / 数字两行会出现两行同名，既难读也容易被当成重复项
+            { label: "选择 / 切换选项", keys: ["A–Z", "1–9"] },
+        ]}
+    />
+
+    <Separator />
+
+    <ConfirmActionButton
+        bind:this={resetButton}
+        variant="destructive"
+        size="sm"
+        class="w-full"
+        confirmClass="ring-destructive/40 ring-2"
+        onConfirm={() => session.reset()}
+    >
+        {#snippet children({ confirming })}
+            <IconRefresh size={14} stroke={1.75} />
+            {confirming ? "再次点击以确认" : "重置所有进度"}
+        {/snippet}
+    </ConfirmActionButton>
+</SettingsDialog>
 
 <Dialog.Root
     open={session.pendingFilterType !== null}

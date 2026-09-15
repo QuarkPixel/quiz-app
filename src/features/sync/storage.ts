@@ -10,10 +10,14 @@
  * 否则「拉取云端」会立刻被自己判定成本地改动，来回弹。
  */
 
-import { STORAGE_KEY_GENERAL, STORAGE_PREFIX_QUESTIONS, STORAGE_PREFIX_STATE } from "@/config";
 import {
+  STORAGE_KEY_GENERAL,
   STORAGE_KEY_SYNC_META,
+  STORAGE_PREFIX_QUESTIONS,
+  STORAGE_PREFIX_STATE,
   SYNC_STORAGE_PREFIX,
+} from "@/config";
+import {
   emptySyncMeta,
   normalizeGeneralOrNull,
   type SyncMeta,

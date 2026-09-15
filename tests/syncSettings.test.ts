@@ -827,7 +827,7 @@ describe("云同步设置面板", () => {
     render();
     // 抽屉的内容走 portal 挂在 body 上，所以看 body 而不是看面板
     expect(document.body.textContent, "没点开之前不该有说明内容").not.toContain(
-      "同步了什么",
+      "它是做什么的",
     );
 
     byLabel("云同步说明")!.click();
@@ -836,7 +836,7 @@ describe("云同步设置面板", () => {
         expect(
           document.body.textContent,
           "点开之后说明抽屉要出来",
-        ).toContain("同步了什么");
+        ).toContain("它是做什么的");
       },
       { timeout: 4000 },
     );

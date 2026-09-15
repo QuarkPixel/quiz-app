@@ -11,6 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
+import { STORAGE_KEY_SYNC_CONFIG, STORAGE_KEY_SYNC_META } from "@/config";
 import { sanitizeSyncConfig } from "@/features/sync/config.svelte";
 import { giteeApiBase, maskToken, resolveSyncTarget } from "@/features/sync/target";
 import { decodePayload, encodePayload } from "@/features/sync/payload";
@@ -48,8 +49,6 @@ import {
   GIST_GENERAL_FILE,
   GITEE_API_BASE,
   SHARD_COUNT,
-  STORAGE_KEY_SYNC_CONFIG,
-  STORAGE_KEY_SYNC_META,
   SYNC_PAYLOAD_VERSION,
   bankRowKey,
   emptySyncMeta,
