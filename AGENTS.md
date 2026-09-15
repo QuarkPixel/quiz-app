@@ -28,7 +28,6 @@ pnpm preview                   # 预览最近一次构建
 pnpm check                     # svelte-check --tsconfig ./tsconfig.json
 pnpm test                      # vitest run
 pnpm test:watch                # vitest watch
-pnpm export-xml [in] [out]     # 将题库 JSON 导出为 XML（默认 banks/questions.example.json）
 pnpm verify                    # check + test + build
 ```
 

@@ -195,7 +195,10 @@ pnpm test
 
 ### 完整示例
 
-完整示例见 [`banks/questions.example.json`](banks/questions.example.json)。
+- 刷题模式：[`assets/examples/quiz.json`](assets/examples/quiz.json)
+- 记忆模式：[`assets/examples/memory.json`](assets/examples/memory.json)
+
+把任一文件拖进窗口（或从侧边栏导入）即可直接看到效果。
 
 ### 注意事项
 
