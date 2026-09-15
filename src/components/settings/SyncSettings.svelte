@@ -23,7 +23,6 @@
     import IconEdit from "@tabler/icons-svelte/icons/edit";
     import IconEye from "@tabler/icons-svelte/icons/eye";
     import IconEyeOff from "@tabler/icons-svelte/icons/eye-off";
-    import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
     import IconChevronDown from "@tabler/icons-svelte/icons/chevron-down";
     import IconCheck from "@tabler/icons-svelte/icons/check";
     import { toastStore } from "@/features/toast.svelte";
@@ -37,6 +36,7 @@
     import type { GistSummary } from "@/features/sync/gitee";
     import {
         IconArrowUpRight,
+        IconHelp,
         IconRosetteDiscountCheckFilled,
     } from "@tabler/icons-svelte";
 
@@ -613,7 +613,7 @@
 <section class="flex flex-col gap-3">
     <!-- ── 标题行：标签 + 说明 + 开关 ─────────────────────────────────── -->
     <div class="flex items-center justify-between gap-3">
-        <div class="flex min-w-0 items-center gap-2">
+        <div class="flex min-w-0 items-center">
             <Label class="flex shrink-0 items-center gap-2 text-sm font-bold">
                 {#if enabled && !statusOk}
                     <IconCloudOff
@@ -628,19 +628,19 @@
                 {/if}
                 云同步
             </Label>
-        </div>
-
-        <div class="flex shrink-0 items-center gap-1.5">
             <Button
                 variant="ghost"
-                size="icon-xs"
-                class="text-muted-foreground hover:text-foreground"
+                size="icon"
+                class="rounded-full"
                 title="云同步说明"
                 aria-label="云同步说明"
                 onclick={() => (guideOpen = true)}
             >
-                <IconInfoCircle size={14} stroke={1.5} />
+                <IconHelp size={14} stroke={1.5} />
             </Button>
+        </div>
+
+        <div class="flex shrink-0 items-center gap-1.5">
             <Switch
                 id="sync-enabled"
                 checked={enabled}
