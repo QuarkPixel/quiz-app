@@ -609,7 +609,7 @@ export async function importProgress(
   try {
     compressed = fromBase64url(base64urlPart) as Uint8Array<ArrayBuffer>;
   } catch {
-    throw new Error("Base64 解码失败，导入内容可能已损坏或不完整。");
+    throw new Error("内容已损坏，无法解码。");
   }
 
   // deflate-raw 解压
@@ -626,7 +626,7 @@ export async function importProgress(
     const json = new TextDecoder().decode(bytes);
     compact = JSON.parse(json);
   } catch {
-    throw new Error("数据解析失败，导入内容可能已损坏。");
+    throw new Error("内容已损坏，无法解析。");
   }
 
   // 结构校验

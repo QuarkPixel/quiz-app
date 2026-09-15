@@ -36,7 +36,7 @@ function validateQuestionsWithType(
     options.typeHint ?? "judgment/single/multiple/blank";
 
   if (!Array.isArray(raw)) {
-    return { ok: false, errors: ["questions 必须是一个 JSON 数组。"] };
+    return { ok: false, errors: ["questions 必须是数组。"] };
   }
   if (raw.length === 0) {
     return { ok: false, errors: ["题库为空。"] };
@@ -118,7 +118,7 @@ export function validateMemoryQuestions(
   raw: unknown,
 ): ValidateQuizQuestionsResult {
   if (!Array.isArray(raw)) {
-    return { ok: false, errors: ["questions 必须是一个 JSON 数组。"] };
+    return { ok: false, errors: ["questions 必须是数组。"] };
   }
 
   for (let i = 0; i < raw.length; i++) {

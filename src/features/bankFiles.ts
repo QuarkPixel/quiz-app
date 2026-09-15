@@ -247,7 +247,7 @@ async function importBankClipboard(
       outcome: failure(
         new ClipboardImportFailure(
           CLIPBOARD_DISPLAY_NAME,
-          "剪贴板为空，请先复制题库 JSON。",
+          "剪贴板为空。",
         ),
       ),
     };

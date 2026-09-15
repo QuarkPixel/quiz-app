@@ -59,15 +59,15 @@ export function parseBankFile(raw: unknown): ParseBankFileResult {
     return {
       ok: false,
       errors: [
-        "题库必须是一个对象（形如 { mode?, title?, state?, questions }），不再支持裸数组。",
+        "题库必须是对象（{ questions: [...] }），不再支持裸数组。",
       ],
     };
   }
   if (!isRecord(raw)) {
-    return { ok: false, errors: ["题库必须是一个 JSON 对象。"] };
+    return { ok: false, errors: ["题库必须是对象。"] };
   }
   if (!("questions" in raw)) {
-    return { ok: false, errors: ["题库缺少 questions 字段。"] };
+    return { ok: false, errors: ["缺少 questions 字段。"] };
   }
 
   const modeResult = readMode(raw.mode);
@@ -130,7 +130,7 @@ function readMode(value: unknown): ReadModeResult {
   if (value === "quiz" || value === "memory") return { ok: true, mode: value };
   return {
     ok: false,
-    error: 'mode 不合法：应为 "quiz" 或 "memory"，省略时默认 "quiz"。',
+    error: 'mode 只能是 "quiz" 或 "memory"。',
   };
 }
 
@@ -141,7 +141,7 @@ type ReadStateResult =
 function readState(value: unknown): ReadStateResult {
   if (value === undefined) return { ok: true, state: undefined };
   if (typeof value === "string") return { ok: true, state: value };
-  return { ok: false, error: "state 必须是字符串（进度备份编码）。" };
+  return { ok: false, error: "state 必须是字符串。" };
 }
 
 type ReadTitleResult =
@@ -155,7 +155,7 @@ type ReadTitleResult =
 function readTitle(value: unknown): ReadTitleResult {
   if (value === undefined || value === null) return { ok: true, title: undefined };
   if (typeof value !== "string") {
-    return { ok: false, error: "title 必须是字符串（题库标题）。" };
+    return { ok: false, error: "title 必须是字符串。" };
   }
   const trimmed = value.trim();
   return { ok: true, title: trimmed === "" ? undefined : trimmed };

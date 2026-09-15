@@ -434,13 +434,13 @@ describe("importProgress 错误处理", () => {
   it("hash 对但 base64 非法字符 → 解压失败或 Base64 失败", async () => {
     await expect(
       importProgress(`${HASH}.!!!!`, HASH, QUESTIONS),
-    ).rejects.toThrow(/解压失败|Base64 解码失败/);
+    ).rejects.toThrow(/内容已损坏，无法解码/);
   });
 
-  it("hash 对但解压后 JSON 非法 → 数据解析失败", async () => {
+  it("hash 对但解压后 JSON 非法 → 内容已损坏", async () => {
     const encoded = await encodeRawText("not a json {{{");
     await expect(importProgress(encoded, HASH, QUESTIONS)).rejects.toThrow(
-      /数据解析失败/,
+      /内容已损坏，无法解析/,
     );
   });
 

@@ -71,7 +71,7 @@ function normalizeBankSummary(value: unknown): BankSummary | null {
 function normalizeLibrary(raw: unknown): BankSummary[] {
   if (!Array.isArray(raw)) {
     if (raw !== undefined) {
-      console.warn("general 配置里的 library 不是数组，已忽略。");
+      console.warn("library 不是数组，已忽略。");
     }
     return [];
   }
@@ -86,7 +86,7 @@ function normalizeLibrary(raw: unknown): BankSummary[] {
   }
 
   if (result.length !== raw.length) {
-    console.warn("已忽略 general 配置里非法的 library 条目。");
+    console.warn("已忽略非法的 library 条目。");
   }
   return result;
 }

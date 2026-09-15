@@ -30,7 +30,7 @@ describe("validateQuizQuestions 顶层结构", () => {
     const r = validateQuizQuestions({ not: "array" });
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.errors.some((e) => e.includes("questions 必须是一个 JSON 数组"))).toBe(
+      expect(r.errors.some((e) => e.includes("questions 必须是数组"))).toBe(
         true,
       );
     }
@@ -40,7 +40,7 @@ describe("validateQuizQuestions 顶层结构", () => {
     const r = validateQuizQuestions(null);
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.errors.some((e) => e.includes("questions 必须是一个 JSON 数组"))).toBe(
+      expect(r.errors.some((e) => e.includes("questions 必须是数组"))).toBe(
         true,
       );
     }
@@ -467,7 +467,7 @@ describe("parseBankFile 统一题库格式", () => {
     const r = parseBankFile({ mode: "essay", questions: validBank() });
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.errors.some((e) => e.includes("mode 不合法"))).toBe(true);
+      expect(r.errors.some((e) => e.includes("mode 只能是"))).toBe(true);
     }
   });
 

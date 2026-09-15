@@ -31,11 +31,11 @@ export async function readProgressFromClipboard(): Promise<ReadClipboardResult> 
   try {
     text = await readText();
   } catch {
-    return { ok: false, error: "无法访问剪贴板，请检查浏览器权限。" };
+    return { ok: false, error: "剪贴板不可用，请检查权限。" };
   }
   const trimmed = text.trim();
   if (!trimmed) {
-    return { ok: false, error: "剪贴板为空，请先复制导出的进度字符串。" };
+    return { ok: false, error: "剪贴板为空。" };
   }
   return { ok: true, text: trimmed };
 }

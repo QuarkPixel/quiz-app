@@ -147,7 +147,7 @@ describe("bank file import session", () => {
     expect(prompt.kind).toBe("summary");
     if (prompt.kind !== "summary") throw new Error("expected summary");
     expect(prompt.message.title).toBe("导入失败");
-    expect(prompt.message.text).toContain("剪贴板为空，请先复制题库 JSON。");
+    expect(prompt.message.text).toContain("剪贴板为空。");
   });
 
   it("reports clipboard read failures without calling importBank", async () => {
