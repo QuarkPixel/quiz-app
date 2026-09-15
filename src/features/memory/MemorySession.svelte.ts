@@ -82,25 +82,26 @@ import {
   readProgressFromClipboard,
 } from "@/features/quiz/progressActions";
 import {
+  COPY_STATUS_RESET_MS,
   EXPORT_STATUS_ERROR_RESET_MS,
   EXPORT_STATUS_SUCCESS_RESET_MS,
 } from "@/config";
 import {
   maybePlayAnswerSound,
   maybePlaySuccessSound,
-  setSoundEnabledPreference,
 } from "@/sound";
+import {
+  toggleAutoNextPreference,
+  toggleSoundPreference,
+} from "@/features/globalSettingsActions";
+import type { Toast } from "@/features/toast.svelte";
 import type { SoundPlayer } from "@/sound/types";
 
 export type MemoryRun = "idle" | "learning" | "reviewing";
 
 export interface MemorySessionDeps {
   flash(isCorrect: boolean): void;
-  toast(
-    title: string,
-    description?: string,
-    variant?: "default" | "success" | "destructive",
-  ): void;
+  toast: Toast;
   sound: SoundPlayer;
 }
 
@@ -159,6 +160,13 @@ export class MemorySession {
   failedThisRound = $state<string[]>([]);
   /** 进度备份：和 QuizSession 同一套状态 */
   exportStatus: "idle" | "copied" | "error" = $state("idle");
+  /**
+   * 进度备份导入：待二次确认的文本（`null` = 没有待确认的导入）。
+   *
+   * 与 `QuizSession` 同名同语义——导入会覆盖全部进度，必须先问一次；
+   * 弹窗由 `ImportProgressDialog` 渲染。
+   */
+  importConfirmText: string | null = $state(null);
   /** 临时调试：当前快进的天数（响应式，供 UI 与 now() 使用） */
   debugOffset = $state(0);
   /** 「复制题目」按钮的状态（和 QuizSession 同名同语义） */
@@ -698,6 +706,12 @@ export class MemorySession {
 
     this.deps.flash(this.isCorrect);
     maybePlayAnswerSound(this.globalSettings, this.deps.sound, this.isCorrect);
+
+    // 「答对自动下一题」是全局设置（⌘N 切换）：刷题模式在 submit 末尾做同一件事，
+    // 记忆模式的「答对」= 自评「知道」。
+    if (this.globalSettings.autoNextOnCorrect && this.isCorrect) {
+      this.advanceQuestionFlow();
+    }
   }
 
   /**
@@ -1175,13 +1189,20 @@ export class MemorySession {
   }
 
   toggleSound(): void {
-    setSoundEnabledPreference(
-      this.globalSettings,
-      !this.globalSettings.soundEnabled,
-      () => this.globalSettingsRef.persist(),
+    toggleSoundPreference(
+      this.globalSettingsRef,
       this.deps.toast,
       this.deps.sound,
     );
+  }
+
+  toggleAutoNext(): void {
+    toggleAutoNextPreference(this.globalSettingsRef, this.deps.toast);
+  }
+
+  /** 本轮是否正在进行（首页为 false）。键盘层用它决定 Esc / 题目级按键是否生效。 */
+  get isSessionActive(): boolean {
+    return this.run !== "idle";
   }
 
   /** 重置记忆模式进度（保留设置）；调试用的时间偏移一并清零。 */
@@ -1207,11 +1228,10 @@ export class MemorySession {
 
   async copyCurrentQuestion(
     options: CopyQuestionOptions = {},
-  ): Promise<boolean> {
+  ): Promise<CopyQuestionResult> {
     const question = this.currentQuestion;
-    if (!question) return false;
-    const result = await this.copyQuestion(question, options);
-    return result === "copied";
+    if (!question) return "unavailable";
+    return this.copyQuestion(question, options);
   }
 
   /**
@@ -1270,7 +1290,7 @@ export class MemorySession {
     this.copyQuestionResetTimer = setTimeout(() => {
       this.copyQuestionStatus = "idle";
       this.copyQuestionResetTimer = null;
-    }, 1800);
+    }, COPY_STATUS_RESET_MS);
   }
 
   // ── 临时调试（删掉 devClock 时一并删除这三行 + 顶部 import） ────────
@@ -1325,11 +1345,21 @@ export class MemorySession {
       this.deps.toast("无法导入", result.error, "destructive");
       return;
     }
-    const parsed = await parseImportedProgress(
-      result.text,
-      this.hash,
-      this.questions,
-    );
+    // 先不落盘：等 UI 二次确认（覆盖全部进度且不可撤销）。
+    // 与 `QuizSession` 走同一套流程，弹窗本身也是同一个组件。
+    this.importConfirmText = result.text;
+  }
+
+  cancelImport(): void {
+    this.importConfirmText = null;
+  }
+
+  async commitImport(): Promise<void> {
+    const text = this.importConfirmText;
+    if (!text) return;
+    this.importConfirmText = null;
+
+    const parsed = await parseImportedProgress(text, this.hash, this.questions);
     if (!parsed.ok) {
       this.deps.toast("导入失败", parsed.error, "destructive");
       return;

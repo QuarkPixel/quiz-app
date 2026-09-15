@@ -28,6 +28,14 @@ export interface QuestionInputProps {
   question: Question;
   showResult: boolean;
   isCorrect: boolean;
+  /**
+   * 答案卡片的配色档位（可选，默认 neutral）。
+   *
+   * 记忆模式用它区分自评结果：知道 = neutral、模糊 = warning、
+   * 忘记 = destructive。放在这里而不是让组件自己去读 session，
+   * 是为了保持「题型组件只吃 props」的约定。
+   */
+  answerTone?: "neutral" | "warning" | "destructive";
   readonlyDisplayMode?: "answer" | "preview";
   autoSubmitOnSelection: boolean;
   shuffledOptions: ShuffledOption[];

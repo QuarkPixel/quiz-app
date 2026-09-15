@@ -80,6 +80,20 @@
     /** 答案页还能做的降级操作，由刚选的那一档决定 */
     const downgrades = $derived(memoryAnswerDowngrades(session.answerKind));
 
+    /**
+     * 答案卡片的配色档位：知道 = 中性、模糊 = 警示、忘记 = 红。
+     *
+     * `session.isCorrect` 把「模糊」也算作没答错（反馈音 / 闪烁按答对处理），
+     * 所以配色不能只看 isCorrect——那样「模糊」和「知道」长得一模一样。
+     */
+    const answerTone = $derived(
+        session.answerKind === "forget"
+            ? "destructive"
+            : session.answerKind === "fuzzy"
+              ? "warning"
+              : "neutral",
+    );
+
     function pick(kind: MemoryAnswerKind): void {
         if (session.showResult) return;
         session.selectedAnswers = [MEMORY_ANSWER_CODE[kind]];
@@ -143,6 +157,7 @@
                     question={session.currentQuestion}
                     showResult={session.showResult}
                     isCorrect={session.isCorrect}
+                    {answerTone}
                     autoSubmitOnSelection={session.globalSettings
                         .autoSubmitOnSelection}
                     shuffledOptions={[]}

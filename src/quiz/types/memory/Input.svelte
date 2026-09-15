@@ -11,7 +11,11 @@
      *   - 不显示「答案」标签（谁都知道那是答案）
      *   - `answer` 里一个换行 = 一个段落，按段落渲染并留出段间距
      */
-    let { question, isCorrect, showResult }: QuestionInputProps = $props();
+    let {
+        question,
+        showResult,
+        answerTone = "neutral",
+    }: QuestionInputProps = $props();
 
     const paragraphs = $derived(
         splitAnswerParagraphs((question.answer as string) ?? ""),
@@ -22,7 +26,12 @@
     <div
         class={cn(
             "border-border bg-muted/40 rounded-xl border px-5 py-4",
-            !isCorrect && "border-destructive/30 bg-destructive/5",
+            // 三档自评各有各的配色：知道 = 中性、模糊 = 警示、忘记 = 红。
+            // 「模糊」既不是答对也不是答错，以前它和「知道」共用同一套中性配色，
+            // 看不出自己选的是哪一档。
+            answerTone === "warning" && "border-warning/40 bg-warning/5",
+            answerTone === "destructive" &&
+                "border-destructive/30 bg-destructive/5",
         )}
     >
         {#each paragraphs as paragraph, index (index)}

@@ -24,7 +24,10 @@ import { normalizeMemoryProgress } from "../src/features/memory/normalize";
 import { MEMORY_ANSWER_CODE } from "../src/quiz/types/memory/logic";
 import { loadStoredState, saveState } from "../src/store";
 import { exportProgress } from "../src/features/importExport";
-import { globalSettingsStore } from "../src/features/globalSettings.svelte";
+import {
+  GlobalSettingsStore,
+  globalSettingsStore,
+} from "../src/features/globalSettings.svelte";
 import { devNow } from "../src/features/memory/devClock";
 import type { MemoryBank } from "../src/source/types";
 import type {
@@ -77,6 +80,8 @@ function makeSession(
     hash?: string;
     now2?: () => number;
     toast?: (title: string, description?: string, variant?: string) => void;
+    /** 注入一份独立的全局设置；不传就用内存单例（多数用例的默认） */
+    store?: GlobalSettingsStore;
   } = {},
 ): MemorySession {
   const fixedNow = options.now ?? BASE_TIME;
@@ -87,7 +92,7 @@ function makeSession(
       toast: options.toast ?? (() => {}),
       sound: { play: () => {} } as never,
     },
-    globalSettingsStore,
+    options.store ?? globalSettingsStore,
     { now: options.now2 ?? (() => fixedNow) },
   );
 }
@@ -999,7 +1004,10 @@ describe("记忆模式：本轮计数与重置 / 导入", () => {
     }
     expect(session.roundMastered).toBe(1);
 
+    // 导入是两步：startImport 只负责读剪贴板并挂起确认，commitImport 才落盘
     await session.startImport();
+    expect(session.importConfirmText).not.toBeNull();
+    await session.commitImport();
 
     expect(session.progress.a?.state).toBe("reviewing");
     expect(session.roundMastered).toBe(0);
@@ -1267,7 +1275,10 @@ describe("记忆模式：masteredIds 与 progress 同步", () => {
     const session = makeSession(ids, { hash });
     expect(session.masteredCount).toBe(0);
 
+    // 导入是两步：startImport 只负责读剪贴板并挂起确认，commitImport 才落盘
     await session.startImport();
+    expect(session.importConfirmText).not.toBeNull();
+    await session.commitImport();
 
     expect(session.masteredCount).toBe(1);
     expect(session.appState.masteredIds).toEqual(["a"]);
@@ -1668,5 +1679,55 @@ describe("记忆模式：模糊", () => {
     flushSync();
     expect(session.answerKind).toBe("forget");
     expect(session.progress.a.lapses).toBe(1);
+  });
+});
+
+describe("答对自动下一题（全局设置）", () => {
+  /** 每个用例一份独立 store：默认那个是内存单例，改它会影响别的用例 */
+  function storeWith(autoNextOnCorrect: boolean): GlobalSettingsStore {
+    const store = new GlobalSettingsStore();
+    store.update({ autoNextOnCorrect });
+    return store;
+  }
+
+  it("开启时自评「知道」直接进入下一题，不再停在答案页", () => {
+    const session = makeSession(["a", "b"], {
+      store: storeWith(true),
+    });
+    session.startLearning();
+    const first = session.currentQuestion!.id;
+
+    session.selectedAnswers = [MEMORY_ANSWER_CODE.know];
+    session.submit();
+    flushSync();
+
+    expect(session.currentQuestion!.id, "没有自动进入下一题").not.toBe(first);
+    expect(session.showResult, "新题的答案不该是翻开状态").toBe(false);
+  });
+
+  it("关闭时（默认）停在答案页，等用户点「下一题」", () => {
+    const session = makeSession(["a", "b"], { store: storeWith(false) });
+    session.startLearning();
+    const first = session.currentQuestion!.id;
+
+    session.selectedAnswers = [MEMORY_ANSWER_CODE.know];
+    session.submit();
+    flushSync();
+
+    expect(session.showResult).toBe(true);
+    expect(session.currentQuestion!.id).toBe(first);
+  });
+
+  it("自评「忘记」不算答对，即使开着也不跳", () => {
+    const session = makeSession(["a", "b"], { store: storeWith(true) });
+    session.startLearning();
+    const first = session.currentQuestion!.id;
+
+    session.selectedAnswers = [MEMORY_ANSWER_CODE.forget];
+    session.submit();
+    flushSync();
+
+    expect(session.showResult).toBe(true);
+    expect(session.currentQuestion!.id).toBe(first);
   });
 });
