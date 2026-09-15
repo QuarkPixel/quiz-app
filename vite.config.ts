@@ -221,5 +221,49 @@ export default defineConfig(async () => ({
   },
   build: {
     target: "esnext",
+    /**
+     * ── vendor 分包 ────────────────────────────────────────────────────────
+     *
+     * 不拆的话，整个首屏是**一个 ~670 kB 的 chunk**，触发 Vite 那条
+     * 「chunks are larger than 500 kB」的提示。实测过：那条阈值靠继续拆首屏
+     * **永远够不到**——把四个「点了才打开」的弹窗（设置 / 记忆设置 / 总览 /
+     * 记忆总览）全换成空壳，主包仍有 613 kB。首屏真正不可省的是 Svelte runtime、
+     * 侧边栏与答题区、它们实际渲染到的 bits-ui 原语、`cn()` 那套类名工具和图标。
+     *
+     * 所以这里不 chasing 那个数字，而是做一件本身就有价值的事：把「依赖」和
+     * 「业务代码」分成两个文件。
+     *
+     *   - **缓存**：改业务代码（这个应用的日常）不再让整个首屏包失效，
+     *     回访只需要重下 `index-*.js`（~106 kB gzip），而不是 ~203 kB。
+     *   - **并行**：两个块都被 `modulepreload`，同时取，不是串行瀑布。
+     *
+     * 代价是首屏总量多约 3 kB gzip（多一个 chunk 的包装开销）——这是明账，
+     * 换的是上面那条缓存收益。**它不是体积优化，是加载形状优化。**
+     *
+     * 只点名「首屏真的要用」的包，**不能偷懒写成 `test: /node_modules/`**：
+     * 那样会把 dicebear（157 kB）和 vaul-svelte 一起收进来，而它们只被懒加载的
+     * `GlobalSettings` / `SyncGuideDrawer` 用到——一收进来就成了入口的静态依赖，
+     * vendor 块会涨到 596 kB，警告跟着回来。其余依赖保持自动分包（懒加载的那些
+     * 仍然各自成块）。
+     *
+     * `includeDependenciesRecursively: false` 必须显式写：默认会把被匹配模块的
+     * 传递依赖一起吞进同一个组，于是 Svelte runtime 会被第一个匹配到的组顺手
+     * 带走，分出来的块跟预想的不是一回事。
+     *
+     * 哪些包在首屏、哪些已经懒加载，见 AGENTS.md「首屏体积」。
+     */
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          includeDependenciesRecursively: false,
+          groups: [
+            {
+              name: "vendor",
+              test: /node_modules[\\/](?:svelte|bits-ui|@floating-ui|runed|svelte-toolbelt|@tabler|tailwind-variants|tailwind-merge|clsx|esm-env)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
   },
 }));
