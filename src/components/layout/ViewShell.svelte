@@ -123,7 +123,9 @@
         </div>
     </div>
 
-    <div class="pointer-events-none absolute inset-x-0 bottom-0 z-(--z-content-chrome)">
+    <div
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-(--z-content-chrome)"
+    >
         <div
             aria-hidden="true"
             data-slot="view-bottom-mask"
@@ -155,7 +157,7 @@
                         <Button
                             variant="outline"
                             class={cn(
-                                "transition-all duration-300 min-w-26 rounded-full",
+                                "transition-all duration-300 min-w-26 rounded-full backdrop-blur-lg",
                                 scrollTopAble
                                     ? "translate-y-0 opacity-100"
                                     : "translate-y-4 opacity-0 pointer-events-none",

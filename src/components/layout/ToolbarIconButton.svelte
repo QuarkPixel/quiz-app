@@ -54,7 +54,7 @@
                 {...props}
                 type="button"
                 class={cn(
-                    "text-muted-foreground hover:text-foreground inline-flex size-10 items-center justify-center rounded-full transition-all duration-200",
+                    "text-muted-foreground hover:text-foreground backdrop-blur-lg inline-flex size-10 items-center justify-center rounded-full transition-all duration-200",
                     rotateClass,
                     expanded && "aria-expanded:text-foreground",
                     pressed && "text-foreground bg-foreground/8",
