@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { PropertySymbol } from "happy-dom";
 import { flushSync, mount, unmount } from "svelte";
 import HeatmapHarness, { type HeatmapSubject } from "./HeatmapHarness.svelte";
 import { QuizSession } from "../src/quiz/session/QuizSession.svelte";
@@ -192,7 +193,6 @@ function mountHeatmap(
 
 afterEach(() => {
     while (mounted.length > 0) mounted.pop()?.destroy();
-    styleWrites.length = 0;
     localStorage.clear();
 });
 
@@ -245,12 +245,18 @@ function successWeight(style: string): number {
 // 「解析 → 重新序列化」，整条声明被丢掉，DOM 上只剩 `style=""`。
 //
 // 所以在 `cssText` 的 setter 上搭一层，把**原始字符串**记下来再断言。
-// happy-dom 每个元素只有一个 `el.style` 实例，凭它能把记录精确对回格子
-// （不必赌渲染顺序）。这是测试环境的能力缺口，不是被测组件的行为。
-
-const styleWrites: { declaration: CSSStyleDeclaration; value: string }[] = [];
+//
+// ⚠️ 记录要按**元素**存，不能按 `CSSStyleDeclaration` 的引用存：happy-dom 20.14
+// 起，那次写入落在的 declaration 会被随后的「把解析结果同步回 style 属性」换掉，
+// 于是 `el.style` 已经**不是**刚才被写的那一个（旧写法靠引用相等去认，只会一直返回
+// 空串）。happy-dom 自己把宿主元素挂在 declaration 上（`PropertySymbol.element`），
+// 直接用它认领，既不赌渲染顺序、也不受对象替换影响。
+// 这是测试环境的能力缺口，不是被测组件的行为。
 
 let cssTextDescriptor: PropertyDescriptor | undefined;
+
+/** 元素最后被写进去的 style 原文（没写过就是空串） */
+const rawStyleWrites = new WeakMap<Element, string>();
 
 beforeAll(() => {
     cssTextDescriptor = Object.getOwnPropertyDescriptor(
@@ -261,7 +267,10 @@ beforeAll(() => {
         configurable: true,
         get: cssTextDescriptor?.get,
         set(this: CSSStyleDeclaration, value: string) {
-            styleWrites.push({ declaration: this, value });
+            const owner = (this as unknown as Record<symbol, unknown>)[
+                PropertySymbol.element
+            ];
+            if (owner instanceof Element) rawStyleWrites.set(owner, value);
             cssTextDescriptor?.set?.call(this, value);
         },
     });
@@ -279,10 +288,7 @@ afterAll(() => {
 
 /** 元素被写过的最后一个 style 字符串；从没写过 style 的格子返回空串 */
 function rawStyle(el: HTMLElement): string {
-    for (let i = styleWrites.length - 1; i >= 0; i -= 1) {
-        if (styleWrites[i].declaration === el.style) return styleWrites[i].value;
-    }
-    return "";
+    return rawStyleWrites.get(el) ?? "";
 }
 
 // ---------------------------------------------------------------------------

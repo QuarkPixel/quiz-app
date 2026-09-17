@@ -3,9 +3,21 @@ import { installLocalStoragePolyfill } from "./_localStoragePolyfill";
 installLocalStoragePolyfill();
 
 /**
- * happy-dom 没有实现 Web Animations API，而 Svelte 的 `transition:`（slide 等）
- * 走的是 `element.animate()`。组件测试里补一个「立刻结束」的替身就够了：
- * 我们不测动画，只测 DOM 结构。
+ * 动画环境：组件测试不测动画，只测 DOM 结构，所以这里把 Web Animations API
+ * 弄成「立刻结束 / 没有动画」。**两件事都要做，少一件都会让弹窗关不掉：**
+ *
+ * 1. `Element.prototype.animate` —— Svelte 的 `transition:`（slide、`in:expandLabel`…）
+ *    走它。happy-dom 20.14 起自己带了实现，但那些动画没有时钟、永远不 finish，
+ *    Svelte 拆 `out:` 过渡时 `animation.cancel()` 还会抛 `AbortError`（unhandled
+ *    rejection，用例是过的、红字是满的）。所以**无条件覆盖**成「立刻 onfinish」。
+ *
+ * 2. `Element.prototype.getAnimations` —— bits-ui 的退场要问它
+ *    （`internal/animations-complete.js`）：节点上**有**这个方法就 `requestAnimationFrame`
+ *    等一帧、再 `await` 那些动画的 `finished`，**没有**就直接回调。happy-dom 20.14
+ *    起它也有了，于是「关掉对话框」变成要等一帧，而用例里的 `settle()`（`flushSync` +
+ *    `tick`，故意不碰计时器）等不到那一帧，节点就一直留在 DOM 里。
+ *    这里把它抹掉，走的还是「没有 WAAPI → 不等待」那条路，跟这套用例一直以来的
+ *    假设（`await tick()` 就够）一致，也不会把偶发失败引进来。
  */
 interface StubAnimation {
     onfinish: (() => void) | null;
@@ -19,8 +31,8 @@ function installAnimationPolyfill(): void {
     if (typeof Element === "undefined") return;
     const proto = Element.prototype as unknown as {
         animate?: (keyframes: unknown, options?: unknown) => StubAnimation;
+        getAnimations?: () => unknown[];
     };
-    if (typeof proto.animate === "function") return;
 
     proto.animate = () => {
         const animation: StubAnimation = {
@@ -35,6 +47,7 @@ function installAnimationPolyfill(): void {
         queueMicrotask(() => animation.onfinish?.());
         return animation;
     };
+    delete proto.getAnimations;
 }
 
 installAnimationPolyfill();
