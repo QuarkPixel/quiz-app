@@ -85,11 +85,16 @@
     //   - 触屏没有 hover，`isCoarsePointer` 时直接常亮，否则手机上永远点不到结束；
     //   - 键盘同理，焦点进到这一行也点亮（`focusin`），不然 Tab 不到里面的按钮。
 
-    /** 悬停在这一行上 */
-    let rowHovered = $state(false);
+    /**
+     * 指针落在**触发区**上——触发区只有箭头那颗按钮，不是整行
+     * （`onmouseenter` 挂在按钮上、`onmouseleave` 留在整行上，
+     * 见下面模板里那段说明：从箭头移到右边的「结束本轮」不该中途收起来，
+     * 指针从别处扫过这一行也不该点亮）。
+     */
+    let triggerHovered = $state(false);
     /** 焦点在这一行里（键盘 Tab 进来） */
     let rowFocused = $state(false);
-    const revealed = $derived(rowHovered || rowFocused || isCoarsePointer);
+    const revealed = $derived(triggerHovered || rowFocused || isCoarsePointer);
 
     /**
      * 三部分的节奏（数值只此一份：这里给文案的 Svelte 过渡用，同时注入成 CSS 变量
@@ -224,8 +229,7 @@
                 data-revealed={revealed ? "true" : "false"}
                 role="group"
                 aria-label="本轮操作"
-                onmouseleave={() => (rowHovered = false)}
-                onmouseenter={() => (rowHovered = true)}
+                onmouseleave={() => (triggerHovered = false)}
                 onfocusin={() => (rowFocused = true)}
                 onfocusout={onRowFocusOut}
             >
@@ -251,6 +255,8 @@
                                     size="sm"
                                     class="gap-0"
                                     aria-label="退出本轮"
+                                    onmouseenter={() =>
+                                        (triggerHovered = true)}
                                     onclick={() => {
                                         // 「hover 上之后才可被点击」：这一块同时是悬停
                                         // 触发区，不能靠 `pointer-events: none` 拦（拦了
@@ -277,7 +283,9 @@
                                 </Button>
                             {/snippet}
                         </Tooltip.Trigger>
-                        {#if rowHovered}
+                        <!-- 提示的内容只在「点亮」时挂上（`revealed`）：同一时刻只留一份提示，
+                             不然从箭头滑到「结束本轮」时两份会叠在一起（见 `08640a7`） -->
+                        {#if revealed}
                             <Tooltip.Content
                                 side="top"
                                 class="flex-col items-start gap-0.5"
@@ -331,7 +339,7 @@
                                     </ConfirmActionButton>
                                 {/snippet}
                             </Tooltip.Trigger>
-                            {#if rowHovered}
+                            {#if revealed}
                                 <Tooltip.Content
                                     side="top"
                                     class="flex-col items-start gap-0.5 pointer-events-none"
