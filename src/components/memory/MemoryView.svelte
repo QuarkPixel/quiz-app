@@ -225,6 +225,7 @@
                 role="group"
                 aria-label="本轮操作"
                 onmouseleave={() => (rowHovered = false)}
+                onmouseenter={() => (rowHovered = true)}
                 onfocusin={() => (rowFocused = true)}
                 onfocusout={onRowFocusOut}
             >
@@ -232,7 +233,12 @@
                      上（样式块是带作用域的，子组件渲染出来的 <button> 拿不到作用域类）。
                      壳是 flex 项，占的就是最终位置；未点亮时里面的按钮/分割线往左挪
                      几像素待命、opacity 为 0（箭头那颗留着 100%，点了不生效）。 -->
-                <div class="flex" data-reveal-part="exit">
+                <div
+                    class="flex"
+                    data-reveal-part="exit"
+                    role="menubar"
+                    tabindex="0"
+                >
                     <Tooltip.Root>
                         <Tooltip.Trigger>
                             {#snippet child({ props })}
@@ -243,9 +249,8 @@
                                     {...props}
                                     variant="ghost"
                                     size="sm"
-                                    class="-ml-2 gap-0"
+                                    class="gap-0"
                                     aria-label="退出本轮"
-                                    onmouseenter={() => (rowHovered = true)}
                                     onclick={() => {
                                         // 「hover 上之后才可被点击」：这一块同时是悬停
                                         // 触发区，不能靠 `pointer-events: none` 拦（拦了
@@ -272,18 +277,20 @@
                                 </Button>
                             {/snippet}
                         </Tooltip.Trigger>
-                        <Tooltip.Content
-                            side="top"
-                            class="flex-col items-start gap-0.5"
-                        >
-                            <span class="flex items-center gap-2"
-                                >暂时退出<Kbd class="text-xs">Esc</Kbd></span
+                        {#if rowHovered}
+                            <Tooltip.Content
+                                side="top"
+                                class="flex-col items-start gap-0.5"
                             >
-                            <span class="text-background/70">保留进度</span>
-                        </Tooltip.Content>
+                                <span class="flex items-center gap-2"
+                                    >暂时退出<Kbd class="text-xs">Esc</Kbd
+                                    ></span
+                                >
+                                <span class="text-background/70">保留进度</span>
+                            </Tooltip.Content>
+                        {/if}
                     </Tooltip.Root>
                 </div>
-
                 <!-- 分割线 + 「结束本轮」只在学习轮出现（复习轮没有可结束的一轮）。
                      分割线两边各留一个按钮自己的内边距（px-2.5），所以这里不加 margin：
                      一加右边就比左边宽 -->
@@ -324,15 +331,17 @@
                                     </ConfirmActionButton>
                                 {/snippet}
                             </Tooltip.Trigger>
-                            <Tooltip.Content
-                                side="top"
-                                class="flex-col items-start gap-0.5"
-                            >
-                                <span>完全退出</span>
-                                <span class="text-background/70"
-                                    >下次开启新一轮</span
+                            {#if rowHovered}
+                                <Tooltip.Content
+                                    side="top"
+                                    class="flex-col items-start gap-0.5 pointer-events-none"
                                 >
-                            </Tooltip.Content>
+                                    <span>完全退出</span>
+                                    <span class="text-background/70"
+                                        >下次开启新一轮</span
+                                    >
+                                </Tooltip.Content>
+                            {/if}
                         </Tooltip.Root>
                     </span>
                 {/if}
