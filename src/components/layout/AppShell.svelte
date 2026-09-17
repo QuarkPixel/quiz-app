@@ -10,6 +10,8 @@
     import { syncEngine } from "@/features/sync/engine.svelte";
     import { handleSyncNowShortcut } from "@/features/sync/shortcut";
     import { modKeyLabel } from "$lib/platform";
+    import * as Tooltip from "$lib/components/ui/tooltip";
+    import * as Kbd from "$lib/components/ui/kbd";
 
     interface Props {
         headerStart?: Snippet;
@@ -85,18 +87,18 @@
 
     const indicatorLabel = $derived(
         syncing
-            ? "云同步：正在同步"
+            ? "正在同步"
             : hasConflicts
-              ? `云同步：${conflicts} 个题库存在冲突`
+              ? `${conflicts} 个题库存在冲突`
               : storageBlocked
-                ? "云同步：本地存储不可写"
+                ? "本地存储不可写"
                 : failed
-                  ? `云同步：${syncEngine.status.message}`
-                : syncEngine.status.phase === "offline"
-                  ? "云同步：当前离线"
-                  : inSync
-                    ? "云同步：已同步"
-                    : "云同步：还没同步",
+                  ? `${syncEngine.status.message}`
+                  : syncEngine.status.phase === "offline"
+                    ? "云同步：当前离线"
+                    : inSync
+                      ? "已同步"
+                      : "还没同步",
     );
 
     /**
@@ -184,34 +186,44 @@
 
             <div class="flex size-8 items-center justify-end">
                 {#if syncEnabled}
-                    <button
-                        type="button"
-                        class={cn(
-                            // 命中区域（size-6）和圆点（size-2.5）分开：点起来够大，
-                            // 看起来仍然是小圆点
-                            "focus-visible:ring-ring/50 flex size-8 items-center justify-center rounded-full outline-none focus-visible:ring-2",
-                            clickable
-                                ? "group cursor-pointer"
-                                : "cursor-default",
-                        )}
-                        title={indicatorText}
-                        aria-label={indicatorText}
-                        aria-disabled={!clickable}
-                        onclick={onClick}
-                    >
-                        <span
-                            class={cn(
-                                // 光晕用 box-shadow 做，颜色跟着状态走（主题变量）
-                                "size-1.5 rounded-full transition-[filter,box-shadow,width,height] duration-150",
-                                TONE_CLASS[tone],
-                                syncing && "animate-pulse",
-                                // 能点的时候才吃 hover：提亮 + 光晕变强 + 稍微长大
-                                // 一点；正在同步时这些 class 根本不在
-                                clickable &&
-                                    "group-hover:brightness-125 group-hover:size-2",
-                            )}
-                        ></span>
-                    </button>
+                    <Tooltip.Root>
+                        <Tooltip.Trigger>
+                            <button
+                                type="button"
+                                class={cn(
+                                    // 命中区域（size-6）和圆点（size-2.5）分开：点起来够大，
+                                    // 看起来仍然是小圆点
+                                    "focus-visible:ring-ring/50 flex size-8 items-center justify-center rounded-full outline-none focus-visible:ring-2",
+                                    clickable
+                                        ? "group cursor-pointer"
+                                        : "cursor-default",
+                                )}
+                                aria-label={indicatorText}
+                                aria-disabled={!clickable}
+                                onclick={onClick}
+                            >
+                                <span
+                                    class={cn(
+                                        // 光晕用 box-shadow 做，颜色跟着状态走（主题变量）
+                                        "size-1.5 rounded-full transition-[filter,box-shadow,width,height] duration-150",
+                                        TONE_CLASS[tone],
+                                        syncing && "animate-pulse",
+                                        // 能点的时候才吃 hover：提亮 + 光晕变强 + 稍微长大
+                                        // 一点；正在同步时这些 class 根本不在
+                                        clickable &&
+                                            "group-hover:brightness-125 group-hover:size-2",
+                                    )}
+                                ></span>
+                            </button>
+                        </Tooltip.Trigger>
+                        <Tooltip.Content
+                            >{indicatorLabel}
+                            <Kbd.Group>
+                                <Kbd.Root>{modKeyLabel}</Kbd.Root>
+                                <Kbd.Root>Y</Kbd.Root>
+                            </Kbd.Group></Tooltip.Content
+                        >
+                    </Tooltip.Root>
                 {/if}
             </div>
         </div>
