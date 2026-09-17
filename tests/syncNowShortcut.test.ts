@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 
-import AppShell from "@/components/layout/AppShell.svelte";
+import AppShellHarness from "./AppShellHarness.svelte";
 import { SHORTCUTS } from "@/config";
 import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
 import { syncConfigStore } from "@/features/sync/config.svelte";
@@ -169,7 +169,7 @@ describe("接线：窗口监听挂在页头上", () => {
   });
 
   function render(): void {
-    app = mount(AppShell, { target });
+    app = mount(AppShellHarness, { target });
     flushSync();
   }
 
@@ -238,21 +238,19 @@ describe("接线：窗口监听挂在页头上", () => {
     expect(event.defaultPrevented, "别顺手弹出浏览器的历史记录").toBe(true);
   });
 
-  it("指示点的标题带上快捷键（真的按得动时才挂）", () => {
+  it("指示点的无障碍标签带上快捷键（真的按得动时才挂）", () => {
     enableSync();
     render();
-    const label = target
-      .querySelector<HTMLElement>('button[aria-label^="云同步"]')
-      ?.getAttribute("title");
-    expect(label).toContain("Y");
+    // 页头那颗点的悬浮提示已经换成富 tooltip（内容里带 Kbd），快捷键就落在
+    // `aria-label` 上：读屏念得到，也仍然是「按得动才挂」
+    const label = (): string | null =>
+      target
+        .querySelector<HTMLElement>('[data-slot="sync-indicator"]')
+        ?.getAttribute("aria-label") ?? null;
+    expect(label()).toContain("Y");
 
     syncEngine.status = { ...syncEngine.status, phase: "syncing" };
     flushSync();
-    expect(
-      target
-        .querySelector<HTMLElement>('button[aria-label^="云同步"]')
-        ?.getAttribute("title"),
-      "跑着的时候提示 ⌘Y 是骗人",
-    ).not.toContain("Y");
+    expect(label(), "跑着的时候提示 ⌘Y 是骗人").not.toContain("Y");
   });
 });

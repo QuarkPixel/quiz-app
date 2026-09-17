@@ -12,6 +12,7 @@
     import { modKeyLabel } from "$lib/platform";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import * as Kbd from "$lib/components/ui/kbd";
+    import { Spinner } from "$lib/components/ui/spinner";
 
     interface Props {
         headerStart?: Snippet;
@@ -77,12 +78,28 @@
      */
     const clickable = $derived(syncEnabled && !syncing);
 
-    /** 每种状态一套：底色 + 常态光晕 + hover 时更强的光晕（颜色跟着状态走）。 */
+    /**
+     * 每种状态一套颜色：
+     *   - `dot`  圆点自己的底色（绿 / 黄 / 红）
+     *   - `text` spinner 的描边色（图标画的是 `currentColor`）
+     *   - `halo` 光晕 —— 它算在按钮的 `::before` 上，所以带 `before:` 前缀
+     */
     const TONE_CLASS = {
-        ok: "bg-success shadow-[0_0_6px_var(--success)] group-hover:shadow-[0_0_12px_var(--success)]",
-        pending:
-            "bg-warning shadow-[0_0_6px_var(--warning)] group-hover:shadow-[0_0_12px_var(--warning)]",
-        danger: "bg-destructive shadow-[0_0_6px_var(--destructive)] group-hover:shadow-[0_0_12px_var(--destructive)]",
+        ok: {
+            dot: "bg-success",
+            text: "text-success",
+            halo: "before:bg-success",
+        },
+        pending: {
+            dot: "bg-warning",
+            text: "text-warning",
+            halo: "before:bg-warning",
+        },
+        danger: {
+            dot: "bg-destructive",
+            text: "text-destructive",
+            halo: "before:bg-destructive",
+        },
     } as const;
 
     const indicatorLabel = $derived(
@@ -190,39 +207,74 @@
                         <Tooltip.Trigger>
                             <button
                                 type="button"
+                                data-slot="sync-indicator"
                                 class={cn(
-                                    // 命中区域（size-6）和圆点（size-2.5）分开：点起来够大，
+                                    // 命中区域（size-8）和圆点 / spinner（size-1.5）分开：点起来够大，
                                     // 看起来仍然是小圆点
-                                    "focus-visible:ring-ring/50 flex size-8 items-center justify-center rounded-full outline-none focus-visible:ring-2",
+                                    "focus-visible:ring-ring/50 relative flex size-8 items-center justify-center rounded-full outline-none focus-visible:ring-2",
+                                    /**
+                                     * 光晕画在按钮自己的 `::before` 上，位置与指示器重合，
+                                     * **两种状态共用同一个**，而且垫在指示器下面
+                                     * （所以指示器要 `relative`，不然绝对定位的伪元素会盖在它上面）。
+                                     *
+                                     * 为什么不挂在指示器上：正在同步时那个指示器是 `<svg>`，
+                                     * 类名最后落在 svg 上——svg 不吃 `backdrop-filter`；
+                                     * `filter: drop-shadow()` 也会被 svg 自己的 viewBox 裁掉
+                                     * （`overflow: hidden` 是 svg 的默认值），光晕根本出不来。
+                                     * 伪元素是普通盒子：画一个同色的小圆再糊掉，想要多亮就调 blur / 尺寸。
+                                     */
+                                    "before:absolute before:inset-0 before:m-auto before:size-1.5 before:rounded-full before:blur-[3px] before:content-['']",
+                                    // 能点的时候才吃 hover：提亮 + 光晕变强 + 稍微长大一点
+                                    "hover:brightness-125 hover:scale-125 transition-all duration-150",
+                                    TONE_CLASS[tone].halo,
                                     clickable
-                                        ? "group cursor-pointer"
+                                        ? "cursor-pointer"
                                         : "cursor-default",
                                 )}
                                 aria-label={indicatorText}
                                 aria-disabled={!clickable}
                                 onclick={onClick}
                             >
-                                <span
-                                    class={cn(
-                                        // 光晕用 box-shadow 做，颜色跟着状态走（主题变量）
-                                        "size-1.5 rounded-full transition-[filter,box-shadow,width,height] duration-150",
-                                        TONE_CLASS[tone],
-                                        syncing && "animate-pulse",
-                                        // 能点的时候才吃 hover：提亮 + 光晕变强 + 稍微长大
-                                        // 一点；正在同步时这些 class 根本不在
-                                        clickable &&
-                                            "group-hover:brightness-125 group-hover:size-2",
-                                    )}
-                                ></span>
+                                {#if syncing}
+                                    <Spinner
+                                        aria-hidden="true"
+                                        class={cn(
+                                            "relative size-2.5 overflow-visible stroke-6",
+                                            TONE_CLASS[tone].text,
+                                        )}
+                                    />
+                                {:else}
+                                    <span
+                                        class={cn(
+                                            "relative size-1.5 rounded-full",
+                                            TONE_CLASS[tone].dot,
+                                        )}
+                                    ></span>
+                                {/if}
                             </button>
                         </Tooltip.Trigger>
                         <Tooltip.Content
-                            >{indicatorLabel}
-                            <Kbd.Group>
-                                <Kbd.Root>{modKeyLabel}</Kbd.Root>
-                                <Kbd.Root>Y</Kbd.Root>
-                            </Kbd.Group></Tooltip.Content
+                            side={"bottom-end" as
+                                "top" | "right" | "bottom" | "left" | undefined}
+                            sideOffset={-10}
+                            class="relative px-2"
                         >
+                            <span>{indicatorLabel}</span>
+                            <div
+                                class={cn(
+                                    "text-foreground/70 pointer-events-none",
+                                    "absolute bottom-0 translate-y-full right-0 w-max",
+                                    "flex items-center gap-1",
+                                )}
+                            >
+                                <Kbd.Group
+                                    class="*:bg-muted! *:text-muted-foreground!"
+                                >
+                                    <Kbd.Root>{modKeyLabel}</Kbd.Root>
+                                    <Kbd.Root>Y</Kbd.Root>
+                                </Kbd.Group>单击以立即同步
+                            </div>
+                        </Tooltip.Content>
                     </Tooltip.Root>
                 {/if}
             </div>

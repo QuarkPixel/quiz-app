@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 
-import AppShell from "@/components/layout/AppShell.svelte";
+import AppShellHarness from "./AppShellHarness.svelte";
 import SidebarHarness from "./SidebarHarness.svelte";
 import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
 import { syncConfigStore } from "@/features/sync/config.svelte";
@@ -22,18 +22,28 @@ let app: ReturnType<typeof mount> | null = null;
 let target: HTMLElement;
 
 function render(): void {
-  app = mount(AppShell, { target });
+  app = mount(AppShellHarness, { target });
   flushSync();
 }
 
-/** 指示点里那个彩色圆点（按钮上的 aria-label 是状态说明）。 */
-function dot(): HTMLElement | null {
-  const button = target.querySelector<HTMLElement>('button[aria-label^="云同步"]');
-  return button?.querySelector("span") ?? null;
+/**
+ * 指示点本体（那颗点 / 同步中的 spinner 都在它里面）。
+ *
+ * 用 `data-slot` 找而不是拿 `aria-label` 的前缀找：标签本身就是被测的状态文案
+ * （「还没同步」/「已同步」…），拿它当选择器等于把「文案怎么写」也钉死了。
+ */
+function indicator(): HTMLElement | null {
+  return target.querySelector<HTMLElement>('[data-slot="sync-indicator"]');
 }
 
-function indicator(): HTMLElement | null {
-  return target.querySelector<HTMLElement>('button[aria-label^="云同步"]');
+/** 非同步时那颗圆点（同步中换成 spinner，见 `spinner()`）。 */
+function dot(): HTMLElement | null {
+  return indicator()?.querySelector("span") ?? null;
+}
+
+/** 同步中转圈的那个 spinner（非同步时没有）。 */
+function spinner(): SVGElement | null {
+  return indicator()?.querySelector<SVGElement>("svg.animate-spin") ?? null;
 }
 
 beforeEach(() => {
@@ -196,9 +206,13 @@ describe("头部的云同步指示点", () => {
 
       // 绿色照样可点、照样吃 hover：绿了以后主动同步一次是常见需求
       expect(indicator()?.getAttribute("aria-disabled")).toBe("false");
-      expect(dot()?.className).toContain("group-hover:brightness-125");
-      expect(dot()?.className).toContain("shadow-[0_0_6px_var(--success)]");
-      expect(dot()?.className).toContain("group-hover:shadow-[0_0_12px_var(--success)]");
+      // 光晕挂在按钮自己的伪元素上（同色小圆 + 模糊），**两种状态共用同一个**；
+      // 圆点自己只管底色，不再各带一套 box-shadow
+      expect(indicator()?.className).toContain("before:bg-success");
+      expect(indicator()?.className).toContain("before:blur-[3px]");
+      // 能点的时候才吃 hover：提亮 + 整块（连光晕）放大一点
+      expect(indicator()?.className).toContain("hover:brightness-125");
+      expect(indicator()?.className).toContain("hover:scale-125");
 
       const spy = vi.spyOn(syncEngine, "sync").mockResolvedValue(undefined);
       indicator()?.click();
@@ -233,18 +247,22 @@ describe("头部的云同步指示点", () => {
 
       indicator()?.click();
       // 同步是同步的：`phase` 已经变成 syncing，但颜色必须还是绿的
-      // （正在跑用圆点脉冲表示，不该让人以为突然冒出了没传上去的改动）
+      // （正在跑只是把圆点换成转圈的 spinner，不该让人以为突然冒出了没传上去的改动）
       expect(syncEngine.status.phase).toBe("syncing");
       flushSync();
-      expect(dot()?.className).toContain("bg-success");
-      expect(dot()?.className).not.toContain("bg-warning");
-      expect(dot()?.className).toContain("animate-pulse");
+      expect(spinner(), "同步中该换成 spinner").not.toBeNull();
+      expect(dot(), "圆点该让位给 spinner").toBeNull();
+      expect(spinner()?.className).toContain("text-success");
+      expect(spinner()?.className).not.toContain("text-warning");
+      // 光晕不跟着状态走：同步中它也照旧亮着（它画在按钮的伪元素上）
+      expect(indicator()?.className).toContain("before:bg-success");
 
       await syncEngine.sync();
       flushSync();
       expect(syncEngine.status.phase).toBe("idle");
+      expect(spinner(), "跑完就该换回圆点").toBeNull();
       expect(dot()?.className).toContain("bg-success");
-      expect(dot()?.className).not.toContain("animate-pulse");
+      expect(dot()?.className).not.toContain("bg-warning");
     } finally {
       await h.stop();
     }
@@ -274,9 +292,10 @@ describe("头部的云同步指示点", () => {
       // 再同步一次（后台轮询 / 用户手动都会走到这儿）：跑的过程中还是红的
       void syncEngine.sync();
       flushSync();
-      expect(dot()?.className).toContain("bg-destructive");
-      expect(dot()?.className).not.toContain("bg-success");
-      expect(dot()?.className).not.toContain("bg-warning");
+      expect(spinner(), "同步中该换成 spinner").not.toBeNull();
+      expect(spinner()?.className).toContain("text-destructive");
+      expect(spinner()?.className).not.toContain("text-success");
+      expect(spinner()?.className).not.toContain("text-warning");
 
       await syncEngine.sync();
       flushSync();
@@ -328,9 +347,7 @@ describe("头部的云同步指示点", () => {
 
       expect(syncEngine.status.conflicts).toHaveLength(1);
       expect(dot()?.className, "有冲突应该是红的").toContain("bg-destructive");
-      expect(dot()?.className).toContain(
-        "shadow-[0_0_6px_var(--destructive)]",
-      );
+      expect(indicator()?.className).toContain("before:bg-destructive");
       expect(indicator()?.getAttribute("aria-label")).toContain("冲突");
       expect(indicator()?.getAttribute("aria-disabled")).toBe("false");
 
@@ -394,11 +411,10 @@ describe("头部的云同步指示点", () => {
       render();
       expect(indicator()?.getAttribute("aria-disabled")).toBe("false");
       expect(dot()?.className).toContain("bg-warning");
-      expect(dot()?.className).toContain("shadow-[0_0_6px_var(--warning)]");
-      expect(dot()?.className).toContain("group-hover:brightness-125");
-      expect(dot()?.className).toContain(
-        "group-hover:shadow-[0_0_12px_var(--warning)]",
-      );
+      // 光晕与提亮都挂在按钮上（伪元素 + hover 类），两种状态共用
+      expect(indicator()?.className).toContain("before:bg-warning");
+      expect(indicator()?.className).toContain("before:blur-[3px]");
+      expect(indicator()?.className).toContain("hover:brightness-125");
       // hover 不再是背景色
       expect(indicator()?.className).not.toContain("hover:bg-accent");
     } finally {
