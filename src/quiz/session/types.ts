@@ -35,7 +35,7 @@ export interface CopyQuestionSession {
 /**
  * 容器注入给键盘层的纯 UI 动作。
  *
- * 属于「视图」而不是「会话」：dialog 开关、结束本轮都只活在组件里，
+ * 属于「视图」而不是「会话」：dialog 开关、退出本轮都只活在组件里，
  * 但快捷键要能按到它们，所以由容器实现、键盘层调用。
  */
 export interface KeyboardUiActions {

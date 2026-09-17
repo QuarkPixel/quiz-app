@@ -9,6 +9,7 @@ import { createDefaultMemorySettings } from "../src/features/memory/settings";
 import {
   createDefaultSettings,
   createDefaultUiPreferences,
+  loadStoredState,
   saveState,
 } from "../src/store";
 import { STORAGE_PREFIX_QUESTIONS } from "../src/config/storage";
@@ -235,6 +236,32 @@ function dialog(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[role="dialog"]');
 }
 
+/** 卡片右侧那段状态文字——它本身就是「标熟」按钮（`data-slot` 由 ConfirmActionButton 打上） */
+function masteryButton(): HTMLButtonElement | null {
+  return (
+    [...document.querySelectorAll<HTMLButtonElement>(
+      'button[data-slot="confirm-action-button"]',
+    )].find((candidate) =>
+      /未学习|学习中|复习|已掌握|标熟|逾期/.test(candidate.textContent ?? ""),
+    ) ?? null
+  );
+}
+
+function mustMasteryButton(): HTMLButtonElement {
+  const button = masteryButton();
+  if (!button) throw new Error("总览里找不到状态 / 「标熟」按钮");
+  return button;
+}
+
+/** 某一行渲染出来的文字（虚拟列表的行自己带着 data-review-question-id） */
+function rowText(id: string): string {
+  const row = document.querySelector<HTMLElement>(
+    `[data-review-question-id="${id}"]`,
+  );
+  if (!row) throw new Error(`列表里没有第 ${id} 行`);
+  return row.textContent ?? "";
+}
+
 function storedQuestionIds(hash: string): string[] {
   const raw = localStorage.getItem(STORAGE_PREFIX_QUESTIONS + hash);
   if (raw === null) throw new Error(`题库内容没落盘：${hash}`);
@@ -333,5 +360,65 @@ describe("记忆模式：总览关闭后不留下上一次的搜索与筛选", (
     openFilterPanel();
     expect(toggleButton("今天复习").getAttribute("data-state")).toBe("off");
     expect(toggleButton("已掌握").getAttribute("data-state")).toBe("off");
+  });
+});
+
+describe("记忆模式：总览里点两下「标熟」", () => {
+  let view: Mounted | null = null;
+
+  afterEach(() => {
+    view?.destroy();
+    view = null;
+    localStorage.clear();
+    document.body.innerHTML = "";
+  });
+
+  it("第一下只是确认态（绿底、白字「标熟」），第二下才写进进度", async () => {
+    const mounted = await mountOverview(PROGRESS);
+    view = mounted;
+
+    // 收窄到一张没学过的卡：虚拟列表渲染哪几行才是确定的
+    setSearch("m6");
+    await vi.waitFor(() => expect(renderedRowIds()).toEqual(["m6"]));
+
+    const button = mustMasteryButton();
+    expect(button.textContent?.trim()).toBe("未学习");
+    // 没点之前只是个状态：盘上、内存里都不该有 m6 的进度
+    expect(mounted.session.progress.m6).toBeUndefined();
+
+    button.click();
+    flushSync();
+
+    // 第一下：确认态——绿底、白字「标熟」，但一个字都还没写
+    expect(mounted.session.progress.m6).toBeUndefined();
+    const confirming = mustMasteryButton();
+    expect(confirming.textContent).toContain("标熟");
+    expect(confirming.classList.contains("bg-success")).toBe(true);
+    expect(confirming.classList.contains("text-success-foreground")).toBe(true);
+    // 原来的灰色状态字色必须被顶掉：绿底 + 灰字等于看不见
+    expect(confirming.classList.contains("text-foreground/40")).toBe(false);
+
+    confirming.click();
+    flushSync();
+
+    // 第二下才真的标熟，并且立刻落盘
+    expect(mounted.session.progress.m6?.state).toBe("mastered");
+    expect(
+      loadStoredState(mounted.bank.hash).memory?.progress.m6?.state,
+    ).toBe("mastered");
+    // 这一行换回一句绿色的「已掌握」，按钮不再存在
+    expect(masteryButton()).toBeNull();
+    expect(rowText("m6")).toContain("已掌握");
+  });
+
+  it("已掌握的卡没有这个入口（终态没有什么可点的）", async () => {
+    const mounted = await mountOverview(PROGRESS);
+    view = mounted;
+
+    setSearch("m1");
+    await vi.waitFor(() => expect(renderedRowIds()).toEqual(["m1"]));
+
+    expect(rowText("m1")).toContain("已掌握");
+    expect(masteryButton()).toBeNull();
   });
 });

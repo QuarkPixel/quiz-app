@@ -1,8 +1,17 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, tick, unmount } from "svelte";
 import ViewHarness from "./ViewHarness.svelte";
 import { BankStore } from "../src/source/bankStore";
+import {
+    createDefaultSettings,
+    createDefaultUiPreferences,
+    loadStoredState,
+    saveState,
+} from "../src/store";
+import { createDefaultMemorySettings } from "../src/features/memory/settings";
+import { startOfDay } from "../src/features/memory/algorithm";
 import type { Bank } from "../src/source/types";
+import type { MemoryProgress, StoredState } from "../src/types";
 
 /**
  * 视图级冒烟测试：**真的把 `QuizView` / `MemoryView` 挂起来点一遍**。
@@ -37,13 +46,40 @@ const QUIZ_BANK = JSON.stringify({
     ],
 });
 
+/** 一张今天到期的复习卡（进「复习」的门槛） */
+function dueToday(): MemoryProgress {
+    return {
+        state: "reviewing",
+        level: 1,
+        streak: 0,
+        nextDue: startOfDay(Date.now()),
+        lapses: 0,
+    };
+}
+
+function emptyState(): StoredState {
+    return {
+        masteredIds: [],
+        masteredMistakes: {},
+        activePool: [],
+        currentRound: 0,
+        filterType: "all",
+        settings: createDefaultSettings(),
+        ui: createDefaultUiPreferences(),
+    };
+}
+
 const MEMORY_BANK = JSON.stringify({
     mode: "memory",
     title: "记忆题库",
     questions: [{ id: "m1", question: "取得进步", answer: "make progress" }],
 });
 
-async function mountView(json: string): Promise<{
+async function mountView(
+    json: string,
+    /** 挂载前先往 localStorage 里铺一份进度（比如造一张今天到期的复习卡） */
+    seed?: (hash: string) => void,
+): Promise<{
     bank: Bank;
     host: HTMLElement;
     destroy: () => void;
@@ -55,6 +91,7 @@ async function mountView(json: string): Promise<{
 
     const bank = source.getActiveBank();
     if (!bank) throw new Error("导入成功但拿不到当前题库");
+    seed?.(bank.hash);
 
     const host = document.createElement("div");
     document.body.appendChild(host);
@@ -102,6 +139,84 @@ async function closeDialogs(): Promise<void> {
   flushSync();
   await tick();
   flushSync();
+}
+
+/** 记忆模式的轮内连对次数（落盘的那一份） */
+function storedStreak(hash: string, id: string): number | undefined {
+    return loadStoredState(hash).memory?.progress[id]?.streak;
+}
+
+/** 按一个不带修饰键的键（走窗口级的统一分发） */
+function pressKey(key: string, code: string): void {
+    window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+            key,
+            code,
+            bubbles: true,
+            cancelable: true,
+        }),
+    );
+    flushSync();
+}
+
+/** 答题区那一行（`data-revealed` 就是「点亮 / 未点亮」那个开关） */
+function roundActionsRow(): HTMLElement {
+    const row = document.querySelector<HTMLElement>(
+        '[data-slot="memory-round-actions"]',
+    );
+    if (!row) throw new Error("找不到答题区那一行");
+    return row;
+}
+
+/** 箭头那颗按钮（悬停触发区就是它，测试里也按「指针落在它上面」来模拟） */
+function roundActionsTrigger(): HTMLElement {
+    const trigger = roundActionsRow().querySelector<HTMLElement>(
+        'button[aria-label="退出本轮"]',
+    );
+    if (!trigger) throw new Error("找不到悬停触发区（退出本轮那颗箭头）");
+    return trigger;
+}
+
+/**
+ * 把指针移到触发区上：平时两颗按钮都在（CSS 压到 60% 不透明度）、只有
+ * 「退出本轮」四个字藏着；指到箭头上才点亮（`data-revealed="true"`）。
+ * 触屏是常亮，测试环境按鼠标算。
+ */
+function hoverRoundActions(): void {
+    roundActionsTrigger().dispatchEvent(new MouseEvent("mouseenter"));
+    flushSync();
+}
+
+/** 按文字找一颗按钮（首页的「学习新的题目」这类没有 aria-label 的入口） */
+function buttonWithText(text: string): HTMLButtonElement {
+    const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+        (candidate) => candidate.textContent?.includes(text),
+    );
+    if (!button) throw new Error(`找不到按钮：${text}`);
+    return button;
+}
+
+/**
+ * bits-ui 的 Tooltip 在 hover / focus 后打开，内容走 portal 挂到 body 上
+ * （同 ToolbarIconButton 的测法）。断言写成「屏幕上出现了这句提示」：
+ * 关掉的那一份 content 还会在 DOM 里待一会儿，认节点容易认错。
+ */
+async function expectTooltip(button: HTMLElement, expected: string): Promise<void> {
+    button.dispatchEvent(
+        new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }),
+    );
+    button.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }),
+    );
+    button.focus();
+    flushSync();
+
+    await vi.waitFor(() => {
+        const texts = [
+            ...document.querySelectorAll('[data-slot="tooltip-content"]'),
+        ].map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "");
+        expect(texts, "tooltip 没出现").toContain(expected);
+    });
 }
 
 function pressModKey(key: string): void {
@@ -338,5 +453,176 @@ describe("答题主路径", () => {
         flushSync();
 
         expect(document.body.textContent).toContain("make progress");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// 记忆模式答题区那一行：「退出本轮」（只是退出）与「结束本轮」（作废并重开一轮）
+// ---------------------------------------------------------------------------
+
+describe("记忆模式：退出本轮 / 结束本轮", () => {
+    let view: Awaited<ReturnType<typeof mountView>> | null = null;
+
+    afterEach(async () => {
+        await closeDialogs();
+        view?.destroy();
+        view = null;
+        localStorage.clear();
+    });
+
+    it("「结束本轮」点两下确认 → 本轮作废、退出到首页（下次是新的一轮）", async () => {
+        view = await mountView(MEMORY_BANK);
+        buttonWithText("学习新的题目").click();
+        flushSync();
+
+        // 自评一次「知道」：这一轮的轮内连对变成 1
+        pressKey(" ", "Space");
+        expect(storedStreak(view.bank.hash, "m1")).toBe(1);
+
+        // 未点亮：三部分各占着自己的壳（位置不变），只是被样式压成 opacity 0，
+        // 唯一露着的是箭头；「退出本轮」的文案要悬停后才长出来
+        expect(roundActionsRow().dataset.revealed).toBe("false");
+        expect(
+            roundActionsRow().querySelectorAll("[data-reveal-part]"),
+        ).toHaveLength(3);
+        expect(toolbarButton("退出本轮").textContent?.trim()).toBe("");
+
+        hoverRoundActions();
+
+        expect(roundActionsRow().dataset.revealed).toBe("true");
+        expect(toolbarButton("退出本轮").textContent).toContain("退出本轮");
+
+        const stop = toolbarButton("结束本轮");
+        expect(stop.textContent?.trim()).toBe("结束本轮");
+
+        // 第一下只是确认态：文本换成「确认结束」（不带问号），一个字都不改
+        stop.click();
+        flushSync();
+        expect(stop.textContent).toContain("确认结束");
+        expect(stop.textContent).not.toContain("？");
+        expect(storedStreak(view.bank.hash, "m1"), "第一下不该动进度").toBe(1);
+
+        // 第二下才真的结束：本轮作废，并像退出一样回首页
+        stop.click();
+        flushSync();
+        expect(storedStreak(view.bank.hash, "m1")).toBe(0);
+        expect(
+            () => buttonWithText("学习新的题目"),
+            "结束本轮之后应当回到首页",
+        ).not.toThrow();
+        expect(document.querySelector('[role="progressbar"]')).toBeNull();
+        // 本轮的池子与计数一起清了：下次点「学习新的题目」是**新的一轮**
+        const stored = loadStoredState(view.bank.hash);
+        expect(stored.activePool).toEqual([]);
+        expect(stored.roundMastered).toBe(0);
+    });
+
+    it("触发区只有箭头那一块：指针扫过这一行的别处不会点亮", async () => {
+        view = await mountView(MEMORY_BANK);
+        buttonWithText("学习新的题目").click();
+        flushSync();
+
+        // 行本身不再是触发区
+        roundActionsRow().dispatchEvent(new MouseEvent("mouseenter"));
+        flushSync();
+        expect(roundActionsRow().dataset.revealed).toBe("false");
+
+        hoverRoundActions();
+        expect(roundActionsRow().dataset.revealed).toBe("true");
+    });
+
+    it("复习轮没有「结束本轮」：整行只剩退出那一颗", async () => {
+        view = await mountView(MEMORY_BANK, (hash) => {
+            // 造一张今天到期的复习卡，才进得了复习轮
+            saveState(hash, {
+                ...emptyState(),
+                memory: {
+                    progress: { m1: dueToday() },
+                    settings: createDefaultMemorySettings(),
+                },
+            });
+        });
+        buttonWithText("复习").click();
+        flushSync();
+
+        expect(
+            document.querySelector('button[aria-label="结束本轮"]'),
+            "复习轮不该有「结束本轮」",
+        ).toBeNull();
+        expect(
+            roundActionsRow().querySelectorAll("[data-reveal-part]"),
+            "复习轮只剩退出那一部分",
+        ).toHaveLength(1);
+
+        // 退出那颗照常：悬停长文案、点了回首页
+        hoverRoundActions();
+        expect(toolbarButton("退出本轮").textContent).toContain("退出本轮");
+        toolbarButton("退出本轮").click();
+        flushSync();
+        expect(() => buttonWithText("复习")).not.toThrow();
+    });
+
+    it("「退出本轮」的文案同样要悬停才出来；它只退出，这一轮还留着", async () => {
+        view = await mountView(MEMORY_BANK);
+        buttonWithText("学习新的题目").click();
+        flushSync();
+        pressKey(" ", "Space");
+        expect(storedStreak(view.bank.hash, "m1")).toBe(1);
+
+        // 平时按钮里只有那颗箭头，没有文字
+        expect(toolbarButton("退出本轮").textContent?.trim()).toBe("");
+
+        hoverRoundActions();
+        expect(toolbarButton("退出本轮").textContent).toContain("退出本轮");
+
+        toolbarButton("退出本轮").click();
+        flushSync();
+
+        // 回首页了（「学习新的题目」又在），而这一轮的成绩没被清掉
+        expect(() => buttonWithText("学习新的题目")).not.toThrow();
+        expect(storedStreak(view.bank.hash, "m1")).toBe(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// 两颗按钮各带一句说明：退出与结束的区别就写在 tooltip 里
+// ---------------------------------------------------------------------------
+
+describe("记忆模式：本轮两颗按钮的 tooltip", () => {
+    let view: Awaited<ReturnType<typeof mountView>> | null = null;
+
+    afterEach(async () => {
+        await closeDialogs();
+        view?.destroy();
+        view = null;
+        localStorage.clear();
+        document.body.innerHTML = "";
+    });
+
+    // 两颗各用一个挂载：同一时刻只开一份 tooltip，前一份还开着时后一个 trigger
+    // 不会变成 active（bits-ui 的行为），挤在一起测只会互相干扰
+    it("退出本轮 = 暂时退出 / 保留进度", async () => {
+        view = await mountView(MEMORY_BANK);
+        buttonWithText("学习新的题目").click();
+        flushSync();
+        hoverRoundActions();
+
+        // 提示里那个 `Esc` 是 Kbd，textContent 会把键帽文字连在一起
+        await expectTooltip(
+            toolbarButton("退出本轮"),
+            "暂时退出Esc 保留进度",
+        );
+    });
+
+    it("结束本轮 = 完全退出 / 下次开启新一轮", async () => {
+        view = await mountView(MEMORY_BANK);
+        buttonWithText("学习新的题目").click();
+        flushSync();
+        hoverRoundActions();
+
+        await expectTooltip(
+            toolbarButton("结束本轮"),
+            "完全退出 下次开启新一轮",
+        );
     });
 });

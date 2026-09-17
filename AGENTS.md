@@ -56,7 +56,10 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 - `src/features/appShortcuts.ts` — **两个模式共用的窗口级键盘分发**（`createAppKeyboardHandler`）。
   应用级按键读 `@/config/shortcuts` 的注册表（`Record<ShortcutId, …>`，少写一个 id 编译不过），
   题目级按键走题型注册表；某个模式独有的能力（活动池 / 本轮会话 / 答案页降级）声明成可选成员，
-  宿主没实现就自然跳过。**新增快捷键只改注册表 + 这一个分发表**，两个模式一起生效
+  宿主没实现就自然跳过。**新增快捷键只改注册表 + 这一个分发表**，两个模式一起生效。
+  例外是**跟会话无关**的应用级键（⌘⇧I 全局设置、⌘Y 同步）：它们的宿主在没有题库时也挂载，
+  所以各有自己的窗口监听，在这张表里写 `null` 并**从 `MOD_KEY_TO_ID` 排除**
+  （不排除会在题目级分发之前先占掉那个字母）
 - `src/generalConfig.ts` — general 配置：`{ activeBank, defaultSettings, library, globalSettings }`
 - `src/bankSettings.ts` / `src/globalSettings.ts` — 两层设置的默认值与净化（`sanitizeBankSettings` / `sanitizeGlobalSettings`）
 - `src/lib/bankFile.ts` — 题库文件统一解析 / 序列化：`parseBankFileJson` / `parseBankFile` / `formatBankFile`
@@ -113,6 +116,11 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     `formatShortDate`。相对时间由调用方把 `now` 传进来，跟着页面的心跳刷新。
   - `src/lib/identicon.ts`：DiceBear 头像的**唯一入口**，动态加载（见「首屏体积」那节）
   - `summary.ts`：`describeSyncResult()`——把一轮同步说成人话（新增 / 删除 / 上传 / 下载 + 设置），状态行与 Toast 共用这一份文案
+  - `shortcut.ts`：**⌘Y（Ctrl+Y）立即同步**（`isSyncNowShortcut` / `handleSyncNowShortcut`）——**等价于点页头那颗同步指示点**。
+    窗口监听挂在 `AppShell.svelte` 上（指示点住在那儿，而且空题库状态也挂载——新设备打开正是为了拉云端题库），
+    **不进** `features/appShortcuts.ts` 的分发表（那张表的宿主「答题视图」在没有题库时根本不挂载）。
+    **云同步关掉时这个键一起消失**（那时指示点也没了）：⌘Y 完全不碰，留给浏览器；红点（冲突 / 报错）时它跟点击
+    一样是**打开全局设置**——所以宿主传的 `run` 就是指示点那个 `onClick`，这套规则不写第二遍
 - `src/components/settings/SyncSettings.svelte` — 全局设置面板底部的同步区块，常规态分两段：
   **信息展示**（「目标仓库」卡片：identicon + Gist id + 上次同步时间 / 出错原因 + 本地题库数 · 本地大小 · 云端题库数）
   与**操作**（打码令牌 + 测试连接 + 修改配置、立即同步、「更多设置」里的自动同步与双向覆盖、**逐题库的冲突选择**）
@@ -235,6 +243,9 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - 命中区域（`size-8`，正好填满页头那格 2rem）和圆点（`size-1.5`）是分开的两个尺寸：
     点起来够大，看着仍是小圆点。
   - 颜色取自 `syncEngine.inSync`（见「云同步」章节），不是「打开页面那一刻的快照」
+  - **⌘Y（Ctrl+Y）就是「点一下这颗点」**（`sync/shortcut.ts`）：动作与点击共用同一个 `onClick`，
+    所以红点同样是去设置；云同步关着时它跟着指示点一起消失（⌘Y 完全不碰，留给浏览器）。
+    悬浮标题 / `aria-label` 里也带上这个键（只在真的按得动、即 `clickable` 时挂）
 - `src/components/quiz/QuizView.svelte` — 容器，接收 `bank: QuizBank`。业务全在 `QuizSession`
 - `src/components/layout/` — 两个模式共用的外壳（**记忆模式不要再抄一份**）
   - `ViewShell.svelte`：答题视图的公共版面——滚动容器 + 底部渐变遮罩 + 底部工具栏（外加
@@ -255,6 +266,8 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `MemoryView.svelte`：容器，版面对齐 `QuizView`（同一个 `ViewShell`、同一套工具栏按钮、同一个导入确认弹窗），内容区在首页 / `MemoryQuestionArea` 之间切换
   - `MemoryHome.svelte`：首页，两个入口 + 统计卡，全部用现有 `Button` / `Card`；每种状态各配水印图标
   - `MemoryOverview.svelte`：总览对话框，与 `ReviewView` 同构（顶部三张 `Card` + `ToggleGroup` 筛选 + `QuestionPreview` 列表）
+  - `MemoryMasteryButton.svelte`：卡片右侧那句状态文字，**它同时是「标熟」按钮**（点两下确认，
+    形态照刷题模式的 `StreakIndicator`）。只出现在总览里——答题区不给记忆模式掌握入口
   - `MemoryProgressBar.svelte`：**只是 `ProgressBar` 的适配器**（把「本轮已完成 / 总数」映射成
     stats），数字滚动动画、完成时的庆祝高亮、细条样式全部来自那一份实现
   - `src/components/settings/MemorySettings.svelte`：设置面板，与 `Settings.svelte` 同构（`Input` / `Switch` / `Separator` / `ConfirmActionButton` / 复用 `QuestionOrder`），掌握阈值用 `$lib/components/ui/slider`，最底部是共用那份快捷键说明
@@ -567,7 +580,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - 题干页：`Space` / `Enter` = 知道，`'` = 模糊，`;` = 忘记
   - 答案页：`Space` / `Enter` = 下一题，`'` = 改判成模糊，`;` = 记错了
   - 四个动作的统一说明（设置面板最底部那份列表就是照这个写的，**只列这四条**）：知道 / 下一题 = `Space`·`Enter`、模糊 = `'`、忘记 / 记错了 = `;`、复制当前题目 = `⌘/Ctrl+C`。按键常量在 `src/quiz/types/memory/logic.ts`（`MEMORY_KEY_FUZZY` / `MEMORY_KEY_WRONG`），**不要**在组件里另抄一份
-  - `Esc` = 结束本轮；`⌘/Ctrl+C/W/E/I/O` = 复制题目 / 导入 / 导出 / 设置 / 总览；`⌘/Ctrl+⇧+I` = 全局设置（应用级，必须赶在下面那个 `mod` 分支前放行，否则会连记忆设置一起切了）
+  - `Esc` = 退出本轮（回首页，下次接着这一轮）；`⌘/Ctrl+C/W/E/I/O` = 复制题目 / 导入 / 导出 / 设置 / 总览；`⌘/Ctrl+⇧+I` = 全局设置（应用级，必须赶在下面那个 `mod` 分支前放行，否则会连记忆设置一起切了）
   - 「该不该拦这次按键」的判定**只有一份**：`src/features/appShortcuts.ts` 的 `createAppKeyboardHandler`，两个视图各自装上（`createAppKeyboardHandler(session, uiActions)`）。输入框 / 对话框 / 输入法组词不介入，`Space` / `Enter` 落在按钮等交互目标上时让给原生点击。**不要**在组件里重写一套判定——漏掉 `isInteractiveTarget` 会让答案页的 `Space` 双触发（原生点击 + 全局处理器各跳一题），而两份实现分头演化正是 ⌘S / ⌘N 在记忆模式里失效的原因
 - **复习**（`startReview` → `run = "reviewing"`）
   - 取所有到期的题（`state === "reviewing"` 且 `nextDue` ≤ 今天），外加**今天还没补完连对的卡**（见下面的「答错后的重新连对」），全部打散后放进 `activePool` 当队列
@@ -639,7 +652,21 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - `src/App.svelte` 按 `activeBank.mode === "memory"` 渲染 `MemoryView`
 - **对话框焦点**：总览（`ReviewView` / `MemoryOverview`）用 `onOpenAutoFocus` 阻止默认行为后聚焦搜索框，且 `isCoarsePointer` 时（触屏）不聚焦，免得弹键盘；**设置面板（`Settings` / `MemorySettings`）只 `preventDefault()`**——默认行为会把焦点丢给第一个可聚焦元素，也就是「修改名称」输入框，打开设置不该直接进输入态
 - `src/components/memory/`：
-  - `MemoryView`：版面与 `QuizView` 一致（滚动容器 / 居中列宽 / 底部工具栏：左设置、右总览）；窗口级快捷键（复制 / 导入 / 导出 / 设置 / 总览 / Esc 结束本轮）也在这里；「结束本轮」按钮在内容区左上角
+  - `MemoryView`：版面与 `QuizView` 一致（滚动容器 / 居中列宽 / 底部工具栏：左设置、右总览）；窗口级快捷键（复制 / 导入 / 导出 / 设置 / 总览 / Esc 退出本轮）也在这里
+  - **答题区那一行**（`data-slot="memory-round-actions"`）：左边「退出本轮」（`IconArrowLeft`，`exitSession`：回首页、这一轮留着），中间一条半透明分割线，右边「结束本轮」（`ConfirmActionButton` + `hand-stop`，点两下确认 → `endRound()`：本轮作废，**同样回首页**，下次点「学习新的题目」是新的一轮；第一下只把文案换成「确认结束」，字数一样所以宽度不跳）。两个词不能混：退出留着这一轮，结束把它作废
+    - **「结束本轮」只有学习轮有**：复习队列就是「今天还欠什么」，没有可以结束的一轮，所以 `session.run !== "learning"` 时分割线与那颗按钮整块不渲染，整行只剩「退出本轮」
+    - 两颗按钮各带一句 tooltip：退出 = 「暂时退出 + `Esc` 键帽 / 保留进度」，结束 = 「完全退出 / 下次开启新一轮」
+    - **平时只有箭头露着**（100%，点了不生效），分割线与「结束本轮」藏在原位（`opacity: 0`）；指到箭头上（或焦点进来）三部分才依次向右就位、两颗按钮到 60%，鼠标再压到哪一颗上它才回到 100%
+    - **触发区只有箭头那颗按钮本身**，不是整行：`onmouseenter` 挂在按钮上、`onmouseleave` 留在整行上——从箭头移到右边的「结束本轮」不会中途收起来，而指针从这一行的别处扫过也不会点亮
+    - **版面模型：壳不动，动的是壳里的元素**。三部分各有自己的壳（`data-reveal-part="exit|divider|stop"`，flex 项，占的就是最终位置），壳本身不参与动画；未点亮时里面的元素往左挪 8px 待命、`opacity: 0`，点亮后 `translateX(0)` 并淡入。**全部动画只有 `transform` 与 `opacity`**——没有宽度 / margin 动画，也就没有 slider 那种「擦出来」的效果
+    - **唯一的例外是「退出本轮」的文案**：它必须现量宽度（Svelte 过渡 `expandLabel`，宽度 0 → 自然宽度 ＋ 淡入），长出来的这点宽度会把后面两个壳一起推向右（`min-width: 0` 不能省——flex 项的 `min-width: auto` 会把宽度动画顶回去）
+    - **三档透明度**：未点亮 → 只有箭头 100%（其余全 0）；点亮 → 箭头与「结束本轮」60%、分割线 100%；鼠标压在某颗按钮上 → 它自己 100%
+    - **未点亮时两颗按钮都点不动**，但两条路的做法不同：分割线与「结束本轮」的壳是 `pointer-events: none`；箭头那颗的壳必须一直可命中（它就是触发区，拦了指针就 hover 不开），所以「未点亮不可点」判在它的 `onclick` 里。两处都用「不可点」而不是 `disabled`——后者会让键盘 Tab 不进来，而这条路的键盘入口正是 `focusin` 点亮
+    - 节奏：`cubicOut` 进场 / `cubicIn` 退场（样式块里写成同值的 `cubic-bezier`），相邻 55ms 延迟。**进场从左往右**（文案 → 分割线 → 结束按钮），**退场反过来**（最后出现的先走、文案垫底）。所以每部分挂着两套延迟：`--reveal-delay-enter` / `--reveal-delay-leave`，别合并成一个。时长与间隔在脚本里定，再注入成 `--reveal-*` 变量给 CSS 用（数值只此一份）
+    - `data-reveal-part` 必须打在本组件模板里的**壳元素**上：样式块是带作用域的，子组件（`Button` / `ConfirmActionButton`）渲染出来的 `<button>` 拿不到作用域类，选择器匹配不上（svelte-check 会报 Unused CSS selector）
+    - tooltip 挂在**按钮自己**身上时，`{...props}` 必须排在 `onclick` 前面，而且 `ConfirmActionButton` 那侧要先用 `tooltipProps()` 把 trigger 属性里的 `onclick` 摘掉——它的 `{...restProps}` 排在自己的 `onclick` 之后，整包透进去会让按钮点不动
+    - 别在 `<script>` 的注释里写「见文件末尾的 `<style>`」这种字面量：Svelte 解析器会把它当成真标签，报一句莫名其妙的「`<script>` was left open」（同一句话坑过一次，改说「样式块」）
+    - `isCoarsePointer`（触屏）时直接常亮：没有 hover，压暗 / 藏起来就等于永远点不到「结束本轮」；键盘则靠 `focusin` / `focusout` 点亮（`data-revealed` 是这一行的抓手，测试也用它）
   - `MemoryHome`：首页（顶部是题库名大字），两个入口与统计卡都用现有 `Button` / `Card`。每种状态配一个水印图标（沿用 `QuestionArea` 空状态那种大图标 + `opacity-20 -z-1`）
     - **学习入口四态**（`learnableCount` 是否 > 0 × `session.learnedToday`）：
       | 状态 | 条件 | 外观 | 可点 |
@@ -663,16 +690,17 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     `已掌握` = 绿），折叠 / 网格 / tooltip / `aria-label` 都在共享外壳里（刷题模式那份包装同理）。
     `cells` 是函数而不是数组，为的是保留「收起时不计算」的懒加载
   - `MemoryFilterBar`：总览筛选栏，与 `ReviewFilterBar` 同构（图标 + 「展示卡片」+ 点线 + 搜索框 + 筛选按钮，展开后成组 ToggleGroup）；分组是「学习进度」与「复习进度」，筛选状态在 `src/features/memory/filters.ts`
-  - `MemoryOverview`：总览，与 `ReviewView` 同构（标题左对齐 + 只有关闭按钮 / 三张统计卡 + 热力图 + `MemoryFilterBar` + **同一套虚拟列表**）；每行是「题干 + 复制按钮 + 一句话状态 + 题号」，**不放连对圆点指示器**（状态用文字表达），点热力图小方块会滚到对应卡片
+  - `MemoryOverview`：总览，与 `ReviewView` 同构（标题左对齐 + 只有关闭按钮 / 三张统计卡 + 热力图 + `MemoryFilterBar` + **同一套虚拟列表**）；每行是「题干 + 复制按钮 + 一句话状态 + 题号」，**不放连对圆点指示器**（状态用文字表达），点热力图小方块会滚到对应卡片。那句状态文字本身是 `MemoryMasteryButton`（点两下「标熟」）
     - 列表直接复用 `components/review/QuestionListSection.svelte`：`withHeaders={false}`（记忆模式只有一种题型，不要那条 sticky 分组头）+ 一个 `row` snippet 画自己的行。**自定义行的根节点必须自己打 `data-review-question-id`**（虚拟滚动的跳转收敛靠它认「已挂载的行」）；用了 `row` 时列表不会去取 `QuizSession`（记忆模式没有 provide 它，硬取会抛错）
     - `QuestionGroup[].type` 在无头模式下没人读，但仍要给（`"memory"`）；结果为空时传 `[]`，列表据此显示 `emptyText`
     - 关闭总览要重置搜索词与筛选（与 `ReviewView` 同一段 `$effect`），否则下次打开会看到一份「少了半题库」的列表
 - 总览列表每张卡只显示**一句话**状态：`未学习` / `学习中` / `已掌握`，复习中的直接写「今天复习」「明天复习」「N 天后复习」「逾期 N 天」，不再出现「复习中」这个词，也不显示轮次进度；最右侧显示题号（与刷题模式的 `QuestionCard` 一致）
+- **总览里的状态文字是「标熟」按钮**（`MemoryMasteryButton`）：第一下只是确认态（绿底 `bg-success` + `text-success-foreground` 白字「标熟」，原状态文字 `invisible` 留在原地，「标熟」绝对定位盖上去——连点两下时按钮宽度不变），第二下才 `session.masterQuestion(id)`。已掌握的卡不给这个入口（终态，只留一句绿色的「已掌握」）。**这个功能只在总览里有**，答题区、热力图、设置面板都不放第二个入口
 - **算「还有几天到期」必须用 `session.now`**（它带上调试的时间偏移），不要直接 `Date.now()`；同理 `this.now` 是 getter 而不是函数，生产路径每次现算 `Date.now() + debugOffset`，这样调试里「加一天」能对已挂载的会话立刻生效（不要把偏移捕获进闭包）
 - `src/components/settings/MemorySettings.svelte`：与 `Settings.svelte` 同构，顺序设置直接复用 `QuestionOrder` 组件；掌握阈值用 `$lib/components/ui/slider`（**官方 shadcn-svelte 源码原样落地**，含 `slider-track` 那层横条，别自己重写）；最底部是快捷键说明
 - 记忆题型的 `Input.svelte`：只负责答案卡片（按钮在 `MemoryQuestionArea` 的按钮区，与刷题模式的「提交答案 / 视作正确」同一位置）；**不显示「答案」标签**
 - 答案多段的约定：`answer` 里一个换行符 `\n` = 一个段落（`splitAnswerParagraphs`，`src/quiz/types/memory/paragraphs.ts`），答题页与总览的 `Review.svelte` 都按段落渲染并留段间距（`my-3 first:mt-0 last:mb-0`）。Prompt 只要求 LLM 输出单个 `\n`，段间距由渲染层负责
-- 「结束本轮」按钮在内容区左上角、全局「展开侧边栏」按钮的正下方（`absolute left-5 top-[calc(env(safe-area-inset-top)+3.25rem)]`），体现层级
+- 答题区那一行（`MemoryView`）跟着内容流走，**不悬浮在顶部**：换行时不会盖住题干。两颗按钮平时压到 60%、悬停点亮并向右就位（见上）
 - **答题区的动效**（`MemoryQuestionArea`）：
   - **题干字号用 `Tween`（`svelte/motion`）驱动，不用 CSS transition**：字号动画要与答案 slide 共用同一条缓动（`circOut`），而 CSS 的 `transition-timing-function` 只能写 cubic-bezier / steps / linear()，没法引用 JS 缓动函数。Tween 把 0–1 的进度写进 `--reveal`（`style:--reveal={textReveal.current}`），字号档位（`--question-font` / `--answer-font` + line-height + 字重）留在组件 `<style>` 里插值，`@media (width>=40rem)` 覆盖 sm 档——响应式断点不跑到 JS 里
   - **「换了一次展示」和「同一次展示内部」必须分开**：Tween 是组件状态，不像 CSS transition 那样按元素各算。组件用 `$effect.pre` 比对 `presentationSeq` / `showResult`：序号变了就 `textReveal.set(1, { duration: 0 })` 直接落位（在 DOM 更新前，免得新题先以小字号闪一帧），只有同一次展示里 `showResult` 翻转才 `.target = 0 | 1` 走 200ms。**不要**用题目 id 当分界：同一张卡被排回队尾时元素复用，「从小变大」的假动画就回来了
@@ -759,9 +787,11 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - `tests/memoryMode.test.ts` — 校验与总览模型
 - `tests/memorySession.test.ts` — 两条流的状态流转、曲线、持久化
 - `tests/memoryImportExport.test.ts` — 记忆进度的导出 / 导入 round-trip
-- `tests/appShortcutsMemory.test.ts` — 记忆模式走**同一份**键盘分发：三档自评按键、答案页降级、`Esc` 结束本轮、⌘S / ⌘N 不再漏，以及输入框 / 对话框 / 交互目标的守卫
+- `tests/appShortcutsMemory.test.ts` — 记忆模式走**同一份**键盘分发：三档自评按键、答案页降级、`Esc` 退出本轮、⌘S / ⌘N 不再漏，以及输入框 / 对话框 / 交互目标的守卫
 - `tests/globalSettingsShortcut.test.ts` — 全局设置快捷键：⌘⇧I 的键位识别（与 ⌘I / 裸 ⇧+I / ⌘⇧⌥I 区分）、打开对话框并 `preventDefault`、对话框里与输入法组词时不介入
 - `tests/appShortcuts.test.ts` — 共用的窗口级快捷键派发；含「⌘⇧I 必须整套让给应用级处理」的回归（9 个选项时 `i` 正好是第 9 个选项的字母，拦不住会顺手选中并提交），以及「宿主没有的能力（活动池 / 会话）不该被误触发」
+- `tests/syncNowShortcut.test.ts` — 同步快捷键 ⌘Y：键位识别、**关掉云同步时完全不碰按键**、
+  接线到页头（按一下真的 `syncEngine.sync` / 红点是打开全局设置 / 跑着时是空操作）
 - `tests/sync.test.ts` — 云同步纯逻辑：配置校验与掩码（令牌绝不能进云端）、压缩往返、
   **逐题库**三方合并（含删除 / 无基准 / 老格式兜底）、general 逐字段合并、冲突裁决、元数据净化
 - `tests/syncSupport.ts` — 同步测试脚手架：内存 Gitee 替身 + **多设备 localStorage** + 可控时钟。

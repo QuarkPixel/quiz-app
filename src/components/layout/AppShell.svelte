@@ -8,6 +8,8 @@
     import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import { syncEngine } from "@/features/sync/engine.svelte";
+    import { handleSyncNowShortcut } from "@/features/sync/shortcut";
+    import { modKeyLabel } from "$lib/platform";
 
     interface Props {
         headerStart?: Snippet;
@@ -98,6 +100,16 @@
     );
 
     /**
+     * 悬浮提示 / 无障碍文案：状态说明后面挂上快捷键，省得这个键只活在说明面板里。
+     *
+     * 只在真的按得动时挂（`clickable`）——正在同步时 ⌘Y 与点击一样是空操作，
+     * 那会儿提示它反而是骗人。
+     */
+    const indicatorText = $derived(
+        clickable ? `${indicatorLabel}（${modKeyLabel}+Y）` : indicatorLabel,
+    );
+
+    /**
      * 点一下：
      *   - **红色**（有冲突 / 报错）：把人送到全局设置。冲突要在那儿选保留哪一边；
      *     报错（令牌失效、Gist 被删……）也是在那儿修——这两件事再同步一次都解决不了。
@@ -114,6 +126,18 @@
             return;
         }
         void syncEngine.sync();
+    }
+
+    /**
+     * ⌘Y 走**同一个** `onClick`——「红点去设置、否则同步一次」这条规则不写第二遍，
+     * 快捷键与点击就不会各自漂移（判定与上下文守卫在 `sync/shortcut.ts`）。
+     *
+     * 窗口监听挂在这里而不是答题视图里：指示点住在这儿，而且它始终挂载
+     * ——没有题库的空状态也要能按（新设备打开正是为了把云端题库拉下来）。
+     * 云同步关掉时 `enabled` 为假，那次按键我们完全不碰。
+     */
+    function onWindowKeydown(event: KeyboardEvent): void {
+        handleSyncNowShortcut(event, { enabled: syncEnabled, run: onClick });
     }
 
     function forwardWheelToMainScroll(event: WheelEvent): void {
@@ -170,8 +194,8 @@
                                 ? "group cursor-pointer"
                                 : "cursor-default",
                         )}
-                        title={indicatorLabel}
-                        aria-label={indicatorLabel}
+                        title={indicatorText}
+                        aria-label={indicatorText}
                         aria-disabled={!clickable}
                         onclick={onClick}
                     >
@@ -197,6 +221,9 @@
         {@render children?.()}
     </div>
 </div>
+
+<!-- ⌘Y：跟指示点同一个动作（云同步关着时这个监听什么都不做） -->
+<svelte:window onkeydown={onWindowKeydown} />
 
 <style>
     .app-shell-backdrop {

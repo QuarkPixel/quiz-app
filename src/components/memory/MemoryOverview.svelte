@@ -12,6 +12,7 @@
     import MemoryStatsCards from "./MemoryStatsCards.svelte";
     import MemoryHeatmapSection from "./MemoryHeatmapSection.svelte";
     import MemoryFilterBar from "./MemoryFilterBar.svelte";
+    import MemoryMasteryButton from "./MemoryMasteryButton.svelte";
     import {
         createMemoryFilterState,
         describeMemoryScope,
@@ -21,7 +22,7 @@
     } from "@/features/memory/filters";
     import { useQuizSource } from "@/source/context";
     import { toastStore } from "@/features/toast.svelte";
-    import type { MemoryProgress, MemoryQuestion } from "@/types";
+    import type { MemoryQuestion } from "@/types";
     import { cn, isCoarsePointer } from "$lib/utils";
 
     // 与 ReviewView.svelte 同构：同样的 Dialog 外壳、同样的顶部三道 Card、
@@ -128,33 +129,6 @@
 
     /** 是否收窄了卡片范围：导出按钮只在收窄后才有意义（与刷题模式同一判定） */
     const scopeApplied = $derived(hasMemoryScope(filter, searchTerm));
-
-    /**
-     * 每道卡片只显示一句话的状态：
-     *   未学习 / 学习中 / 已掌握；复习中直接写「N 天后复习」，
-     *   不再重复「复习中」这个词，也不显示「3/5」这种轮次进度。
-     */
-    function describeStatus(
-        item: MemoryProgress | undefined,
-        now: number,
-    ): string {
-        if (!item) return "未学习";
-        if (item.state === "mastered") return "已掌握";
-        if (item.state === "learning") return "学习中";
-        const days = Math.round((startOfDay(item.nextDue) - now) / 86_400_000);
-        if (days < 0) return `逾期 ${-days} 天`;
-        if (days === 0) return "今天复习";
-        if (days === 1) return "明天复习";
-        return `${days} 天后复习`;
-    }
-
-    /** 状态文字沿用现有调色板：未学习灰、学习中 warning、复习中中性、已掌握 success。 */
-    function stateClass(item: MemoryProgress | undefined): string {
-        if (!item) return "text-foreground/40";
-        if (item.state === "mastered") return "text-success";
-        if (item.state === "learning") return "text-warning";
-        return "text-foreground/60";
-    }
 
     // 与 ReviewView 同一口径：现在只有一种运行形态，任何题库都可以导出为新题库。
     const canExport = true;
@@ -274,12 +248,14 @@
                                 />
                             {/snippet}
                             {#snippet trailing()}
-                                <!-- 这里不放连对圆点指示器，只用一句话说明状态 -->
-                                <span
-                                    class="text-xs font-medium {stateClass(item)}"
-                                >
-                                    {describeStatus(item, today)}
-                                </span>
+                                <!-- 状态文字本身就是「标熟」按钮：点两下确认
+                                     （这个入口不在别处出现，见 MemoryMasteryButton） -->
+                                <MemoryMasteryButton
+                                    {item}
+                                    {today}
+                                    onMaster={() =>
+                                        session.masterQuestion(question.id)}
+                                />
                                 <span
                                     class="text-muted-foreground font-mono text-xs"
                                 >

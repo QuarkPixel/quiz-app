@@ -265,6 +265,20 @@ describe("Mod 快捷键派发", () => {
     expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 
+  it("Cmd+Y (同步) → 不抢，留给 AppShell 的窗口监听（题目级也不许接）", () => {
+    // 25 个选项时 `y` 正好是第 25 个选项的字母：带修饰键的分支必须在这儿
+    // 整体返回，不能漏到下面的题目级分发里去。
+    const session = makeSessionStub(false, { optionCount: 25 });
+    const ui = makeUiStub();
+    const ev = mkEvent({ metaKey: true, key: SHORTCUTS.syncNow });
+
+    createAppKeyboardHandler(session, ui)(ev);
+
+    expect(session.selectedAnswers).toEqual([]);
+    expect(session.submit).not.toHaveBeenCalled();
+    expect(ev.preventDefault).not.toHaveBeenCalled();
+  });
+
   it("Cmd+Shift+P → 不触发（要求纯 Cmd+key 组合）", () => {
     const session = makeSessionStub();
     const ui = makeUiStub();

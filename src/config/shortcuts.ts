@@ -28,6 +28,8 @@ export const SHORTCUTS = {
   importProgress: "w",
   /** 导出进度到剪贴板 */
   exportProgress: "e",
+  /** 立即同步（等价于点页头的同步指示点；云同步关掉时连这个键一起没有） */
+  syncNow: "y",
 } as const;
 
 export type ShortcutId = keyof typeof SHORTCUTS;
@@ -62,6 +64,8 @@ export const APP_SHORTCUTS: Record<ShortcutId, AppShortcutMeta> = {
   toggleSound: { kbd: "S", label: "开关音效" },
   importProgress: { kbd: "W", label: "从剪贴板导入进度" },
   exportProgress: { kbd: "E", label: "导出进度到剪贴板" },
+  // 只有开着云同步时才有这个键（那时页头才有那颗指示点），所以说明不用带条件
+  syncNow: { kbd: "Y", label: "立即同步" },
 };
 
 /**
@@ -80,6 +84,7 @@ export const LISTED_SHORTCUTS: readonly ShortcutId[] = [
   "toggleAutoNext",
   "toggleSound",
   "toggleGlobalSettings",
+  "syncNow",
 ];
 
 /** 不进说明面板的快捷键：要么由别的 UI 自己表达（侧边栏 / 活动池按钮），要么太冷门。 */

@@ -1731,3 +1731,261 @@ describe("答对自动下一题（全局设置）", () => {
     expect(session.currentQuestion!.id).toBe(first);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 总览里的「标熟」与答题区的「结束本轮」：两个都在总览 / 容器那边触发，
+// 但状态变迁全在会话层，所以在这里钉住不变量
+// ---------------------------------------------------------------------------
+
+/** 今天到期的一张复习卡（`createReviewProgress` 排的是明天，用不了） */
+function dueCard(): MemoryProgressMap[string] {
+  return { ...createReviewProgress(BASE_TIME), nextDue: startOfDay(BASE_TIME) };
+}
+
+describe("记忆模式：总览里「标熟」", () => {
+  it("把学习中 / 复习中的卡直接标成已掌握：阶梯清零、lapses 保留、落盘", () => {
+    const hash = "memory_master_question_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {
+          a: createLearningProgress(2, 5),
+          b: createReviewProgress(BASE_TIME),
+        },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+    const session = makeSession(["a", "b"], { hash });
+
+    session.masterQuestion("a");
+
+    // 与 advanceReview 走完阶梯的终态同形：level / streak / nextDue 一起清零
+    expect(session.progress.a).toEqual({
+      state: "mastered",
+      level: 0,
+      streak: 0,
+      nextDue: 0,
+      lapses: 5,
+    });
+    expect(session.masteredCount).toBe(1);
+    // masteredIds 是 progress 的投影，标熟后必须跟着同步（导出文件名会数它）
+    expect(session.appState.masteredIds).toEqual(["a"]);
+    // 落盘：刷新之后仍然是已掌握
+    expect(loadStoredState(hash).memory?.progress.a.state).toBe("mastered");
+    expect(loadStoredState(hash).masteredIds).toEqual(["a"]);
+    // 已掌握是终态：两张卡里一张毕业、剩下那张还在复习
+    expect(session.reviewingCount).toBe(1);
+    expect(session.learningCount).toBe(0);
+  });
+
+  it("标熟的正好是当前这一题：它离开本轮队列，自动出下一题", () => {
+    const hash = "memory_master_current_hash";
+    const session = makeSession(["a", "b"], { hash });
+    session.updateBankSettings({ selectionMode: "sequential" });
+    session.startLearning();
+
+    const first = session.currentQuestion!.id;
+    const other = first === "a" ? "b" : "a";
+    expect(session.appState.activePool.map((item) => item.id).sort()).toEqual([
+      "a",
+      "b",
+    ]);
+
+    session.masterQuestion(first);
+
+    // 当前这一题不该留在屏幕上，也不该再留在活动池里
+    expect(session.currentQuestion?.id).toBe(other);
+    expect(session.appState.activePool.map((item) => item.id)).toEqual([other]);
+    expect(session.run, "标熟当前题不等于结束本轮").toBe("learning");
+  });
+
+  it("复习轮里标熟：算作「今日已复习」，进度条的分母不悬着", () => {
+    const hash = "memory_master_review_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: { a: dueCard(), b: dueCard() },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+    const session = makeSession(["a", "b"], { hash });
+    session.startReview();
+    expect(session.reviewTotal).toBe(2);
+
+    session.masterQuestion("a");
+
+    // 分母还是 2（这一轮本来要复习两道），已复习里补上被标熟的那一道
+    expect(session.reviewTotal).toBe(2);
+    expect(session.reviewDoneCount).toBe(1);
+    expect(session.appState.activePool.map((item) => item.id)).toEqual(["b"]);
+  });
+
+  it("已掌握的卡再标一次是空操作；题库里没有的 id 也不动状态", () => {
+    const hash = "memory_master_noop_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: { a: createReviewProgress(BASE_TIME) },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+    const session = makeSession(["a"], { hash });
+    const before = session.appState;
+
+    session.masterQuestion("a");
+    const afterFirst = session.appState;
+    session.masterQuestion("a");
+    session.masterQuestion("nope");
+
+    expect(afterFirst).toBe(session.appState);
+    expect(session.appState).not.toBe(before);
+    expect(session.appState.masteredIds).toEqual(["a"]);
+  });
+
+  it("「答错后重新连对」的待办跟着一起清掉（它已经毕业了）", () => {
+    const hash = "memory_master_retry_hash";
+    const dayAfterBase = addDays(startOfDay(BASE_TIME), 1) + 6 * 60 * 60_000;
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: { a: createReviewProgress(BASE_TIME) },
+        settings: createDefaultMemorySettings(),
+        retry: { day: studyDay(dayAfterBase), targets: { a: 3 } },
+      },
+    });
+    const session = makeSession(["a"], { hash, now: dayAfterBase });
+    expect(session.pendingRetryCount).toBe(1);
+
+    session.masterQuestion("a");
+
+    expect(session.pendingRetryCount).toBe(0);
+    expect(loadStoredState(hash).memory?.retry).toBeUndefined();
+  });
+});
+
+describe("记忆模式：结束本轮（本轮作废并退出到首页）", () => {
+  it("学习轮：本轮作废、回首页，计数与轮内连对一起清零并落盘", () => {
+    const hash = "memory_end_round_hash";
+    const ids = ["a", "b", "c", "d", "e", "f", "g"];
+    const session = makeSession(ids, { hash });
+    session.updateBankSettings({ selectionMode: "sequential" });
+    session.updateMemorySettings({ roundTarget: 5 });
+    session.startLearning();
+
+    // 在本轮里答对一次：轮内连对 1，但这张卡还没学会（N = 3）
+    const answeredId = session.currentQuestion!.id;
+    answer(session, true);
+    expect(session.progress[answeredId]?.streak).toBe(1);
+    expect(session.appState.activePool).toHaveLength(5);
+    expect(session.roundGoal).toBe(5);
+
+    session.endRound();
+
+    // 和「退出本轮」一样回首页（不是留在答题区里重开一轮）
+    expect(session.run).toBe("idle");
+    expect(session.currentQuestion).toBeNull();
+    expect(session.roundMastered).toBe(0);
+    expect(session.roundGoal).toBe(0);
+    // 池子与轮内连对一起作废：下次点「学习新的题目」是**新的一轮**
+    expect(session.appState.activePool).toEqual([]);
+    expect(session.hasOngoingRound).toBe(false);
+    expect(
+      Object.values(session.progress).every((item) => item.streak === 0),
+    ).toBe(true);
+    // 没学完的一轮不算「今天学过一轮」，首页学习入口该保持高亮
+    expect(session.learnedToday).toBe(false);
+    // 落盘
+    expect(loadStoredState(hash).roundMastered).toBe(0);
+    expect(loadStoredState(hash).activePool).toEqual([]);
+  });
+
+  it("下次点「学习新的题目」重新挑一批卡（不是接着上一轮）", () => {
+    const hash = "memory_end_round_next_hash";
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const session = makeSession(ids, { hash });
+    session.updateBankSettings({ selectionMode: "sequential" });
+    session.updateMemorySettings({ roundTarget: 5 });
+    session.startLearning();
+
+    const answeredId = session.currentQuestion!.id;
+    answer(session, true);
+    session.endRound();
+    session.startLearning();
+
+    expect(session.run).toBe("learning");
+    expect(session.roundGoal).toBe(5);
+    expect(session.roundCompletedCount).toBe(0);
+    expect(session.appState.activePool).toHaveLength(5);
+    // 上一轮那张卡的轮内连对不作数，池子里的条目也从 0 开始
+    expect(session.progress[answeredId]?.streak).toBe(0);
+    expect(
+      session.appState.activePool.every(
+        (item) => item.consecutiveCorrect === 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("「退出本轮」与「结束本轮」都回首页，区别只在轮次留不留", () => {
+    const hash = "memory_exit_vs_end_hash";
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const session = makeSession(ids, { hash });
+    session.updateBankSettings({ selectionMode: "sequential" });
+    session.updateMemorySettings({ roundTarget: 5 });
+    session.startLearning();
+
+    const answeredId = session.currentQuestion!.id;
+    answer(session, true);
+    const poolBefore = session.appState.activePool.map((item) => item.id);
+
+    session.exitSession();
+    expect(session.run).toBe("idle");
+    // 退出只是回首页：池子与轮内连对都留着，下次接着这一轮
+    expect(session.appState.activePool.map((item) => item.id)).toEqual(
+      poolBefore,
+    );
+    expect(session.progress[answeredId]?.streak).toBe(1);
+    expect(session.hasOngoingRound).toBe(true);
+
+    session.startLearning();
+    expect(session.appState.activePool.map((item) => item.id)).toEqual(
+      poolBefore,
+    );
+
+    session.endRound();
+    expect(session.run).toBe("idle");
+    expect(session.appState.activePool).toEqual([]);
+    expect(session.hasOngoingRound).toBe(false);
+  });
+
+  it("复习轮没有「结束」：调用它什么都不做（复习队列不是「一轮」）", () => {
+    const hash = "memory_end_round_review_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: { a: dueCard(), b: dueCard() },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+    const session = makeSession(["a", "b"], { hash });
+    session.startReview();
+    const before = session.appState;
+
+    session.endRound();
+
+    expect(session.run).toBe("reviewing");
+    expect(session.appState).toBe(before);
+    expect(session.currentQuestion).not.toBeNull();
+  });
+
+  it("没在答题时（首页）是空操作", () => {
+    const session = makeSession(["a", "b"], {
+      hash: "memory_restart_idle_hash",
+    });
+    const before = session.appState;
+
+    session.endRound();
+
+    expect(session.run).toBe("idle");
+    expect(session.appState).toBe(before);
+  });
+});

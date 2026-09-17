@@ -54,7 +54,7 @@ export interface KeyboardSession {
   blankAnswerInputs?: string[];
   /** 刷题模式才有：新题入池预览态 */
   isPreviewingNewQuestion?: boolean;
-  /** 记忆模式才有：本轮会话是否正在进行（决定 Esc 是否要结束本轮） */
+  /** 记忆模式才有：本轮会话是否正在进行（决定 Esc 是否要退出本轮） */
   isSessionActive?: boolean;
 
   copyCurrentQuestion(
@@ -101,6 +101,8 @@ function buildModHandlers(
     sidebar: null,
     // ⌘⇧I 由窗口级的应用监听打开全局设置，见 `globalSettingsShortcut.ts`
     toggleGlobalSettings: null,
+    // ⌘Y 由 AppShell 的窗口监听做「点一下同步指示点」，见 `sync/shortcut.ts`
+    syncNow: null,
 
     togglePool: session.togglePool
       ? () => {
@@ -151,15 +153,16 @@ function buildModHandlers(
 /**
  * 按键字母 → 快捷键 id。
  *
- * 从 `SHORTCUTS` 推出来，不手抄一份字母表。`toggleGlobalSettings` 要跳过：
- * 它带 ⇧、而且和 `toggleSettings` 共用字母 `i`，进表会互相覆盖
- * （带 ⇧ 的版本在 `isGlobalSettingsShortcut` 那里就整体放行了）。
+ * 从 `SHORTCUTS` 推出来，不手抄一份字母表。下面这两个要跳过，它们在这一层
+ * 没有处理器（`buildModHandlers` 里是 `null`），进表只会白占一个键位：
+ *   - `toggleGlobalSettings`：带 ⇧、而且和 `toggleSettings` 共用字母 `i`，
+ *     进表会互相覆盖（带 ⇧ 的版本在 `isGlobalSettingsShortcut` 那里整体放行）；
+ *   - `syncNow`：⌘Y 有自己的窗口监听（`sync/shortcut.ts`）。
  */
 const MOD_KEY_TO_ID = new Map<string, ShortcutId>(
-  SHORTCUT_IDS.filter((id) => id !== "toggleGlobalSettings").map((id) => [
-    SHORTCUTS[id],
-    id,
-  ]),
+  SHORTCUT_IDS.filter(
+    (id) => id !== "toggleGlobalSettings" && id !== "syncNow",
+  ).map((id) => [SHORTCUTS[id], id]),
 );
 
 export function createAppKeyboardHandler(
@@ -202,7 +205,7 @@ export function createAppKeyboardHandler(
       return;
     }
 
-    // Esc：记忆模式「结束本轮」（刷题模式没有这个概念，不实现就不响应）
+    // Esc：记忆模式「退出本轮」（刷题模式没有这个概念，不实现就不响应）
     if (event.key === "Escape") {
       if (session.isSessionActive) session.exitSession?.();
       return;

@@ -550,6 +550,116 @@ export class MemorySession {
     };
   }
 
+  // ── 整轮的动作（总览里的「标熟」 / 答题区的「结束本轮」） ────────────
+
+  /**
+   * 把一张卡直接标为已掌握（总览里点两下「标熟」）。
+   *
+   * 终态与走完复习阶梯得到的「已掌握」完全一致：`state = "mastered"`，
+   * level / streak / nextDue 一起清零（与 `advanceReview` 的最后一步同形），
+   * `lapses` 原样保留——它是累计答错次数，不属于复习阶梯。
+   *
+   * 这张卡可能正待在本轮里（甚至就是当前这一题），所以三处一起清：活动池与
+   * 暂存的学习池、本轮队列、以及「答错后重新连对」的落盘待办。它在复习轮里
+   * 也顺手记成「今日已复习」，否则进度条会永远停在 4 / 5。
+   */
+  masterQuestion(id: string): void {
+    if (!this.questions.some((q) => q.id === id)) return;
+    const current = this.progress[id];
+    if (current?.state === "mastered") return;
+
+    const wasCurrent = this.currentQuestion?.id === id;
+    const inRound = this.appState.activePool.some((item) => item.id === id);
+
+    this.appState = this.withSyncedMasteredIds({
+      ...this.appState,
+      activePool: this.appState.activePool.filter((item) => item.id !== id),
+      learningPool: this.appState.learningPool?.filter(
+        (item) => item.id !== id,
+      ),
+      memory: this.writeProgress(this.appState, id, {
+        state: "mastered",
+        level: 0,
+        streak: 0,
+        nextDue: 0,
+        lapses: current?.lapses ?? 0,
+      }),
+    });
+
+    this.queue = this.queue.filter((item) => item.id !== id);
+    this.shownIds = this.shownIds.filter((shown) => shown !== id);
+    this.failedThisRound = this.failedThisRound.filter((other) => other !== id);
+    if (id in this.reviewTarget) {
+      const rest = { ...this.reviewTarget };
+      delete rest[id];
+      this.reviewTarget = rest;
+    }
+    this.clearRetryTarget(id);
+    if (this.run === "reviewing" && inRound) this.markReviewed(id);
+
+    // 学习轮少了一张就补一张进来：池子始终是满的（与 `graduateInLearning` 同一条规矩）
+    if (this.run === "learning") this.fillActivePool();
+    this.save();
+
+    // 标熟的正好是当前这一题：别把它留在屏幕上，照常走「下一题」
+    if (wasCurrent) this.selectNext();
+  }
+
+  /**
+   * 「结束本轮」：这一轮作废，然后**退出到首页**（和 `exitSession` 一样离开答题区）。
+   *
+   * 与「退出本轮」的区别只在轮次留不留：
+   *   - 退出（`exitSession`）：回首页，这一轮留着，下次点「学习新的题目」接着学；
+   *   - 结束（这里）：回首页，本轮的计数、池子与轮内连对一起作废，
+   *     下次点「学习新的题目」是**新的一轮**（tooltip 那句「下次开启新一轮」）。
+   *
+   * 只认学习轮：复习轮没有「结束」这个概念（复习队列就是「今天还欠什么」，
+   * 按钮也不在那边显示），所以这里不是学习轮就什么都不做。
+   */
+  endRound(): void {
+    if (this.run !== "learning") return;
+
+    this.queue = [];
+    this.currentQuestion = null;
+    this.showResult = false;
+    this.selectedAnswers = [];
+    this.shownIds = [];
+    this.reviewTarget = {};
+    this.roundMastered = 0;
+    this.roundGoal = 0;
+    this.run = "idle";
+    this.appState = {
+      ...this.appState,
+      activePool: [],
+      // 复习期间暂存的那份学习池同样作废：它属于刚被结束的这一轮
+      learningPool: undefined,
+      memory: this.clearLearningStreaks(),
+    };
+    // 这里**不写** `learnedDay`：没学完的一轮不算「今天学过一轮」，
+    // 首页的学习入口该保持高亮（和 `exitSession` 同一口径）
+    this.save();
+  }
+
+  /**
+   * 把「学习中」卡片的轮内连对清零（只给 `endRound` 用）。
+   *
+   * `progress.streak` 是**轮内**的计数（见「两个必须分开的概念」）：这一轮既然
+   * 作废，它就该跟着归零，否则新的一轮会从「2 / 3」接着数——那不叫重新开始。
+   */
+  private clearLearningStreaks(
+    base: RuntimeState = this.appState,
+  ): MemoryStoredState {
+    const progress: MemoryProgressMap = { ...(base.memory?.progress ?? {}) };
+    let changed = false;
+    for (const [id, item] of Object.entries(progress)) {
+      if (item.state !== "learning" || item.streak === 0) continue;
+      progress[id] = { ...item, streak: 0 };
+      changed = true;
+    }
+    if (!changed) return base.memory ?? this.memorySection(base, {});
+    return this.memorySection(base, { progress });
+  }
+
   // ── 本轮「答错后重新连对」的待办 ────────────────────────────────────
   //
   // 答错时把「这道卡本轮还要连对 N 次」写进 `state.memory.retry`（落盘），
