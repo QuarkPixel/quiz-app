@@ -1008,7 +1008,7 @@ export class MemorySession {
 
   /**
    * 推进掌握阶梯：level +1，间隔按 `2^(level-1)` 天安排；
-   * 超过掌握阈值 M 就变成「已掌握」，level / streak 一起清零。
+   * 超过掌握阈值 就变成「已掌握」，level / streak 一起清零。
    */
   private advanceMastery(id: string): RuntimeState {
     const current = this.appState.memory?.progress[id];

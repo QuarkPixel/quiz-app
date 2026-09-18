@@ -2,7 +2,7 @@
     import { useMemorySession } from "@/features/memory/context";
     import {
         cumulativeIntervalDays,
-        MEMORY_GRADUATE_LEVEL_BOUNDS,
+        MEMORY_GRADUATE_LEVEL_BOUNDS as BOUNDS,
     } from "@/features/memory/algorithm";
     import { BANK_SETTINGS_BOUNDS } from "@/bankSettings";
     import { MEMORY_SETTINGS_BOUNDS } from "@/features/memory/settings";
@@ -11,7 +11,7 @@
     import ShortcutHelp from "./ShortcutHelp.svelte";
     import { Button } from "$lib/components/ui/button";
     import { Label } from "$lib/components/ui/label";
-    import { Slider } from "$lib/components/ui/slider";
+    import * as Slider from "$lib/components/ui/slider";
     import { Separator } from "$lib/components/ui/separator";
     import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
@@ -25,6 +25,7 @@
     import SettingsDialog from "./SettingsDialog.svelte";
     import SettingsSection from "./SettingsSection.svelte";
     import SettingNumberRow from "./SettingNumberRow.svelte";
+    import AnimatedNumber from "$lib/components/AnimatedNumber.svelte";
 
     // 面板内容按模式各写各的（记忆模式多了「掌握阈值」），同构的部分——Dialog 外壳、
     // section 标题、数字行、快捷键表——都走共用组件，不再像以前那样两边各抄一遍。
@@ -84,35 +85,63 @@
     <SettingsSection title="学习顺序">
         <QuestionOrder
             activeOrder={session.appState.settings.selectionMode}
-            onSelect={(v) =>
-                session.updateBankSettings({ selectionMode: v })}
+            onSelect={(v) => session.updateBankSettings({ selectionMode: v })}
         />
     </SettingsSection>
 
     <Separator />
 
-    <!-- 掌握阈值：唯一的 shadcn Slider -->
-    <SettingsSection title="掌握阈值 M" class="gap-3">
-        <div class="flex items-baseline justify-between gap-3">
-            <Label for="memory-threshold" class="text-sm font-normal">
-                复习 {threshold} 次后算已掌握
-            </Label>
-            <span class="text-muted-foreground font-mono text-xs">
-                约 {totalDays} 天
-            </span>
+    <!-- 掌握阈值：唯一的 shadcn Slider。刻度与刻度标签走 ui/slider 的
+         `Tick` / `TickLabel`——`step` 用整数 1（值域就是 3..10 这两端的层级），
+         刻度按**层级**等距排开；标签反过来显示该层级的累计天数（2^(n-1) 曲线，
+         按天排会挤成一坨，见 `cumulativeIntervalDays`）。 -->
+    <SettingsSection title="掌握阈值" class="gap-3">
+        <!-- 刻度标签挂在轨道下方（`position="bottom"`），底下这点 pb 就是它们的高度 -->
+        <div class="pb-5 pt-8">
+            <Slider.Root
+                id="memory-threshold"
+                type="single"
+                min={BOUNDS.min}
+                max={BOUNDS.max}
+                step={1}
+                value={threshold}
+                onValueChange={(value) =>
+                    session.updateMemorySettings({ graduateLevel: value })}
+                trackPadding={3}
+            >
+                {#snippet children({ tickItems })}
+                    <span
+                        class="bg-muted relative h-1.5 w-full grow cursor-pointer overflow-hidden rounded-full"
+                    >
+                        <Slider.Range />
+                    </span>
+                    <Slider.Thumb index={0} aria-label="复习次数" />
+                    <Slider.ThumbLabel
+                        index={0}
+                        class="bg-muted text-foreground mb-2.5 text-nowrap rounded-md px-2 py-1 text-sm"
+                    >
+                        {threshold}
+                    </Slider.ThumbLabel>
+                    {#each tickItems as { index, value } (index)}
+                        <Slider.Tick {index} />
+                        <Slider.TickLabel
+                            {index}
+                            position="bottom"
+                            class="mt-2 text-[10px] leading-none w-max"
+                        >
+                            {cumulativeIntervalDays(value)}天
+                        </Slider.TickLabel>
+                    {/each}
+                {/snippet}
+            </Slider.Root>
         </div>
-        <Slider
-            type="single"
-            id="memory-threshold"
-            aria-label="掌握阈值"
-            min={MEMORY_GRADUATE_LEVEL_BOUNDS.min}
-            max={MEMORY_GRADUATE_LEVEL_BOUNDS.max}
-            step={1}
-            value={threshold}
-            onValueChange={(v) =>
-                typeof v === "number" &&
-                session.updateMemorySettings({ graduateLevel: v })}
-        />
+        <div class="flex items-baseline justify-start gap-3">
+            <Label for="memory-threshold" class="text-xs font-normal opacity-60">
+                复习连续正确<AnimatedNumber
+                    value={threshold}
+                />次后为掌握，共需约<AnimatedNumber value={totalDays} />天。
+            </Label>
+        </div>
     </SettingsSection>
 
     <Separator />
