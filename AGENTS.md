@@ -211,6 +211,10 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   但低于 Toast 的 `z-(--z-toast)`）
 - `src/lib/components/ui/drawer/` — shadcn-svelte 的 drawer（vaul-svelte）。**手动装的**：
   registry 里的占位符 `$UTILS$` 要替换成 `$lib/utils`，否则编译不过
+- `src/lib/components/AnimatedNumber.svelte` — **会滚的数字的唯一入口**（`value` / `format` / `class`）：
+  `{#await preloadNumberFlow()}` + `formatNumberFallback` 的兜底写在这一处，`$lib/numberFlow.ts`
+  只管拉包。进度条那三个数字与「掌握阈值」那行文案（`MemorySettings.svelte`）都用它；
+  要显示会滚的数字**不要再内联抄一遍 `{#await}`**，否则数字滚动只在抄过的地方有
 - 「更多设置」是个自己写的折叠区：`detailsOpen` 决定内容在不在 DOM 里，
   再交给 `transition:slide` 做进出场（试过官方 Collapsible / 原生 `<details>`，
   都没有进出场动画）。展开后**就一行**：`自动同步 [switch] ｜ 覆盖按钮 ×2`，

@@ -6,10 +6,7 @@
         MASTERED_CELEBRATE_DURATION_MS,
     } from "@/config";
     import { cn } from "$lib/utils";
-    import {
-        preloadNumberFlow,
-        formatNumberFallback,
-    } from "$lib/numberFlow";
+    import AnimatedNumber from "$lib/components/AnimatedNumber.svelte";
 
     interface Props {
         stats: Stats;
@@ -141,51 +138,26 @@
     });
 </script>
 
-<!--
-    一个会滚的数字。
-
-    `@number-flow/svelte` 是动态拉的（见 `$lib/numberFlow.ts`），所以这里用
-    `{#await}` 把它兜住：包还没到时先写纯文本——同一个 `Intl` 格式化结果，
-    长得一模一样，只是不滚动；到了之后换成 `NumberFlow`，此后的变化照常动画。
-    三个数字共用同一个 Promise，只会拉一次。
--->
-{#snippet counter(
-    value: number,
-    format?: Intl.NumberFormatOptions,
-    className?: string,
-)}
-    {#await preloadNumberFlow()}
-        <span class={className}>{formatNumberFallback(value, format)}</span>
-    {:then engine}
-        <engine.Component
-            plugins={[engine.continuous]}
-            {value}
-            {format}
-            class={className}
-        />
-    {/await}
-{/snippet}
-
 {#snippet barContent()}
     <div
         class="text-muted-foreground mb-1.5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end text-xs tabular-nums"
     >
         <div class="justify-self-start">
-            {@render counter(progressRangeStart)}
+            <AnimatedNumber value={progressRangeStart} />
         </div>
         {#if label !== undefined}
             <span class="justify-self-center text-[smaller] font-mono opacity-70">
                 {label}
             </span>
         {:else}
-            {@render counter(
-                progressPercent,
-                { style: "percent", maximumFractionDigits: 2 },
-                "justify-self-center text-[smaller] font-mono opacity-70",
-            )}
+            <AnimatedNumber
+                value={progressPercent}
+                format={{ style: "percent", maximumFractionDigits: 2 }}
+                class="justify-self-center text-[smaller] font-mono opacity-70"
+            />
         {/if}
         <div class="justify-self-end">
-            {@render counter(progressRangeEnd)}
+            <AnimatedNumber value={progressRangeEnd} />
         </div>
     </div>
     <div
