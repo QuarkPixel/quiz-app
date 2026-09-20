@@ -259,6 +259,18 @@ function normalizeRowMeta(value: unknown): SyncRowMeta | null {
   };
 }
 
+/** 读「第一次看到冲突」的记录：题库行键 → 时间戳（毫秒）。 */
+function normalizeConflicts(value: unknown): Record<string, number> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<string, number> = {};
+  for (const [key, at] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof at === "number" && Number.isFinite(at) && at > 0) result[key] = at;
+  }
+  return result;
+}
+
 /** 读取同步元数据。 */
 export function loadSyncMeta(): SyncMeta {
   const raw = readLocal(STORAGE_KEY_SYNC_META);
@@ -270,6 +282,7 @@ export function loadSyncMeta(): SyncMeta {
       bootstrapped?: unknown;
       rows?: unknown;
       generalBaseline?: unknown;
+      conflicts?: unknown;
     };
     const rows: Record<string, SyncRowMeta> = {};
     if (
@@ -291,6 +304,7 @@ export function loadSyncMeta(): SyncMeta {
       bootstrapped: parsed.bootstrapped === true,
       rows,
       generalBaseline: normalizeGeneralOrNull(parsed.generalBaseline),
+      conflicts: normalizeConflicts(parsed.conflicts),
     };
   } catch (e) {
     console.warn("Failed to parse sync meta:", e);

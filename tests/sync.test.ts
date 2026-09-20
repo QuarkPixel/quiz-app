@@ -182,7 +182,13 @@ function metaWith(
   for (const [name, hash] of Object.entries(rows)) {
     map[name] = { remoteHash: hash, syncedAt: 500, remoteUpdatedAt: 500 };
   }
-  return { lastSyncedAt: 500, bootstrapped: true, rows: map, generalBaseline };
+  return {
+    lastSyncedAt: 500,
+    bootstrapped: true,
+    rows: map,
+    generalBaseline,
+    conflicts: {},
+  };
 }
 
 const HASH_A = "aaaabbbbccccdddd";
@@ -1169,6 +1175,30 @@ describe("同步元数据", () => {
     expect(meta.rows[bankRowKey(HASH_A)]?.remoteHash).toBe("h");
     expect(meta.rows[bankRowKey(HASH_A)]?.shard).toBe(4);
     expect(meta.generalBaseline).toEqual(baseline);
+  });
+
+  test("「第一次看到冲突」的时间跟着元数据一起存下来（面板那行小字要跨刷新）", () => {
+    saveSyncMeta({
+      ...emptySyncMeta(),
+      conflicts: { [HASH_A]: 1700000000000, [HASH_B]: 0 },
+    });
+
+    // 0 / 负数这类写坏的值读回来时被丢掉，别让面板显示「1970 年」
+    expect(loadSyncMeta().conflicts).toEqual({ [HASH_A]: 1700000000000 });
+  });
+
+  test("老版本的元数据（没有 conflicts 段）读出来是空记录，不是 undefined", () => {
+    localStorage.setItem(
+      "quiz_app_sync_meta",
+      JSON.stringify({
+        lastSyncedAt: 1,
+        bootstrapped: true,
+        rows: {},
+        generalBaseline: null,
+      }),
+    );
+
+    expect(loadSyncMeta().conflicts).toEqual({});
   });
 
   test("没有 remoteHash 的旧记录被丢掉（那套是服务端逐行时间戳时代的）", () => {

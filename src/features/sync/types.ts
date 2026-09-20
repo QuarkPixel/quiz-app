@@ -236,6 +236,17 @@ export interface SyncMeta {
    * 它不大（题库索引而已），而且不上传。
    */
   generalBaseline: GeneralSnapshot | null;
+  /**
+   * 题库行（`bank:<hash>`）→ 这台设备**第一次看到这个冲突**的时间（毫秒）。
+   *
+   * 为什么要落盘：面板上「冲突发生时间」那行小字只有跨刷新不变才有意义。
+   * 只放在引擎内存里的话，用户一刷新页面它就变成「刚刚」——而那个时间正是
+   * 他要拿来判断「云端那份是不是我改之前的样子」的依据。
+   *
+   * 一条记录什么时候失效（见 `pruneConflictSeen`）：这一行的基准线比它新，
+   * 说明那次冲突已经裁决并同步过了；或者本地已经没有这个题库。
+   */
+  conflicts: Record<string, number>;
 }
 
 /** 远端一个文件：文件名 + 内容哈希 + 解出来的 JSON。 */
@@ -269,6 +280,22 @@ export interface SyncConflict {
   localAt: number;
   /** 云端这份的内容哈希（不是时间戳，仅用于排查） */
   remoteHash: string;
+  /**
+   * 这台设备**第一次看到这个冲突**的时间（毫秒）。
+   *
+   * 面板上要给用户看的是它，不是 `localAt`：冲突发生后用户往往还在继续改，
+   * mtime 于是跟着往前跑，显示的永远是「刚刚」——那个时间没有任何信息量。
+   * 这个时间点写一次就不再变，直到冲突被裁决（同一个题库再次冲突会重新记）。
+   */
+  detectedAt?: number;
+  /**
+   * 云端那份快照的最后改动时间（毫秒）＝ Gist 的 `updated_at`，也就是
+   * 另一台设备最后一次上传的时间。
+   *
+   * 粒度是**整条 Gist**（Gitee 不提供单文件时间戳）：同一条 Gist 里的题库
+   * 谁先谁后分不出来，但「云端这份是什么时候传上来的」是准的。
+   */
+  remoteAt?: number;
 }
 
 /** 同步引擎对外暴露的状态。 */
@@ -317,7 +344,13 @@ export const EMPTY_SYNC_CONFIG: SyncConfig = {
 
 /** 云端一个文件都没有时的元数据默认值。 */
 export function emptySyncMeta(): SyncMeta {
-  return { lastSyncedAt: 0, bootstrapped: false, rows: {}, generalBaseline: null };
+  return {
+    lastSyncedAt: 0,
+    bootstrapped: false,
+    rows: {},
+    generalBaseline: null,
+    conflicts: {},
+  };
 }
 
 /**

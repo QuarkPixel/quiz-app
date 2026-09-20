@@ -62,6 +62,7 @@ import {
   onLocalChange,
   probeStorageHealth,
   pruneStaleMtimes,
+  readLocal,
   removeLocal,
   saveSyncMeta,
 } from "./storage";
@@ -413,6 +414,7 @@ export class SyncEngine {
    */
   clearSyncState(message: string): void {
     this.targetMissing = false;
+    // 「第一次看到冲突」的记录就在这本记账里，跟着一起删掉了
     clearSyncMeta();
     this.status = {
       phase: "idle",
@@ -627,6 +629,9 @@ export class SyncEngine {
       this.pushTimer = null;
     }
     this.resolutions.clear();
+    // 「第一次看到冲突」的记录在盘上的记账里，这里**不动它**：关掉再打开开关、
+    // 或者刷新页面，那个时间还得是原来那个。真要连它一起忘掉，「清空配置」
+    // 那条路会把整本记账删掉。
     this.lastConflictSignature = "";
     this.lastErrorSignature = "";
 
@@ -804,7 +809,12 @@ export class SyncEngine {
         // 把用户已经答过的那些裁决应用上去；用户没答过的仍然是 conflict
         plan = applyResolution(plan, this.resolutions);
         if (plan.conflicts.length > 0) {
-          this.reportConflict(plan.conflicts, gist.files.size, remote.banks.size);
+          this.reportConflict(
+            plan.conflicts,
+            gist.files.size,
+            remote.banks.size,
+            gist.updatedAt,
+          );
           // 裁决表**留着**：用户对「题库一」的选择不能因为这一轮又冒出
           // 「题库二」的新冲突而作废，等他答完题库二，两者一起生效。
           return {
@@ -1002,26 +1012,49 @@ export class SyncEngine {
    *
    * 冲突的单位是**题库**（不是分片文件），提示里直接写题库名。
    * 同一个冲突反复出现时不重复弹提示——轮询每 3 分钟一次，会刷屏。
+   *
+   * `remoteAt` 是云端快照的最后改动时间（Gist 的 `updated_at`）：面板上
+   * 「上传时间」那行小字用它，让用户知道云端那份是什么时候传上去的。
    */
   private reportConflict(
     conflicts: readonly BankAction[],
     remoteCount: number,
     remoteBanks: number,
+    remoteAt: number,
   ): void {
     const signature = conflicts
       .map((conflict) => conflict.hash)
       .sort()
       .join(",");
 
+    // 第一次看见这个题库冲突时记下时间，之后每一轮对账都不再改它——
+    // 否则用户一边答题，面板上那个时间就一边往前跑，等于什么都没说。
+    //
+    // 记录就在同步记账（`quiz_app_sync_meta` 的 `conflicts` 段）里，每次现读现写：
+    // 它是**盘上的事实**，不另存一份内存副本——副本只会多出「什么时候同步它」
+    // 这个问题（见过一次：副本类型对不上，关同步开关时直接抛异常）。
+    const now = Date.now();
+    const seen = pruneConflictSeen(loadSyncMeta());
+    let added = false;
+    for (const conflict of conflicts) {
+      if (seen[conflict.hash] === undefined) {
+        seen[conflict.hash] = now;
+        added = true;
+      }
+    }
+    if (added) saveConflictSeen(seen);
+
     this.status = {
       phase: "conflict",
       message: `${conflicts.length} 个题库存在冲突`,
-      at: Date.now(),
+      at: now,
       // 冲突这一轮什么都没写，当然也不算「同步过」
       lastSyncAt: this.status.lastSyncAt,
       remoteCount,
       remoteBanks,
-      conflicts: conflicts.map(toConflict),
+      conflicts: conflicts.map((conflict) =>
+        toConflict(conflict, seen[conflict.hash], remoteAt),
+      ),
     };
 
     if (signature !== this.lastConflictSignature) {
@@ -1137,18 +1170,53 @@ function settledThisRound(plan: SyncPlan, action: BankAction): boolean {
 }
 
 /**
+ * 盘上那份「第一次看到冲突」的记录，滤掉已经作废的。
+ *
+ * 一条记录作废有两种情况：
+ *   - 这一行的**基准线不比它旧**（`syncedAt >= 记录时间`）：那次冲突已经裁决并
+ *     同步过了——对账不会给冲突中的题库写新基准线，所以只要基准线追上了记录时间，
+ *     就说明是裁决之后重写的。拿它当「冲突发生时间」会把一个早已解决的老冲突搬出来；
+ *   - 本地已经没有这个题库：记录没有意义了。
+ *
+ * 反过来，基准线比记录**旧**说明冲突还在原地，那正是要保住的那个时间——
+ * 刷新页面、关掉再打开同步，它都不该变。
+ */
+function pruneConflictSeen(meta: SyncMeta): Record<string, number> {
+  const kept: Record<string, number> = {};
+  for (const [hash, at] of Object.entries(meta.conflicts)) {
+    if (!(at > 0)) continue;
+    const row = meta.rows[bankRowKey(hash)];
+    if (row !== undefined && row.syncedAt >= at) continue;
+    if (readLocal(`quiz_app_questions_${hash}`) === null) continue;
+    kept[hash] = at;
+  }
+  return kept;
+}
+
+/** 把「第一次看到冲突」的记录写回同步元数据（整份读改写，只动 `conflicts` 一段）。 */
+function saveConflictSeen(seen: Record<string, number>): void {
+  saveSyncMeta({ ...loadSyncMeta(), conflicts: seen });
+}
+
+/**
  * `BankAction` → 给 UI 看的冲突条目。
  *
  * 冲突的单位是题库，所以提示里直接写题库名——用户看到 `banks-3.json`
  * 根本不知道自己在选什么。
  */
-function toConflict(action: BankAction): SyncConflict {
+function toConflict(
+  action: BankAction,
+  detectedAt: number | undefined,
+  remoteAt: number,
+): SyncConflict {
   return {
     hash: action.hash,
     name: action.name,
     detail: "这个题库本机和云端都改过",
     localAt: action.localAt,
     remoteHash: action.remoteHash ?? "",
+    detectedAt,
+    remoteAt,
   };
 }
 
@@ -1203,6 +1271,8 @@ function baselineMeta(state: CollectedState, remoteUpdatedAt: number): SyncMeta 
     bootstrapped: true,
     rows,
     generalBaseline: state.general,
+    // 刚建出来的云端不可能有冲突记录，但整份重写时也得给全（旧记录用不上）
+    conflicts: {},
   };
 }
 
@@ -1280,12 +1350,18 @@ function nextMeta(params: {
     }
   }
 
-  return {
+  const next: SyncMeta = {
     lastSyncedAt: now,
     bootstrapped: true,
     rows,
     generalBaseline: state.general,
+    // 「第一次看到冲突」的记录原样带过去，再按**新的**基准线过一遍：这一轮
+    // 裁决掉的冲突，基准线就比记录新了，那条记录当场作废（接着写回盘上）。
+    // 不能整个丢掉：冲突还在的那些题库，下一轮对账得拿到原来那个时间。
+    conflicts: previous.conflicts,
   };
+  next.conflicts = pruneConflictSeen(next);
+  return next;
 }
 
 /** 应用级单例。 */

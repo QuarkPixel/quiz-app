@@ -319,6 +319,7 @@ describe("云同步设置面板", () => {
     syncConfigStore.update({ gistId: "g1" });
     render();
 
+    const now = Date.now();
     syncEngine.status = {
       ...syncEngine.status,
       phase: "conflict",
@@ -329,6 +330,9 @@ describe("云同步设置面板", () => {
           detail: "两边都改过",
           localAt: 1,
           remoteHash: "h",
+          // 本地那份是三分钟前第一次判成冲突的，云端那份是两小时前传上去的
+          detectedAt: now - 3 * 60 * 1000,
+          remoteAt: now - 2 * 60 * 60 * 1000,
         },
       ],
     };
@@ -337,6 +341,98 @@ describe("云同步设置面板", () => {
     expect(text()).toContain("英语短语");
     expect(text()).toContain("保留本地");
     expect(text()).toContain("保留云端");
+  });
+
+  test("两个按钮下面各有一行时间：冲突发生时间用「第一次看到」的那一刻", () => {
+    // 用户的原话：冲突发生之后他可能还在继续改，所以「保留本地」下面要显示的是
+    // **冲突发生**的时间，不是本地 mtime（那个会一直往前跑，等于没意义）。
+    syncConfigStore.update({ gistId: "g1" });
+    render();
+
+    const now = Date.now();
+    // 3.5 分钟 / 2.5 小时：切在整点中间，免得挂在毫秒上的取整让期望值差一分钟
+    const detectedAt = now - 3.5 * 60 * 1000;
+    const remoteAt = now - 2.5 * 60 * 60 * 1000;
+    syncEngine.status = {
+      ...syncEngine.status,
+      phase: "conflict",
+      conflicts: [
+        {
+          hash: "aaaabbbbccccdddd",
+          name: "英语短语",
+          detail: "两边都改过",
+          // 本地 mtime 才是「刚刚」——它绝不能出现在那行小字里
+          localAt: now,
+          remoteHash: "h",
+          detectedAt,
+          remoteAt,
+        },
+      ],
+    };
+    flushSync();
+
+    const lines = [...target.querySelectorAll("p")].filter((el) =>
+      /冲突发生时间|上传时间/.test(el.textContent ?? ""),
+    );
+    expect(lines, "两个按钮下面各要一行小字").toHaveLength(2);
+    // `formatRelativeTime` 的单位之间带空格，比对时先把空白压掉
+    expect(lines[0].textContent!.replace(/\s+/g, "")).toBe(
+      "冲突发生时间：3分钟前",
+    );
+    expect(lines[1].textContent!.replace(/\s+/g, "")).toBe("上传时间：2小时前");
+    // 文字跟按钮**左边缘**对齐，不居中
+    for (const line of lines) {
+      expect(line.className).toContain("text-left");
+      expect(line.className).not.toContain("text-center");
+    }
+    // 悬停给绝对时间（相对时间适合扫一眼，真要对时间点还得看它）
+    expect(lines[0].title, "悬停要能对到具体时刻").toMatch(
+      /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/,
+    );
+    expect(lines[1].title).not.toBe("");
+  });
+
+  test("更新的那一边是实心（default），另一边是 outline", () => {
+    // 实心那颗是「推荐按这个」，所以它得跟着时间走：云端传完之后本地又改了
+    // → 保留本地；反过来 → 保留云端。
+    syncConfigStore.update({ gistId: "g1" });
+    render();
+
+    const now = Date.now();
+    const conflict = (detectedAt: number, remoteAt: number) => {
+      syncEngine.status = {
+        ...syncEngine.status,
+        phase: "conflict",
+        conflicts: [
+          {
+            hash: "aaaabbbbccccdddd",
+            name: "英语短语",
+            detail: "两边都改过",
+            localAt: detectedAt,
+            remoteHash: "h",
+            detectedAt,
+            remoteAt,
+          },
+        ],
+      };
+      flushSync();
+    };
+
+    // 本地更晚（云端是两小时前传的，本地的冲突是三分钟前发生的）
+    conflict(now - 3 * 60 * 1000, now - 2 * 60 * 60 * 1000);
+    expect(button("保留本地")!.className, "本地更新 → 实心").toContain(
+      "bg-primary",
+    );
+    expect(button("保留云端")!.className, "旧的那边是 outline").not.toContain(
+      "bg-primary",
+    );
+
+    // 云端更晚（另一台设备刚传完，本地这份是十分钟前改的）
+    conflict(now - 10 * 60 * 1000, now - 60 * 1000);
+    expect(button("保留云端")!.className, "云端更新 → 实心").toContain(
+      "bg-primary",
+    );
+    expect(button("保留本地")!.className).not.toContain("bg-primary");
   });
 
   // ── 版面：目标仓库在标题旁、按钮收进「更多设置」─────────────────────────
@@ -862,6 +958,7 @@ describe("云同步设置面板", () => {
           bootstrapped: true,
           rows: {},
           generalBaseline: null,
+          conflicts: {},
         }),
       );
       render();

@@ -510,6 +510,147 @@ describe("引擎（端到端，对着替身）", () => {
     expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toContain("9");
   });
 
+  test("冲突条目带着两个时间点：第一次看到冲突的时间 + 云端那份的上传时间", async () => {
+    // 面板上那两行小字就靠它们（见 `SyncSettings` 的冲突块）：
+    // 「冲突发生时间」必须是**第一次看到**的那一刻——用户冲突后往往还在继续改，
+    // 本地 mtime 会一直往前跑，显示的永远是「刚刚」，等于什么都没说。
+    h.freshDevice("A");
+    const a = h.open("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    await a.sync();
+    const gistId = h.store("A").value.gistId;
+    h.tick();
+    h.save("A");
+
+    h.freshDevice("B");
+    const b = h.open("B", { gistId });
+    await b.sync();
+    h.tick();
+    h.save("B");
+
+    // A 上传一份 → 云端快照的时间就在这之后
+    h.engine("A");
+    h.studyBank(HASH_A, 3);
+    h.save("A");
+    await a.sync();
+    h.save("A");
+
+    // 本地是 B 刚改的：冲突这一刻就在这一轮里
+    const before = Date.now();
+    h.engine("B");
+    h.studyBank(HASH_A, 9);
+    h.save("B");
+    await b.sync();
+    h.save("B");
+
+    const first = b.status.conflicts[0];
+    expect(first.hash).toBe(HASH_A);
+    // 两个时间点都得填上。云端那个直接来自 Gitee 的 `updated_at`（替身会给），
+    // 不去和本地时钟比大小：替身跑在另一个上下文里，那口钟和这里的 `Date.now()`
+    // 不一定对得上（这条用例里就差着一天），比了只会得到一个跟实现无关的红灯。
+    expect(first.remoteAt).toBeGreaterThan(0);
+    expect(first.detectedAt).toBeGreaterThanOrEqual(before - 1000);
+    expect(first.detectedAt).toBeLessThanOrEqual(Date.now());
+
+    // 再对一轮账：冲突还在，但「发生时间」不能被刷成现在——
+    // 否则用户继续答题，面板上那个时间就一直往前跳
+    const detectedAt = first.detectedAt;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await b.sync();
+    h.save("B");
+
+    expect(b.status.conflicts).toHaveLength(1);
+    expect(b.status.conflicts[0].detectedAt).toBe(detectedAt);
+  });
+
+  test("「冲突发生时间」落盘：刷新页面之后还是原来那个时间，不是「刚刚」", async () => {
+    // 线上问题：这个时间原来只存在引擎内存里，用户一刷新页面它就归零/变成现在，
+    // 而那正是他拿来判断「云端那份是不是我改之前的样子」的依据。
+    h.freshDevice("A");
+    const a = h.open("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    await a.sync();
+    const gistId = h.store("A").value.gistId;
+    h.tick();
+    h.save("A");
+
+    h.freshDevice("B");
+    const b = h.open("B", { gistId });
+    await b.sync();
+    h.tick();
+    h.save("B");
+
+    h.engine("A");
+    h.studyBank(HASH_A, 3);
+    h.save("A");
+    await a.sync();
+    h.save("A");
+
+    h.engine("B");
+    h.studyBank(HASH_A, 9);
+    h.save("B");
+    await b.sync();
+    const detectedAt = b.status.conflicts[0].detectedAt!;
+    expect(detectedAt).toBeGreaterThan(0);
+    h.save("B");
+
+    // 存进的是同步记账那个键（`quiz_app_sync_meta`），跟着题库行一起
+    const rows = JSON.parse(
+      localStorage.getItem("quiz_app_sync_meta") ?? "{}",
+    ) as { conflicts?: Record<string, number> };
+    expect(rows.conflicts?.[HASH_A]).toBe(detectedAt);
+
+    // 刷新页面：同一台设备重开一个引擎（localStorage 原样），时间过了一小时
+    h.tick(60 * 60 * 1000);
+    const reloaded = h.open("B", { gistId });
+    await reloaded.sync();
+    h.save("B");
+
+    expect(reloaded.status.conflicts).toHaveLength(1);
+    expect(reloaded.status.conflicts[0].detectedAt).toBe(detectedAt);
+  });
+
+  test("冲突真的解决了之后，那条记录跟着删掉（不许把老时间搬到新冲突上）", async () => {
+    h.freshDevice("A");
+    const a = h.open("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    await a.sync();
+    const gistId = h.store("A").value.gistId;
+    h.tick();
+    h.save("A");
+
+    h.freshDevice("B");
+    const b = h.open("B", { gistId });
+    await b.sync();
+    h.tick();
+    h.save("B");
+
+    h.engine("A");
+    h.studyBank(HASH_A, 3);
+    h.save("A");
+    await a.sync();
+    h.save("A");
+
+    h.engine("B");
+    h.studyBank(HASH_A, 9);
+    h.save("B");
+    await b.sync();
+    h.save("B");
+
+    // 用户在面板上选了「保留本地」
+    await b.keepLocal();
+    h.save("B");
+    expect(b.status.conflicts).toEqual([]);
+
+    const meta = JSON.parse(
+      localStorage.getItem("quiz_app_sync_meta") ?? "{}",
+    ) as { conflicts?: Record<string, number> };
+    expect(
+      meta.conflicts?.[HASH_A],
+      "基准线已经比记录新了，留着只会把老时间搬到以后的新冲突上",
+    ).toBeUndefined();
+  });
+
   test("云端 Gist 被删之后：断开云端再同步会新建一条，本地数据照样上去", async () => {
     h.freshDevice("A");
     const engine = h.open("A");
