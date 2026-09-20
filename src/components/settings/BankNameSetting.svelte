@@ -54,6 +54,9 @@
             class="h-7 w-44"
         />
     </div>
+    <div class="flex items-center text-xs opacity-60 -mt-2">
+        Hash ID：<span class="font-mono">{hash}</span>
+    </div>
 </SettingsSection>
 
 <Separator />
