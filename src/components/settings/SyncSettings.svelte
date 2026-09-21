@@ -1019,11 +1019,12 @@
                                 </li>
                             {/if}
                         </ul>
-                        {localIsNewer}
                         <div class="flex items-start gap-2">
                             <div class="flex flex-1 flex-col gap-1">
                                 <Button
-                                    variant={localIsNewer ? "default" : "outline"}
+                                    variant={localIsNewer
+                                        ? "default"
+                                        : "outline"}
                                     size="sm"
                                     class="w-full"
                                     disabled={busy !== ""}
@@ -1043,7 +1044,9 @@
                                 -->
                                 <p
                                     class="text-muted-foreground text-left text-[10px] leading-tight"
-                                    title={conflictTimeTitle(conflictDetectedAt)}
+                                    title={conflictTimeTitle(
+                                        conflictDetectedAt,
+                                    )}
                                 >
                                     冲突发生时间：{conflictTimeText(
                                         conflictDetectedAt,
@@ -1052,7 +1055,9 @@
                             </div>
                             <div class="flex flex-1 flex-col gap-1">
                                 <Button
-                                    variant={localIsNewer ? "outline" : "default"}
+                                    variant={localIsNewer
+                                        ? "outline"
+                                        : "default"}
                                     size="sm"
                                     class="w-full"
                                     disabled={busy !== ""}
@@ -1067,7 +1072,9 @@
                                     class="text-muted-foreground text-left text-[10px] leading-tight"
                                     title={conflictTimeTitle(conflictRemoteAt)}
                                 >
-                                    上传时间：{conflictTimeText(conflictRemoteAt)}
+                                    上传时间：{conflictTimeText(
+                                        conflictRemoteAt,
+                                    )}
                                 </p>
                             </div>
                         </div>
