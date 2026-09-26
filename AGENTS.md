@@ -84,7 +84,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `types.ts`：`QuizBank` / `MemoryBank` / `Bank`（判别联合）、`BankSummary`（含 `mode`）、`QuizSource`
   - `context.ts`：`provideQuizSource` / `useQuizSource`
 - `src/store.ts` — **每个题库**的状态读写（按 `hash` 分 key）：`StoredState` 加载 / 保存 / 重置；`saveState` 原样携带 `memory` 段。`buildRuntimeState` 会丢掉题库里已不存在的 `activePool` / `learningPool` / `memory.progress` 条目（以及这些题的 `memory.retry` 待办）——统计与导出都只认题库里真实存在的卡
-- `src/features/importExport.ts` — 进度编码：`{hash}.{base64url-deflate}`，`exportProgress` / `importProgress`。只依赖题目 `id`（`ProgressQuestion`），刷题 / 记忆模式通用；`FORMAT_VERSION = 9` 起记忆模式走第 10 个元素
+- `src/features/importExport.ts` — 进度编码：`{hash}.{base64url-deflate}`，`exportProgress` / `importProgress`。只依赖题目 `id`（`ProgressQuestion`），刷题 / 记忆模式通用；`FORMAT_VERSION = 9` 起记忆模式走第 10 个元素，记忆设置数组的**第 3 项**是 `lockRoundPool`（后加的，老备份那里是预留位 → 读不到就按关处理，所以没升版本号）
 - `src/algorithm.ts` — 纯算法：加权随机选题、`processAnswer`、`computeLearningSegments`
 - `src/features/quiz/` — UI 与算法之间的胶水层（`runtime.ts`、`answer.ts`、`answerMatcher.ts`、`filters.ts`、`settings.ts` …）
 - `src/features/bankFiles.ts` — 文件 / 剪贴板导入会话（`BankImportSession`）与导出（`exportBank`）
@@ -235,15 +235,54 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     主动同步一次是常见需求（想把云端改动拉下来）。不可点（正在同步）时用
     `aria-disabled` 而不是 `disabled`——后者会让原生 `title` 提示失效；同时 hover
     class 也不会加到 DOM 上。
-  - **跑的过程中不变色**：`phase === "syncing"` 本身不进 `tone` 的计算，而是用
-    `toneWhileRunning`（`$state` + `$effect`，只在没同步时更新）记住跑之前那个颜色，
-    圆点靠 `animate-pulse` 表示「在跑」。否则从绿点一下会先闪一下黄再变回绿
-    （那一瞬间的黄来自 `phase === "syncing"`，可黄的意思是「有没传上去的改动」），
-    报错后重试期间也会先闪成别的颜色再回到红。
+  - **几何尺寸照搬「Spinner 之前」那一版**（`git show 8f3e809^:src/components/layout/AppShell.svelte`）：
+    圆点恒为 `size-1.5`（6px）、光晕是**圆点自己的 `box-shadow`**
+    （`shadow-[0_0_6px_var(--tone-color)]`，能点时 hover 加到 12px）、按钮只是
+    `size-8` 的命中区域、不吃任何缩放。**改动这一块之前先把那个版本翻出来对一遍**——
+    踩过的坑：把光晕挪到按钮的 `::before` 上（`size-1.5` + `blur-[3px]` 的实心圆），
+    视觉直径比 `box-shadow` 大一圈，看着就是「指示灯变大了」；给按钮挂 `scale-125`
+    同理。**光晕要留在圆点身上**。
+  - **跑的过程中不变色，但会呼吸**：`phase === "syncing"` 本身不进 `tone` 的计算，
+    而是用 `toneWhileRunning`（`$state` + `$effect`，只在没同步时更新）记住跑之前
+    那个颜色，**圆点自己**（不是按钮）套 `animate-breathe`（关键帧在 `app.css`：
+    1.4s 明暗 `1 → .3` + 极轻的 `scale 1 → 1.15`）。缩放幅度**故意压得很小**：
+    那颗点只有 6px，`scale` 一大就不是呼吸、是「变大了」。否则从绿点一下会先闪
+    一下黄再变回绿（那一瞬间的黄来自 `phase === "syncing"`，可黄的意思是
+    「有没传上去的改动」），报错后重试期间也会先闪成别的颜色再回到红。
+  - **颜色只有一个来源**：按钮上写一个内联变量
+    `--tone-color: var(--success|--warning|--destructive)`，圆点底色与光晕都读它
+    （`bg-(--tone-color)`、`shadow-[0_0_6px_var(--tone-color)]`）。以前三种状态各写一套
+    `bg-success` / `shadow-[0_0_6px_var(--success)]`，加一处颜色要改三处。
+    **不要**再为「更亮的同色」加第二个变量（曾经有过 `--tone-flash-color` +
+    按亮 / 暗主题各配一遍 `color-mix` 比例）：提亮用 `filter: brightness()` 就够了。
+  - **两种「跑完」的收尾不一样**（这是需求里明确的一条）：
+    - **自动同步**（打开页面对账 / 防抖上传 / 轮询）：呼吸灯自己亮自己灭，跑完直接是
+      那一色，没有额外动作，也不出声
+    - **手动点击**（点圆点或 ⌘Y）：呼吸灯跑完还要**亮一下 + 跳一下**——圆点挂
+      `animate-wink`（700ms `forwards`，关键帧在 `app.css`）：底色不变，
+      靠 `filter: brightness(2)` 提亮、同时 `scale 1 → 1.5 → 1` 弹一下、
+      光晕跟着放到 20px。成功失败**都亮**：这是「点过了」的回执，
+      落点是什么颜色由那一轮的结果决定（红了就亮红）
+    - **成功时再加一声「答对」音效**（`maybePlaySyncSuccessSound` → `playAnswer(true)`，
+      也就是答题时答对的那一个 `answer-correct.webm`，**不是**「一轮学完」的
+      `success` 音）：音效开关关着就只亮不响；失败 / 冲突时同样只亮不响——
+      那会儿响「答对」是说反话。音效开关读 `globalSettingsStore`（同步跟具体题库无关，
+      指示点也不属于任何 session，所以在 AppShell 里自己 `createSoundPlayer()`）
+    - **缩放只能写在关键帧里**：动画一跑 `transform` 整条归关键帧管，同一元素上的
+      `scale-*` class 会被按住不动，所以别用「加个 `scale-110` class」来实现这一跳
+      （`syncIndicator.test.ts` 直接读 `app.css` 把这条钉住了），
+      静止尺寸也因此仍是 `size-1.5`——放大只发生在动画中间那一帧
+    - **关键帧的首末帧不要写 `filter: brightness(1)`**：cssnano 会把它压成
+      `brightness()`（空参数，非法），整条声明被丢掉，动画就完全不亮——而且源码
+      看着正常，只有构建产物才看得出来（真踩过）。两端省掉 `filter`，基线交给圆点
+      自己的 `brightness-100` class；`syncIndicator.test.ts` 有一条用例专门钉这个
+    - 判定用 `syncing` 的下降沿 + 一个一次性的 `manualSync` 标记（`onClick` 里置位）；
+      「算不算成功」看下降沿那一刻的 `settledTone === "ok"`；
+      清 `flashTone` 的定时器比动画**晚 60ms**，否则动画会被从半路掐断
   - 点了**不弹任何提示**：成功了它自己变绿就是反馈；失败就还是黄的，
     悬浮看标题（标题里带着错误信息和「点击重试」）。所以这个组件里不碰 toast。
-  - hover 不用背景色：圆点 `group-hover:brightness-125` + 光晕（`box-shadow` 取状态色）
-    从 `0 0 6px` 加强到 `0 0 12px` + 稍微长大一点；正在同步（不可点）时这些 class 不加上去。
+  - hover 不用背景色：圆点 `group-hover:brightness-125 group-hover:size-2`
+    （`group` 挂在按钮上）+ 光晕从 6px 加到 12px；正在同步（不可点）时这些 class 不加上去。
   - 命中区域（`size-8`，正好填满页头那格 2rem）和圆点（`size-1.5`）是分开的两个尺寸：
     点起来够大，看着仍是小圆点。
   - 颜色取自 `syncEngine.inSync`（见「云同步」章节），不是「打开页面那一刻的快照」
@@ -299,7 +338,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `library: BankSummary[]` — 题库索引（含 `mode`）
   - `globalSettings: GlobalSettings` — `{ soundEnabled, autoSubmitOnSelection, autoNextOnCorrect }`
 - `BankSettings`（按题库，刷题模式）— `{ activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode, notifyNewQuestionInPool }`
-- `StoredState`（按题库）— `masteredIds` / `masteredMistakes` / `activePool` / `currentRound` / `filterType` / `settings` / `ui` / `memory?` / `roundMastered?` / `roundGoal?` / `learningPool?`（后三个只在记忆模式用：学习轮已掌握数 / 本轮目标 / 复习期间暂存的学习池）
+- `StoredState`（按题库）— `masteredIds` / `masteredMistakes` / `activePool` / `currentRound` / `filterType` / `settings` / `ui` / `memory?` / `roundMastered?` / `roundGoal?` / `roundPoolIds?` / `learningPool?`（后四个只在记忆模式用：学习轮已掌握数 / 本轮目标 / **「每轮限定题数」记下的那一批 id** / 复习期间暂存的学习池）
 - `RuntimeState = StoredState & { pendingIds }`，`pendingIds` 不入存
 
 掌握门槛（刷题模式）：从未答错 → `correctStreakToMaster`（默认 3）；曾错过 → `correctStreakAfterMistake`（默认 4）。`src/config/algorithm.ts` 定默认，按库设置覆盖。
@@ -316,7 +355,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 - `masteredIds` 在记忆模式里只是 `progress[].state === "mastered"` 的投影（导出文件名会数它）：`MemorySession.withSyncedMasteredIds()` 在载入 / 导入时同步一次，不要把它当成第二份真相
 - `StoredState.memory.learnedDay?: number` — 最近一次「学完一轮」发生在哪个学习日。首页据此把学习入口降一档颜色（今天学过一轮 → 白底按钮但仍可点）；跨过凌晨 5 点自然失效，不需要清理
 - `MemoryRetryState = { day, targets }`（`StoredState.memory.retry`）— 本轮「答错后还要重新连对几次」的待办：`day` = 写下的学习日（`studyDay` 锚点），`targets` = 题目 id → 还要连对几次。跨过凌晨 5 点自动作废；**不进进度备份**（属于「本轮」这种短周期状态）
-- `MemoryBankSettings`（按题库，记忆模式）— `{ graduateLevel: 7, roundTarget: 5 }`（掌握阶梯阈值 M / 一轮要掌握几题），由 `sanitizeMemorySettings` 净化
+- `MemoryBankSettings`（按题库，记忆模式）— `{ graduateLevel: 7, roundTarget: 5, lockRoundPool: false }`（掌握阶梯阈值 M / 一轮要掌握几题 / **每轮限定题数**），由 `sanitizeMemorySettings` 净化（`lockRoundPool` 只认真正的 `true`）
   - 连对次数 / 顺序**不重复存**，直接复用刷题模式的 `BankSettings`（`correctStreakToMaster` / `selectionMode`）；UI 在同一个面板里，但落的是同一个 `settings` 对象
   - 记忆模式**不用** `BankSettings.activePoolSize`：池子容量与本轮目标共用 `roundTarget`（见「两条流」）
 
@@ -563,8 +602,19 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 
 - **学习新的题目**（`startLearning` → `run = "learning"`）
   - **活动题目池**（与刷题模式同一套概念）：池子容量 = 本轮目标 `roundTarget`（**不用** `activePoolSize`），`fillActivePool()` 从「没学过的 + 学到一半的」里补题——`selectionMode` 只决定补进来的顺序（顺序 = 按题库原序 / 随机 = 随机抽），**池内出题一律随机**
-  - **每掌握一题就补一题**：`graduateInLearning()` 记入本轮后立刻 `fillActivePool()`，所以池子始终是满的
-  - **本轮判定**：不再「一轮开始时选一批题」，而是数「本轮已经掌握了几题」——`roundMastered` 达到 `roundTarget`（默认 5，可设置）这一轮就结束。题库里的新卡不够时本轮提前收尾，`finishLearningRound(exhausted = true)` 会把文案换成「这一轮学完了 · 已掌握 X / Y（没有更多新卡片了）」且**不报成功音效**（`mastered < target` 时谎报「已掌握 5 / 5」是之前的 bug）
+  - **每掌握一题就补一题**（默认）：`graduateInLearning()` 记入本轮后立刻 `fillActivePool()`，所以池子始终是满的
+  - **「每轮限定题数」（`lockRoundPool`）**：打开后开轮时挑一批（数量 = `targetPerRound`，规则同上）就把这一轮定死，
+    `fillActivePool()` **只从这一批里补位**、绝不引新卡，于是池子只会随着毕业变小，这一批学完本轮结束。
+    要点：
+    - 这一批的 id 记在 `StoredState.roundPoolIds`（**落盘**）里，而且**只收不放**（毕业 / 被标熟的卡仍留着），
+      否则刚被 `masterQuestion` 摘掉的卡会被补位逻辑立刻捞回来
+    - `startLearning()` 开新轮时清空它（跟 `roundMastered` 一起），`finishLearningRound` / `endRound` 也清；
+      **开轮那一次 `fillActivePool()` 之后必须 `save()`**——不写下去，「开轮后立刻刷新」就会读回上一份状态，
+      这一批是谁就丢了（这项功能的核心正是「存得住」）
+    - `lockRoundPoolInPlace()` 返回的 `{ ids, fresh }` 里 `fresh` 不能省：刚挑出来的那一批**还没进池子**，
+      当成「已在池中」的话补位名额就是 0，整批卡一道都进不来（这个 bug 真踩过，靠 `memorySession.test.ts` 抓住）
+    - 关掉开关时中途改设置不影响已经开着的那一轮（那一批的 id 还在，只是不再限制补题）
+  - **本轮判定**（接上面两条）：不是「一轮开始时选一批题」，而是数「本轮已经掌握了几题」——`roundMastered` 达到 `roundTarget`（默认 5，可设置）这一轮就结束。这一批里的卡凑不出这么多（题库新卡不够）时本轮提前收尾，`finishLearningRound("bank" | "pool")` 按原因换文案——`"bank"` =「题库里没有更多新卡片了」、`"pool"` =「本轮这一批就这些了」——两者都**不报成功音效**（`mastered < target` 时谎报「已掌握 5 / 5」是之前的 bug）
   - 本轮结束时把 `memory.learnedDay` 写成当天（`studyDay(now)`）并落盘：首页据此把学习入口降一档颜色。中途退出（`exitSession`）不算学完一轮，`learnedDay` 不动
   - **可中断续学**：`roundMastered` / `roundGoal` 与 `activePool` 都落盘，**只要池子里还有没学完的卡就续轮**——哪怕这一轮一张都还没掌握（`startLearning` 用 `hasOngoingRound` 判断，判据是池子，不是 `roundMastered`）。本轮目标 `roundGoal` 在开轮时从设置里取快照，中途改设置不影响本轮
   - **学到一半去复习，池子不会被顶掉**：复习轮要拿 `activePool` 当到期队列用，所以 `startReview()` 会先把学习池原样挪进 `StoredState.learningPool`（成员与顺序都不动，并立刻 `save()`），复习结束（`exitSession` / `finishSession`）或下次 `startLearning()` 时再放回 `activePool`。中途刷新页面也不会丢：`learningPool` 和到期队列都在盘上
@@ -715,7 +765,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 
 ### 进度导出 / 导入（v9）
 
-`src/features/importExport.ts` 的 `FORMAT_VERSION = 9`；**有 `memory` 段就走记忆分支**（一张卡都没学过的记忆题库也算，否则第 10 项不会写出、导入时 `graduateLevel` / `roundTarget` 会被重置成默认值），没有才走原来的刷题分支（刷题在 v9 仍是 9 个元素）。`memory.retry` 与 `roundMastered` / `roundGoal` / `learningPool` 一样**不进备份**。
+`src/features/importExport.ts` 的 `FORMAT_VERSION = 9`；**有 `memory` 段就走记忆分支**（一张卡都没学过的记忆题库也算，否则第 10 项不会写出、导入时 `graduateLevel` / `roundTarget` 会被重置成默认值），没有才走原来的刷题分支（刷题在 v9 仍是 9 个元素）。`memory.retry` 与 `roundMastered` / `roundGoal` / `roundPoolIds` / `learningPool` 一样**不进备份**（都属于「本轮」这种短周期状态）；`memory.settings` 里那个 `lockRoundPool` 是设置，照常跟着备份走。
 
 ```
 刷题：[version, questionCount, masteredBitmapHex, activePool[][], currentRound,

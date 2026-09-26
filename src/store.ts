@@ -145,6 +145,17 @@ function normalizeLearningPool(value: unknown): ActivePoolItem[] | undefined {
 }
 
 /**
+ * 净化「每轮限定题数」记下的那一批（`MemoryBankSettings.lockRoundPool` 打开时才有）。
+ * 缺失 / 结构非法时返回 undefined，不凭空造一个字段。
+ */
+function normalizeRoundPoolIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return [
+    ...new Set(value.filter((id): id is string => typeof id === "string")),
+  ];
+}
+
+/**
  * 丢掉记忆进度里题库中已不存在的题目（`activePool` / `learningPool` 是同一套约定），
  * 顺带清掉这些题的「本轮重新连对」待办。
  */
@@ -209,6 +220,8 @@ export function loadStoredState(hash: string): StoredState {
         roundGoal: normalizeRoundMastered(parsedState.roundGoal),
         // 记忆模式复习期间暂存的学习轮活动池
         learningPool: normalizeLearningPool(parsedState.learningPool),
+        // 记忆模式本轮固定下来的这一批（开关打开时才有）
+        roundPoolIds: normalizeRoundPoolIds(parsedState.roundPoolIds),
       };
     }
   } catch (e) {
@@ -241,6 +254,8 @@ export function saveState(
     roundGoal: state.roundGoal,
     // 复习期间暂存的学习轮活动池（成员与顺序都要保住）
     learningPool: state.learningPool,
+    // 本轮固定下来的这一批：不带上就等于每次保存都把这一轮解封
+    roundPoolIds: state.roundPoolIds,
   };
   try {
     localStorage.setItem(stateKey(hash), JSON.stringify(toStore));
@@ -321,6 +336,10 @@ export function buildRuntimeState(
     // 暂存的学习池同样要丢掉已经不在题库里的题
     learningPool: storedState.learningPool?.filter((item) =>
       questionIds.has(item.id),
+    ),
+    // 这一批同理：题被删 / id 改了之后，留着它只会让这一轮少几道卡
+    roundPoolIds: storedState.roundPoolIds?.filter((id) =>
+      questionIds.has(id),
     ),
     // 记忆进度同理：改了题库（题目被删 / id 变了）之后，旧进度条目既不该
     // 计入统计，也不该让导出直接报错——统一按「题库里没有这道卡」丢掉

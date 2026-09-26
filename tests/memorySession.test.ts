@@ -24,6 +24,7 @@ import { normalizeMemoryProgress } from "../src/features/memory/normalize";
 import { MEMORY_ANSWER_CODE } from "../src/quiz/types/memory/logic";
 import { loadStoredState, saveState } from "../src/store";
 import { exportProgress } from "../src/features/importExport";
+import { readProgressFromClipboard } from "../src/features/quiz/progressActions";
 import {
   GlobalSettingsStore,
   globalSettingsStore,
@@ -39,7 +40,9 @@ import type {
 // startImport 走剪贴板：用一个可改写的假实现，测试里塞进导出的进度串
 const clipboard = vi.hoisted(() => ({ text: "" }));
 vi.mock("clipboard-polyfill", () => ({
-  writeText: vi.fn(async () => {}),
+  writeText: vi.fn(async (text: string) => {
+    clipboard.text = text;
+  }),
   readText: vi.fn(async () => clipboard.text),
 }));
 
@@ -393,6 +396,212 @@ describe("记忆模式：学习流", () => {
     session.startLearning();
     expect(session.run).toBe("idle");
     expect(session.newCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b. 每轮限定题数（lockRoundPool）
+// ---------------------------------------------------------------------------
+
+describe("记忆模式：每轮限定题数", () => {
+  /** 开一轮「每轮限定题数」的学习轮（顺序模式，挑哪几道因此是可预期的）。 */
+  function startLocked(
+    ids: string[],
+    target: number,
+    options: { hash?: string; toast?: (t: string, d?: string) => void } = {},
+  ): MemorySession {
+    const session = makeSession(ids, options);
+    session.updateBankSettings({ selectionMode: "sequential" });
+    session.updateMemorySettings({ roundTarget: target, lockRoundPool: true });
+    session.startLearning();
+    return session;
+  }
+
+  it("开轮时挑一批（数量 = 目标每轮学习数）就定死，学会一道也不补新题", () => {
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    const session = startLocked(ids, 3);
+
+    // 顺序模式：这一批 = 题库最前面的 3 道
+    const starters = session.appState.activePool.map((i) => i.id).sort();
+    expect(starters).toEqual(["a", "b", "c"]);
+    expect([...session.appState.roundPoolIds!].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+
+    // 每道卡要连对 3 次才毕业；学会一道池子就少一道，绝不补新的进来
+    const everInPool = new Set(starters);
+    const poolSizes: number[] = [];
+    let guard = 0;
+    while (session.run === "learning" && session.currentQuestion) {
+      expect(guard++, "本轮该在有限次内结束").toBeLessThan(200);
+      answer(session, true);
+      poolSizes.push(session.appState.activePool.length);
+      for (const item of session.appState.activePool) everInPool.add(item.id);
+    }
+
+    expect(session.run).toBe("idle");
+    // 池子一路只减不增，最后空掉（对照关掉开关那一条：那边始终是满的）
+    expect(poolSizes).toEqual([3, 3, 3, 3, 3, 3, 2, 1, 0]);
+    // 全程只有这一批里那 3 道进过池子——没有 d / e / f 混进来
+    expect([...everInPool].sort()).toEqual(["a", "b", "c"]);
+    expect(session.appState.activePool).toEqual([]);
+    expect(session.appState.roundPoolIds).toEqual([]);
+    // 学满目标：正常收尾（不是「没有更多新卡片了」）
+    expect(session.newCount).toBeGreaterThan(0);
+  });
+
+  it("对照：关掉开关时同一份题库会一路补新题进来，而且池子始终是满的", () => {
+    // 题库给足：一轮要掌握 8 道、每道得连对 3 次，池子又始终是满的，
+    // 卡不够会因为「没候选」掉到 7 道（那条规矩在「每掌握一题就补一题」里已钉过）
+    const ids = Array.from({ length: 26 }, (_, i) =>
+      String.fromCharCode(97 + i),
+    );
+    const session = makeSession(ids);
+    session.updateBankSettings({ selectionMode: "sequential" });
+    // 目标给大一点，让本轮长到足以出现「补进来的新卡」（目标 3 时一轮只有
+    // 9 次出题，补位的那两道还没轮到就结束了）
+    session.updateMemorySettings({ roundTarget: 8 });
+    session.startLearning();
+
+    expect(session.appState.activePool.map((i) => i.id).sort()).toEqual([
+      "a", "b", "c", "d", "e", "f", "g", "h",
+    ]);
+
+    // 池子始终维持本轮目标数量（掌握一题补一题）
+    const everInPool = new Set(session.appState.activePool.map((i) => i.id));
+    let guard = 0;
+    while (session.run === "learning" && session.currentQuestion) {
+      expect(guard++).toBeLessThan(400);
+      answer(session, true);
+      for (const item of session.appState.activePool) everInPool.add(item.id);
+      // 只在真的还在这一轮里时查池子：最后一下会直接收尾，
+      // 收尾时池子是要被清掉的（见 `endRoundPool`）
+      if (session.run === "learning") {
+        expect(session.appState.activePool.length).toBe(8);
+      }
+    }
+
+    expect(session.run).toBe("idle");
+    // 学会一道补一道：这一轮里进过池子的卡**比开轮那 8 道多**——
+    // 「这次只刷这几道」开关关掉时就是这个行为（开着时全程只有那 8 道）
+    expect(everInPool.size).toBeGreaterThan(8);
+  });
+
+  it("这一批里有卡没学出来：搁下这一轮后，下一轮重新挑（不复用上一轮那几道）", () => {
+    const toasts: { title: string; description?: string }[] = [];
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const session = startLocked(ids, 3, {
+      hash: "memory_locked_stuck_hash",
+      toast: (title, description) => toasts.push({ title, description }),
+    });
+    expect(session.appState.activePool.map((i) => i.id).sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+
+    // a、b 学会；c 一直答错（连对永远清零）→ 池子里只剩它一道
+    let guard = 0;
+    while (session.roundMastered < 2 && session.run === "learning") {
+      expect(guard++).toBeLessThan(200);
+      const id = session.currentQuestion!.id;
+      answer(session, id !== "c");
+    }
+    expect(session.appState.activePool.map((i) => i.id)).toEqual(["c"]);
+
+    // 卡住的那道不会自己消失：搁下这一轮（「结束本轮」）
+    session.endRound();
+    expect(session.run).toBe("idle");
+    expect(session.roundMastered).toBe(0);
+    expect(session.appState.roundPoolIds).toEqual([]);
+    // 没学满就结束，不该报成功
+    expect(toasts.some((t) => t.title === "本轮学习完成")).toBe(false);
+
+    // 再开一轮：重新挑一批，还是满的 3 道
+    session.startLearning();
+    expect(session.run).toBe("learning");
+    expect(session.appState.activePool.length).toBe(3);
+    expect(session.appState.roundPoolIds?.length).toBe(3);
+  });
+
+  it("学到一半退出再进来：池子不重新灌满（这道卡不会被顶掉）", () => {
+    const hash = "memory_locked_resume_hash";
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const session = startLocked(ids, 3, { hash });
+
+    // 学出一道，池子从 3 道变 2 道
+    let guard = 0;
+    while (session.roundMastered === 0 && session.run === "learning") {
+      expect(guard++).toBeLessThan(40);
+      answer(session, true);
+    }
+    expect(session.roundMastered).toBe(1);
+    expect(session.appState.activePool.length).toBe(2);
+    session.exitSession();
+
+    // 重新载入（等价于刷新页面）：这一批从盘上读回来，池子仍是 2 道、不补新题
+    const reloaded = makeSession(ids, { hash });
+    reloaded.startLearning();
+    expect(reloaded.run).toBe("learning");
+    expect(reloaded.appState.activePool.length).toBe(2);
+    expect(reloaded.roundMastered).toBe(1);
+    expect([...reloaded.appState.roundPoolIds!].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("这一批落盘：保存后读得回来，关掉开关也不动已经开着的那一轮", () => {
+    const hash = "memory_locked_persist_hash";
+    const session = startLocked(["a", "b", "c", "d", "e", "f"], 3, { hash });
+    expect([...loadStoredState(hash).roundPoolIds!].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+
+    // 中途关掉开关：设置落盘，但这一轮这一批还在（这一轮照旧按这一批走）
+    session.updateMemorySettings({ lockRoundPool: false });
+    expect(loadStoredState(hash).memory?.settings.lockRoundPool).toBe(false);
+    expect([...loadStoredState(hash).roundPoolIds!].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("旧进度净化：没写过这个字段就是关，只认真正的 true", () => {
+    expect(
+      sanitizeMemorySettings({ graduateLevel: 5 }).lockRoundPool,
+    ).toBe(false);
+    expect(
+      sanitizeMemorySettings({ graduateLevel: 5, lockRoundPool: "yes" })
+        .lockRoundPool,
+    ).toBe(false);
+    expect(
+      sanitizeMemorySettings({ graduateLevel: 5, lockRoundPool: true })
+        .lockRoundPool,
+    ).toBe(true);
+  });
+
+  it("导入进度后本轮计数与这一批一起归零（备份里不带「本轮」状态）", async () => {
+    const hash = "memory_locked_import_hash";
+    const session = startLocked(["a", "b", "c", "d", "e", "f"], 3, { hash });
+    expect(session.appState.roundPoolIds?.length).toBe(3);
+
+    // 走真实路径：导出写进假剪贴板（mock 的 writeText 会存下来），再导入回来
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    await session.exportProgress();
+    await session.startImport();
+    await session.commitImport();
+
+    expect(session.roundMastered).toBe(0);
+    expect(session.roundGoal).toBe(0);
+    // 下一轮开轮时才重新挑，导入后不该留着上一轮那份
+    expect(session.appState.roundPoolIds).toBeUndefined();
   });
 });
 

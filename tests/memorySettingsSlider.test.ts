@@ -225,3 +225,45 @@ describe("掌握阈值滑块", () => {
         expect(totalDaysText()).toBe(String(cumulativeIntervalDays(8)));
     });
 });
+
+/**
+ * 「每轮限定题数」开关（`lockRoundPool`）。
+ *
+ * 这里只守设置面板这一层（渲染、默认值、点一下落盘）；「锁上之后池子不再补
+ * 新题」那套机制在 `memorySession.test.ts` 的「每轮限定题数」一节里。
+ */
+describe("每轮限定题数开关", () => {
+    function lockSwitch(): HTMLElement {
+        const el = document.querySelector<HTMLElement>(
+            "#memory-lock-round-pool",
+        );
+        if (!el) throw new Error("「每轮限定题数」那颗开关没渲染出来");
+        return el;
+    }
+
+    it("默认关着：老行为不变（每掌握一题补一题）", async () => {
+        mounted = await mountSettings();
+
+        expect(mounted.session.memorySettings.lockRoundPool).toBe(false);
+        expect(lockSwitch().getAttribute("aria-checked")).toBe("false");
+        // 标签与说明按钮都在（说明走 Tooltip，正文只在悬浮层里）
+        expect(document.body.textContent).toContain("每轮限定题数");
+        expect(
+            document.querySelector('[aria-label="关于每轮限定题数"]'),
+        ).not.toBeNull();
+    });
+
+    it("点一下打开：写回 session 并落盘", async () => {
+        mounted = await mountSettings();
+
+        lockSwitch().click();
+        flushSync();
+
+        expect(mounted.session.memorySettings.lockRoundPool).toBe(true);
+        expect(
+            loadStoredState(mounted.hash).memory?.settings.lockRoundPool,
+            "改了却没落盘：刷新页面开关又弹回去了",
+        ).toBe(true);
+        expect(lockSwitch().getAttribute("aria-checked")).toBe("true");
+    });
+});

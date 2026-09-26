@@ -172,6 +172,15 @@ export type MemoryProgressMap = Record<string, MemoryProgress>;
 export interface MemoryBankSettings {
   graduateLevel: number;
   roundTarget: number;
+  /**
+   * 每轮限定题数：开轮时挑一批卡（数量 = `roundTarget`）就把这一轮的题定死，
+   * 学会一道**不再补**新题进来，这一批学完本轮就结束。
+   *
+   * 关掉（默认）是「每掌握一题就补一题」的老规矩：活动池始终是满的，
+   * 于是刷到后面必然会碰见这一轮才第一次见到的新卡。打开之后「这次就刷这几道」
+   * 才是确定的——固定下来的那批 id 记在 `StoredState.roundPoolIds` 里。
+   */
+  lockRoundPool: boolean;
 }
 
 /**
@@ -236,6 +245,18 @@ export interface StoredState {
   roundMastered?: number;
   /** 本轮的目标题数（开始时定下，中途改设置不影响本轮） */
   roundGoal?: number;
+  /**
+   * 本轮固定下来的这一批（`MemoryBankSettings.lockRoundPool` 打开时才有）。
+   *
+   * 打开那个开关后，这一轮**只能**用开轮时挑的这一批卡：`fillActivePool`
+   * 不再从题库补新题进来（详见 `MemorySession.fillActivePool`）。所以这一批
+   * id 必须落盘——不然刷新页面后就认不出「本轮是哪几道」，池子会重新灌满，
+   * 开关也就形同虚设。
+   *
+   * 它只收不放：卡毕业 / 被标熟离开池子后仍然留在这里，避免 `masterQuestion`
+   * 刚把它摘掉、补位逻辑又把它捞回来。
+   */
+  roundPoolIds?: string[];
   /**
    * 记忆模式「学习轮」的活动池。
    *

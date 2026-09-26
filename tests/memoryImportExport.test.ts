@@ -137,19 +137,43 @@ describe("记忆模式进度：导入导出往返", () => {
     // 导入后 graduateLevel / roundTarget 静默回到默认值。
     const memory: MemoryStoredState = {
       progress: {},
-      settings: { graduateLevel: 3, roundTarget: 9 },
+      settings: { graduateLevel: 3, roundTarget: 9, lockRoundPool: true },
     };
 
     const encoded = await exportProgress(baseState(memory), HASH, QUESTIONS);
     const payload = await decodePayload(encoded);
 
     expect(payload).toHaveLength(10);
-    // 第 10 项才是记忆 payload
-    expect(payload[9]).toEqual([[], [3, 9], []]);
+    // 第 10 项才是记忆 payload；设置里第 3 项是「每轮限定题数」
+    expect(payload[9]).toEqual([[], [3, 9, 1], []]);
 
     const decoded = await importProgress(encoded, HASH, QUESTIONS);
-    expect(decoded.memory?.settings).toEqual(memory.settings);
+    expect(
+      decoded.memory?.settings,
+      "掌握阈值 / 每轮题数 / 每轮限定题数都要带回来",
+    ).toEqual(memory.settings);
     expect(decoded.memory?.progress).toEqual({});
+  });
+
+  it("老备份（设置数组里没有第 3 项）：每轮限定题数按关处理", async () => {
+    // 手写一份「设置只有两项」的 v9 payload：解码不该报错，开关取默认的关
+    const legacy = await encodePayload([
+      9,
+      QUESTIONS.length,
+      "",
+      [],
+      3,
+      0,
+      [25, 3, 4, "random", 0],
+      [1, 0],
+      "",
+      [[], [3, 9], []],
+    ]);
+    const decoded = await importProgress(legacy, HASH, QUESTIONS);
+
+    expect(decoded.memory?.settings.graduateLevel).toBe(3);
+    expect(decoded.memory?.settings.roundTarget).toBe(9);
+    expect(decoded.memory?.settings.lockRoundPool).toBe(false);
   });
 
   it("题目数量或 hash 不匹配时报错", async () => {

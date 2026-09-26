@@ -13,9 +13,12 @@
     import { Label } from "$lib/components/ui/label";
     import * as Slider from "$lib/components/ui/slider";
     import { Separator } from "$lib/components/ui/separator";
+    import { Switch } from "$lib/components/ui/switch";
+    import * as Tooltip from "$lib/components/ui/tooltip";
     import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
     import IconPlus from "@tabler/icons-svelte/icons/plus";
+    import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
     import { isDebugModeEnabled } from "@/debug";
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
@@ -77,6 +80,43 @@
                         session.appState.settings.correctStreakToMaster,
                 })}
         />
+        <!-- 每轮限定题数：把一批卡刷完就收尾，中途不再补新题进来 -->
+        <div class="flex items-center justify-between gap-3">
+            <Label
+                for="memory-lock-round-pool"
+                class="flex items-center gap-1 text-sm font-normal"
+            >
+                每轮限定题数
+                <Tooltip.Root>
+                    <Tooltip.Trigger>
+                        {#snippet child({ props })}
+                            <button
+                                {...props}
+                                type="button"
+                                class="text-muted-foreground hover:text-foreground inline-flex items-center justify-center"
+                                aria-label="关于每轮限定题数"
+                            >
+                                <IconInfoCircle size={14} stroke={1.5} />
+                            </button>
+                        {/snippet}
+                    </Tooltip.Trigger>
+                    <Tooltip.Content side="top" align="center">
+                        <span class="max-w-56 text-pretty">
+                            开轮时按「目标每轮学习数」挑好这一轮的题就不再换了，
+                            学会一道也不补新的进来。关掉时每学会一道就补一道，
+                            池子始终是满的。
+                        </span>
+                    </Tooltip.Content>
+                </Tooltip.Root>
+            </Label>
+            <Switch
+                id="memory-lock-round-pool"
+                checked={session.memorySettings.lockRoundPool}
+                onCheckedChange={(checked) =>
+                    session.updateMemorySettings({ lockRoundPool: checked })}
+                size="sm"
+            />
+        </div>
     </SettingsSection>
 
     <Separator />

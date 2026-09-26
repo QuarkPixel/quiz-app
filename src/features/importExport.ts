@@ -18,7 +18,9 @@
  *     - memoryPayload = [progress[][], memorySettings[], trailing]
  *       - progress 每项：[questionIndex, stateCode(0=learning/1=reviewing/2=mastered),
  *                         level, streak, nextDue, lapses]
- *       - memorySettings：[graduateLevel, roundTarget]
+ *       - memorySettings：[graduateLevel, roundTarget, lockRoundPool(0|1)]
+ *         —— 第 3 项是后加的：更老的备份在那里是预留位（`[]` 或不写），
+ *         读不到 `lockRoundPool` 就按关处理（老行为），所以没有升 FORMAT_VERSION
  *       - trailing：预留的追加字段（当前为 []）
  *
  *   - 题目 id 按当前题库顺序映射为 index
@@ -508,7 +510,13 @@ async function encodeMemoryProgress(
     "",
     [
       progress,
-      [settings.graduateLevel, settings.roundTarget],
+      // 第 3 项是「每轮限定题数」（后加的，所以排在最后）：老备份那里是个
+      // 预留的 `[]`，读出来是假 = 关（默认值），正好是老行为
+      [
+        settings.graduateLevel,
+        settings.roundTarget,
+        settings.lockRoundPool ? 1 : 0,
+      ],
       [],
     ],
   ];
@@ -802,9 +810,12 @@ function decodeMemoryPayload(
 
   return {
     progress,
+    // 只读前两项 + 第 3 项：更老的备份没有第 3 项（那时是个 `[]` 占位），
+    // 读不到 `lockRoundPool` 时净化的默认值就是关，正好是老行为
     settings: sanitizeMemorySettings({
       graduateLevel: settingsRaw[0],
       roundTarget: settingsRaw[1],
+      ...(settingsRaw[2] === 1 ? { lockRoundPool: true } : {}),
     }),
   };
 }

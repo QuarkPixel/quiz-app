@@ -41,6 +41,8 @@ export function createDefaultMemorySettings(): MemoryBankSettings {
   return {
     graduateLevel: MEMORY_DEFAULT_GRADUATE_LEVEL,
     roundTarget: MEMORY_DEFAULT_ROUND_TARGET,
+    // 默认沿用老规矩（每掌握一题补一题）：打开它是一次明确的选择
+    lockRoundPool: false,
   };
 }
 
@@ -64,5 +66,7 @@ export function sanitizeMemorySettings(
       MEMORY_SETTINGS_BOUNDS.roundTarget.min,
       MEMORY_SETTINGS_BOUNDS.roundTarget.max,
     ),
+    // 旧版本没有这个字段：只认真正的 true，其余（undefined / 字符串 / null）都是关
+    lockRoundPool: raw.lockRoundPool === true,
   };
 }
