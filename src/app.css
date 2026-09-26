@@ -142,6 +142,58 @@
     --ease-spring-out: cubic-bezier(0.32, 0, 0.41, 1);
     /* 加重缓动：开头加速然后长长地缓出，适合大尺寸 layout 过渡 */
     --ease-emphasized: cubic-bezier(0.42, 0, 0, 1);
+    /*
+     * 呼吸灯：云同步指示点跑同步时用（`animate-breathe`）。幅度只比 Tailwind
+     * 自带的 `animate-pulse`（只淡到 50%、2s）强一点点——**不要放大缩放幅度**：
+     * 那颗点只有 6px，`scale` 一大就变成「指示灯变大了」，不是在呼吸。
+     */
+    --animate-breathe: breathe 1.4s ease-in-out infinite;
+    /* 手动点完那一下「亮一下」（`animate-wink`，时长与 AppShell 的 CLICK_FLASH_MS 对齐） */
+    --animate-wink: wink 700ms cubic-bezier(0.32, 0, 0.41, 1) forwards;
+}
+
+/* 呼吸灯：明暗 + 轻轻缩放，像在吸气呼气 */
+@keyframes breathe {
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.3;
+        transform: scale(1.15);
+    }
+}
+
+/*
+ * 「亮一下」：手动点完那一下的回执——**先亮、再跳一下**。
+ *
+ * 底色始终是 `--tone-color` 那一色，「亮」交给 `filter: brightness()`：
+ * 不再为「更亮的同色」维护第二份颜色（那要按主题配混色比例，纯属多余）。
+ * 光晕与缩放都在同一段关键帧里：中间那帧胀到 1.5 倍、光晕跟着放大。
+ *
+ * 缩放**必须**写在这里，不能写成功利 class（`scale-110` 之类）：动画一旦跑起来，
+ * `transform` 整条都由关键帧说了算，同一元素上的 `hover:scale-*` 会被按住不动。
+ *
+ * `forwards` 把末帧（常态色 + 常态光晕 + scale 1）定住。
+ */
+@keyframes wink {
+    /*
+     * 首末帧**不写 `filter`**：写 `brightness(1)` 会被 cssnano 压成
+     * `brightness()`（空参数，非法 → 整条声明被丢掉，动画就不亮了）。
+     * 两端省掉它，滤镜自然插值回「无」，元素自己的 `brightness-100` 兜底。
+     */
+    0% {
+        transform: scale(1);
+    }
+    45% {
+        transform: scale(1.5);
+        box-shadow: 0 0 20px var(--tone-color);
+        filter: brightness(2);
+    }
+    100% {
+        transform: scale(1);
+    }
 }
 
 /* ── 热力图（刷题模式与记忆模式共用同一套布局 class） ───────────────── */

@@ -12,7 +12,6 @@
     import { modKeyLabel } from "$lib/platform";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import * as Kbd from "$lib/components/ui/kbd";
-    import { Spinner } from "$lib/components/ui/spinner";
 
     interface Props {
         headerStart?: Snippet;
@@ -26,6 +25,8 @@
     /** 绿 = 和云端一致；黄 = 还有没同步上去的东西（或正在跑 / 离线）。 */
     const inSync = $derived(syncEngine.inSync);
     const syncing = $derived(syncEngine.status.phase === "syncing");
+    /** 上一次求值时的 `syncing`（`$effect` 里判「跑完了」那个下降沿用）。 */
+    let prevSyncing = false;
     const conflicts = $derived(syncEngine.status.conflicts.length);
     const hasConflicts = $derived(conflicts > 0);
     /**
@@ -79,28 +80,38 @@
     const clickable = $derived(syncEnabled && !syncing);
 
     /**
-     * 每种状态一套颜色：
-     *   - `dot`  圆点自己的底色（绿 / 黄 / 红）
-     *   - `text` spinner 的描边色（图标画的是 `currentColor`）
-     *   - `halo` 光晕 —— 它算在按钮的 `::before` 上，所以带 `before:` 前缀
+     * 每种状态对应一个主题变量，圆点、光晕、呼吸灯、变亮动画**全都读它**：
+     * 颜色只写在这一处，不会出现「圆点是绿的、光晕还是黄的」这种漂移。
+     *
+     * 「变亮」不另配一份颜色——那是同一色加 `filter: brightness()`（见 `@keyframes wink`），
+     * 省掉一套按亮 / 暗主题各配一遍的混色比例。
      */
-    const TONE_CLASS = {
-        ok: {
-            dot: "bg-success",
-            text: "text-success",
-            halo: "before:bg-success",
-        },
-        pending: {
-            dot: "bg-warning",
-            text: "text-warning",
-            halo: "before:bg-warning",
-        },
-        danger: {
-            dot: "bg-destructive",
-            text: "text-destructive",
-            halo: "before:bg-destructive",
-        },
-    } as const;
+    const TONE_VAR: Record<Tone, string> = {
+        ok: "--success",
+        pending: "--warning",
+        danger: "--destructive",
+    };
+
+    /** 挂到按钮上的内联变量（圆点从它取色）。 */
+    const toneStyle = $derived(`--tone-color: var(${TONE_VAR[tone]})`);
+
+    /** 圆点等元素的类：底色读按钮上那个变量（见 `TONE_VAR`）。 */
+    const TONE_CLASS = "bg-(--tone-color)";
+
+    /**
+     * 圆点的光晕：**照搬旧版**的 `box-shadow`（常态 6px、能点时 hover 加到 12px）。
+     *
+     * 颜色走 `--tone-color`，所以三种状态共用这一份，不像旧版那样写三遍。
+     * （旧版是 `shadow-[0_0_6px_var(--success)]` + `group-hover:shadow-[0_0_12px_var(--success)]`，
+     * 看着完全一样。）
+     */
+    const HALO_CLASS =
+        "shadow-[0_0_6px_var(--tone-color)] group-hover:shadow-[0_0_12px_var(--tone-color)]";
+
+    /**
+     * 点一下跑完那阵「亮一下」的时长（CSS 里 `animate-wink` 也写 700ms，两边对齐）。
+     */
+    const CLICK_FLASH_MS = 700;
 
     const indicatorLabel = $derived(
         syncing
@@ -129,6 +140,52 @@
     );
 
     /**
+     * 手动点击（点圆点或按 ⌘Y）排下的那一次同步 —— 跑完要「亮一下」。
+     *
+     * 只是给用户的回执（点下去除了呼吸灯之外总得有个收尾），成功失败都亮：
+     * 落点是什么颜色由那一轮的结果决定，亮的是**那个颜色**本身。
+     * 自动同步（打开页面 / 防抖上传 / 轮询）不亮——用户没在等它。
+     */
+    let manualSync = false;
+    /**
+     * 正在播「亮一下」的那个状态；`null` = 不亮。
+     *
+     * 用状态而不是直接挂 class：动画只在**由不亮变成亮**的那一刻需要重启，
+     * 而 Svelte 对同一个 class 重复赋值不会再触发一次动画。
+     */
+    let flashTone = $state<Tone | null>(null);
+    let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /**
+     * 一轮同步跑完：手动点的就亮一下。
+     *
+     * 判定「跑完」用 `syncing` 的下降沿（`prev`）：这一轮无论是成功、报错还是
+     * 有冲突，只要不在跑了就算跑完——用户要的是「这次点击有回执」，
+     * 具体结果由圆点接下来停在哪一色说明。
+     */
+    $effect(() => {
+        const running = syncing;
+        const wasRunning = prevSyncing;
+        prevSyncing = running;
+        if (!wasRunning || running || !manualSync) return;
+        playClickFlash();
+    });
+
+    $effect(() => () => {
+        if (flashTimer) clearTimeout(flashTimer);
+    });
+
+    function playClickFlash(): void {
+        manualSync = false;
+        flashTone = settledTone;
+        if (flashTimer) clearTimeout(flashTimer);
+        flashTimer = setTimeout(() => {
+            flashTone = null;
+            flashTimer = null;
+        }, CLICK_FLASH_MS + 60);
+    }
+
+    /**
      * 点一下：
      *   - **红色**（有冲突 / 报错）：把人送到全局设置。冲突要在那儿选保留哪一边；
      *     报错（令牌失效、Gist 被删……）也是在那儿修——这两件事再同步一次都解决不了。
@@ -144,6 +201,7 @@
             globalSettingsDialog.show();
             return;
         }
+        manualSync = true;
         void syncEngine.sync();
     }
 
@@ -208,49 +266,48 @@
                             <button
                                 type="button"
                                 data-slot="sync-indicator"
+                                data-syncing={syncing ? "true" : undefined}
+                                style={toneStyle}
                                 class={cn(
-                                    // 命中区域（size-8）和圆点 / spinner（size-1.5）分开：点起来够大，
+                                    // 命中区域（size-8）和圆点（size-1.5）分开：点起来够大，
                                     // 看起来仍然是小圆点
-                                    "focus-visible:ring-ring/50 relative flex size-8 items-center justify-center rounded-full outline-none focus-visible:ring-2",
-                                    /**
-                                     * 光晕画在按钮自己的 `::before` 上，位置与指示器重合，
-                                     * **两种状态共用同一个**，而且垫在指示器下面
-                                     * （所以指示器要 `relative`，不然绝对定位的伪元素会盖在它上面）。
-                                     *
-                                     * 为什么不挂在指示器上：正在同步时那个指示器是 `<svg>`，
-                                     * 类名最后落在 svg 上——svg 不吃 `backdrop-filter`；
-                                     * `filter: drop-shadow()` 也会被 svg 自己的 viewBox 裁掉
-                                     * （`overflow: hidden` 是 svg 的默认值），光晕根本出不来。
-                                     * 伪元素是普通盒子：画一个同色的小圆再糊掉，想要多亮就调 blur / 尺寸。
-                                     */
-                                    "before:absolute before:inset-0 before:m-auto before:size-1.5 before:rounded-full before:blur-[3px] before:content-['']",
-                                    // 能点的时候才吃 hover：提亮 + 光晕变强 + 稍微长大一点
-                                    "hover:brightness-125 hover:scale-125 transition-all duration-150",
-                                    TONE_CLASS[tone].halo,
+                                    "focus-visible:ring-ring/50 flex size-8 items-center justify-center rounded-full outline-none focus-visible:ring-2",
                                     clickable
-                                        ? "cursor-pointer"
+                                        ? "group cursor-pointer"
                                         : "cursor-default",
                                 )}
                                 aria-label={indicatorText}
                                 aria-disabled={!clickable}
                                 onclick={onClick}
                             >
-                                {#if syncing}
-                                    <Spinner
-                                        aria-hidden="true"
-                                        class={cn(
-                                            "relative size-2.5 overflow-visible stroke-6",
-                                            TONE_CLASS[tone].text,
-                                        )}
-                                    />
-                                {:else}
-                                    <span
-                                        class={cn(
-                                            "relative size-1.5 rounded-full",
-                                            TONE_CLASS[tone].dot,
-                                        )}
-                                    ></span>
-                                {/if}
+                                <!--
+                                    圆点：尺寸与光晕**照搬旧版**（`size-1.5` = 6px，
+                                    光晕是 `box-shadow: 0 0 6px <状态色>`），
+                                    也就是被换掉之前那一版的观感。这里改的只有两点：
+
+                                      1. 「在跑」的动画（`syncing`）——旧版是 `animate-pulse`
+                                         （只淡到 50%），现在用 `animate-breathe` 略强一点
+                                      2. 手动点击跑完那一下 `animate-wink`（见 `flashTone`）
+
+                                    光晕必须**挂在圆点自己身上**、不能挪到按钮的伪元素上：
+                                    伪元素画出来是「6px 的实心圆 + 3px 模糊」，视觉直径比
+                                    `box-shadow` 大一圈，看着就是「指示灯变大了」（踩过）。
+                                -->
+                                <span
+                                    class={cn(
+                                        // `brightness-100` = 常态滤镜值：`@keyframes wink` 只在中段写
+                                        // `brightness(2)`，两端省略，靠它定住基线
+                                        "size-1.5 rounded-full brightness-100 transition-[filter,box-shadow,width,height] duration-150",
+                                        TONE_CLASS,
+                                        HALO_CLASS,
+                                        syncing && "animate-breathe",
+                                        flashTone !== null && "animate-wink",
+                                        // 能点的时候才吃 hover：提亮 + 光晕变强 + 稍微长大
+                                        // 一点；正在同步时这些 class 根本不在
+                                        clickable &&
+                                            "group-hover:brightness-125 group-hover:size-2",
+                                    )}
+                                ></span>
                             </button>
                         </Tooltip.Trigger>
                         <Tooltip.Content

@@ -282,9 +282,11 @@ describe("刷题模式：设置面板", () => {
         // 这类自相矛盾的回归会重新冒出来
         pressModKey("i");
 
-        expect(dialogTitles(), "弹窗内的 ⌘I 不该再切一次").toContain(
-            "当前题库设置 题库 名称   题型筛选 ",
-        );
+        // 断言的是「还是那一个弹窗」：整串文案钉死过（题型筛选那行删掉之后
+        // 这个用例一直红着），所以只认标题 + 题库名，别把面板内容再抄一遍
+        const titles = dialogTitles();
+        expect(titles, "弹窗内的 ⌘I 不该再切一次").toHaveLength(1);
+        expect(titles[0]).toContain("当前题库设置 题库 名称");
     });
 });
 
