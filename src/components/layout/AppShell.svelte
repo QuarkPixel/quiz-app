@@ -6,9 +6,11 @@
 
     import { cn } from "$lib/utils";
     import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
+    import { globalSettingsStore } from "@/features/globalSettings.svelte";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import { syncEngine } from "@/features/sync/engine.svelte";
     import { handleSyncNowShortcut } from "@/features/sync/shortcut";
+    import { createSoundPlayer, maybePlaySyncSuccessSound } from "@/sound";
     import { modKeyLabel } from "$lib/platform";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import * as Kbd from "$lib/components/ui/kbd";
@@ -142,9 +144,9 @@
     /**
      * 手动点击（点圆点或按 ⌘Y）排下的那一次同步 —— 跑完要「亮一下」。
      *
-     * 只是给用户的回执（点下去除了呼吸灯之外总得有个收尾），成功失败都亮：
-     * 落点是什么颜色由那一轮的结果决定，亮的是**那个颜色**本身。
-     * 自动同步（打开页面 / 防抖上传 / 轮询）不亮——用户没在等它。
+     * 只是给用户的回执（点下去除了呼吸灯之外总得有个收尾）：**成功**时
+     * 亮一下 + 跳一下 + 一声「答对」音效（音效开着才响），失败 / 冲突时只亮不响。
+     * 自动同步（打开页面 / 防抖上传 / 轮询）全都不给——用户没在等它。
      */
     let manualSync = false;
     /**
@@ -157,7 +159,16 @@
     let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
     /**
-     * 一轮同步跑完：手动点的就亮一下。
+     * 指示点自己的播放器（音效开着时的那一下「答对」声）。
+     *
+     * 指示点不属于任何一个 session，拿不到 QuizView / MemoryView 那个播放器实例，
+     * 所以在常驻的 AppShell 里单开一个——`createSoundPlayer` 只是一张
+     * `HTMLAudioElement` 的表，多一份不额外下载任何东西（三个音效本来就随主包走）。
+     */
+    const soundPlayer = createSoundPlayer();
+
+    /**
+     * 一轮同步跑完：手动点的就亮一下（成功了再补一声「答对」）。
      *
      * 判定「跑完」用 `syncing` 的下降沿（`prev`）：这一轮无论是成功、报错还是
      * 有冲突，只要不在跑了就算跑完——用户要的是「这次点击有回执」，
@@ -168,16 +179,22 @@
         const wasRunning = prevSyncing;
         prevSyncing = running;
         if (!wasRunning || running || !manualSync) return;
-        playClickFlash();
+        // 成功 = 跑完落在绿色（没冲突、没报错、也没被本地存储挡住）
+        playClickFlash(settledTone === "ok");
     });
 
     $effect(() => () => {
         if (flashTimer) clearTimeout(flashTimer);
     });
 
-    function playClickFlash(): void {
+    function playClickFlash(succeeded: boolean): void {
         manualSync = false;
         flashTone = settledTone;
+        // 音效是「成功」的加码反馈，跟 wink 同时起：失败/冲突时不响，
+        // 那时用户要看的是红点，加一声「答对」只会说反话
+        if (succeeded) {
+            maybePlaySyncSuccessSound(globalSettingsStore.value, soundPlayer);
+        }
         if (flashTimer) clearTimeout(flashTimer);
         flashTimer = setTimeout(() => {
             flashTone = null;
@@ -192,8 +209,8 @@
      *   - 黄 / 绿（还没同步 / 已同步 / 离线）：手动同步一次（跟设置面板里的
      *     「立即同步」同一个入口）。
      *
-     * **刻意不弹任何提示**：成功了它自己就变绿（那就是反馈）；出错就变红并保持，
-     * 悬浮看一眼标题就知道是什么错。
+     * **刻意不弹任何提示**：成功了它自己就变绿、亮一下并响一声「答对」；出错就变红
+     * 并保持，悬浮看一眼标题就知道是什么错（那时只亮不响）。
      */
     function onClick(): void {
         if (!clickable) return;
@@ -287,7 +304,8 @@
 
                                       1. 「在跑」的动画（`syncing`）——旧版是 `animate-pulse`
                                          （只淡到 50%），现在用 `animate-breathe` 略强一点
-                                      2. 手动点击跑完那一下 `animate-wink`（见 `flashTone`）
+                                      2. 手动点击跑完那一下 `animate-wink`（见 `flashTone`）；
+                                         成功时同时响一声「答对」音效（音效开着才响）
 
                                     光晕必须**挂在圆点自己身上**、不能挪到按钮的伪元素上：
                                     伪元素画出来是「6px 的实心圆 + 3px 模糊」，视觉直径比

@@ -122,6 +122,21 @@ export function maybePlaySuccessSound(
 }
 
 /**
+ * 手动同步成功那一下：用**答对题目**的同款音效（云同步指示点的点击回执）。
+ *
+ * 特意复用 `playAnswer(true)` 而不是 `playSuccess()`：后者是「一轮学完」那种更大
+ * 的节点，而同步成功只是一次日常操作的确认，听感上该和答对一题同级。
+ */
+export function maybePlaySyncSuccessSound(
+  settings: GlobalSettings,
+  player: SoundPlayer,
+): void {
+  if (settings.soundEnabled) {
+    player.playAnswer(true);
+  }
+}
+
+/**
  * 切换音效全局偏好。settings 由调用方持有（QuizSession 的 $state），
  * 变更后通过 save() 持久化到 general 配置。
  */

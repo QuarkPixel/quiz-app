@@ -12,6 +12,7 @@ import { flushSync, mount, unmount } from "svelte";
 
 import AppShellHarness from "./AppShellHarness.svelte";
 import SidebarHarness from "./SidebarHarness.svelte";
+import { globalSettingsStore } from "@/features/globalSettings.svelte";
 import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
 import { syncConfigStore } from "@/features/sync/config.svelte";
 import { syncEngine } from "@/features/sync/engine.svelte";
@@ -607,6 +608,140 @@ describe("头部的云同步指示点", () => {
         "总得有一帧在提亮",
     ).toBe(true);
   });
+
+  /**
+   * 手动点击成功那一下要响**答对题目**的同款音效（`answer-correct.webm`）。
+   *
+   * 用假的 `Audio` 抓住「谁被 play 了」：指示点在 AppShell 里，拿不到
+   * QuizView / MemoryView 那个播放器实例，所以它自己 createSoundPlayer()。
+   */
+  function captureAudio(): { played: () => string[] } {
+    const played: string[] = [];
+    class MockAudio {
+      preload = "";
+      volume = 1;
+      currentTime = 0;
+      constructor(readonly src = "") {}
+      load(): void {}
+      play(): Promise<void> {
+        played.push(this.src);
+        return Promise.resolve();
+      }
+    }
+    vi.stubGlobal("Audio", MockAudio as unknown as typeof Audio);
+    return { played: () => played };
+  }
+
+  test("音效开着 + 手动同步成功 → wink 之外还响一声「答对」", async () => {
+    const audio = captureAudio();
+    const h = new SyncHarness();
+    await h.start();
+    try {
+      vi.stubEnv("VITE_GITEE_API_BASE", h.apiBase);
+      h.freshDevice("A");
+      h.seedBank(HASH, "题库一", "first");
+      h.save("A");
+      syncConfigStore.update({
+        enabled: true,
+        token: "tok",
+        gistId: "",
+        autoSync: false,
+      });
+      globalSettingsStore.update({ soundEnabled: true });
+
+      render();
+      // 点之前不该自己响
+      expect(audio.played()).toEqual([]);
+
+      const run = syncEngine.sync;
+      indicator()?.click();
+      flushSync();
+
+      await run.call(syncEngine);
+      flushSync();
+
+      expect(dot()?.className, "手动点完要亮一下").toContain("animate-wink");
+      const played = audio.played();
+      expect(played, "成功那一下要响一声").toHaveLength(1);
+      expect(played[0], "用的是答对题目的那个音效").toContain(
+        "answer-correct",
+      );
+      expect(played[0], "不是「一轮学完」的 success 音").not.toContain(
+        "success",
+      );
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("音效关着 → 手动同步成功也不出声", async () => {
+    const audio = captureAudio();
+    const h = new SyncHarness();
+    await h.start();
+    try {
+      vi.stubEnv("VITE_GITEE_API_BASE", h.apiBase);
+      h.freshDevice("A");
+      h.seedBank(HASH, "题库一", "first");
+      h.save("A");
+      syncConfigStore.update({
+        enabled: true,
+        token: "tok",
+        gistId: "",
+        autoSync: false,
+      });
+      globalSettingsStore.update({ soundEnabled: false });
+
+      render();
+      const run = syncEngine.sync;
+      indicator()?.click();
+      flushSync();
+      await run.call(syncEngine);
+      flushSync();
+
+      // 视觉回执照给，只是不响
+      expect(dot()?.className).toContain("animate-wink");
+      expect(audio.played()).toEqual([]);
+    } finally {
+      await h.stop();
+    }
+  });
+
+  test("手动点击失败 → 亮一下但**不响**（那时响「答对」是说反话）", async () => {
+    const audio = captureAudio();
+    const h = new SyncHarness();
+    await h.start();
+    try {
+      vi.stubEnv("VITE_GITEE_API_BASE", h.apiBase);
+      h.freshDevice("A");
+      h.seedBank(HASH, "题库一", "first");
+      h.save("A");
+      // 目标 Gist 不存在 → 这一轮必然报错
+      syncConfigStore.update({
+        enabled: true,
+        token: "tok",
+        gistId: "g1",
+        autoSync: false,
+      });
+      globalSettingsStore.update({ soundEnabled: true });
+
+      render();
+      const run = syncEngine.sync;
+      indicator()?.click();
+      flushSync();
+      await run.call(syncEngine);
+      flushSync();
+
+      expect(syncEngine.status.phase).toBe("error");
+      expect(toneColorVar()).toBe("--destructive");
+      expect(dot()?.className, "失败也是「点过了」的回执").toContain(
+        "animate-wink",
+      );
+      expect(audio.played()).toEqual([]);
+    } finally {
+      await h.stop();
+    }
+  });
+
   test("手动点击失败：跑完照样给回执（亮的是红/黄那一色，不是绿）", async () => {
     const h = new SyncHarness();
     await h.start();
