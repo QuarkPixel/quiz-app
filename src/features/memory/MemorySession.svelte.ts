@@ -22,6 +22,7 @@ import type {
   MemoryProgress,
   MemoryProgressMap,
   MemoryQuestion,
+  MemoryReviewState,
   MemoryStoredState,
   Question,
   RuntimeState,
@@ -41,6 +42,7 @@ import {
 import {
   normalizeMemoryProgressMap,
   normalizeMemoryRetry,
+  normalizeMemoryReview,
 } from "@/features/memory/normalize";
 import {
   devAddDay,
@@ -145,9 +147,19 @@ export class MemorySession {
   reviewTarget = $state<Record<string, number>>({});
   /** 本轮完成数量（用于结束文案） */
   completed = $state(0);
-  /** 复习：本轮开始时的总题数（进度条分母；只在本会话有效） */
+  /**
+   * 复习：今天这一轮的总题数（进度条分母）。
+   *
+   * 与 `reviewedIds` 一起**落盘**（`state.memory.review`）：复习轮同样可以中断续做，
+   * 中途退出 / 刷新后重新进来，进度条该接着数而不是从 0 / N 重来。
+   * 开轮时定下，中途不变——答错补进来的卡不该把分母撑大。
+   */
   reviewTotal = $state(0);
-  /** 复习：已经过了一遍的题（每过一题就加进来，进度条靠它变绿） */
+  /**
+   * 复习：今天已经复习完的题（每过一题就加进来，进度条靠它变绿）。
+   *
+   * 落盘的那一份在 `state.memory.review.reviewedIds`，跨过凌晨 5 点自动作废。
+   */
   reviewedIds = $state<string[]>([]);
   /**
    * 本轮复习里被降级过的题（「忘记」→ 阶梯归零；「模糊」→ 阶梯退一级）。
@@ -478,6 +490,11 @@ export class MemorySession {
    * 出题顺序一律随机（不再按逾期天数排序）。答错过的卡已经不在「到期」里了，
    * 所以要靠 `state.memory.retry` 把它们捞回来，否则「答错后必须连对 N 次」
    * 一出会话就没了。
+   *
+   * **今天已经复习过的卡不再排队，但计数留着**：进度条接着上一次的数走
+   * （`state.memory.review`），否则「今天复习了 5 / 10，退出再进来」会变成 0 / 5。
+   * 注意「已经算过一道」≠「这道卡今天完事了」：答「忘记 / 模糊」的卡会立刻
+   * 计入进度条，但它还得在本轮连对 N 次，所以只要待办还在就继续排队。
    */
   startReview(): void {
     const now = this.now;
@@ -489,11 +506,20 @@ export class MemorySession {
     // 答错后还没补完连对的卡：它们仍留在本轮（今天），即使已经不在到期列表里
     const retryTargets = this.retryTargetsToday();
     const dueIds = new Set(due.map((q) => q.id));
+
+    // 今天已经复习过的那一份（进度条分子；隔天会被净化掉）
+    const stored = this.storedReviewToday();
+    const reviewedBefore = stored?.reviewedIds ?? [];
+    const countedToday = new Set(reviewedBefore);
+
     const retryQuestions = this.questions.filter(
       (q) => retryTargets[q.id] !== undefined && !dueIds.has(q.id),
     );
+    const queueQuestions = [...due, ...retryQuestions].filter((q) => {
+      if (retryTargets[q.id] !== undefined) return true; // 待办没补完，继续排
+      return !countedToday.has(q.id); // 没待办又算过 = 今天完事了，不再出现
+    });
 
-    const queueQuestions = [...due, ...retryQuestions];
     if (queueQuestions.length === 0) {
       this.deps.toast("今天没有需要复习的题目");
       return;
@@ -503,11 +529,16 @@ export class MemorySession {
     this.completed = 0;
     this.shownIds = [];
     this.reviewTarget = { ...retryTargets };
-    this.reviewedIds = [];
+    // 进度条的两个数：分子就是那份清单（今天算过几道），分母 = 今天这一轮
+    // 总共要过几道（开轮时定下，中途不因为答错补回来几张卡就变大）
+    this.reviewedIds = [...reviewedBefore];
+    this.reviewTotal = Math.max(
+      stored?.total ?? 0,
+      new Set([...reviewedBefore, ...queueQuestions.map((q) => q.id)]).size,
+    );
     // 带待办的卡都是本轮答错过的：重新进来后完成连对时同样不许推进掌握阶梯
     // （阶梯已经归零并定在「明天」，推进了就会变成和一次答对一样的间隔）
     this.failedThisRound = Object.keys(retryTargets);
-    this.reviewTotal = queueQuestions.length;
     const shuffled = shuffleArray(queueQuestions);
     this.appState = {
       ...this.appState,
@@ -525,6 +556,67 @@ export class MemorySession {
     this.save();
     this.syncQueueToPool();
     this.selectNext();
+  }
+
+  /**
+   * 今天那一份复习进度（已复习清单 + 分母）；今天还没进过复习时是 null。
+   *
+   * 隔天 / 结构非法的数据由 `normalizeMemoryReview` 在载入时丢掉，
+   * 所以这里只管读。
+   */
+  private storedReviewToday(): MemoryReviewState | null {
+    const review = this.appState.memory?.review;
+    if (!review || review.day !== studyDay(this.now)) return null;
+    return review;
+  }
+
+  /**
+   * 记一道「今天复习过了」（进度条靠它变绿），返回这道加入之后的清单快照。
+   *
+   * 判分流要的是**快照**而不是直接改 `appState`：它随后会用 `writeProgress` /
+   * `writeRetryTarget` 重建整个 `memory` 段，从 `base` 展开——先改 `appState`
+   * 会被那一步覆盖（真踩过：答错后退出，`memory.review` 整个丢了，重进来
+   * 进度条又变 0 / N）。所以这里只动 `reviewedIds`，清单由调用方写进那一次
+   * `memory` 段里（`withReview`）。
+   *
+   * 不走判分流的路径（「下一题」结算、总览里标熟）用 `markReviewedAndSave()`
+   * ——那里没有别的东西要一起写，直接落进 `appState` 更省事。
+   */
+  private reviewSnapshot(id: string): MemoryReviewState | undefined {
+    if (!this.reviewedIds.includes(id)) {
+      this.reviewedIds = [...this.reviewedIds, id];
+    }
+    return this.reviewSectionFor(this.reviewedIds);
+  }
+
+  /** 记一道已复习，并**直接写进 `appState`**（调用方之后照常 `save()`）。 */
+  private markReviewedAndSave(id: string): void {
+    this.reviewedIds = this.reviewedIds.includes(id)
+      ? this.reviewedIds
+      : [...this.reviewedIds, id];
+    this.appState = {
+      ...this.appState,
+      memory: this.memorySection(this.appState, {
+        review: this.reviewSectionFor(this.reviewedIds),
+      }),
+    };
+  }
+
+  /**
+   * 今天的复习清单的快照。
+   *
+   * 分母 `total` 是**开轮时**定下的那个数，不跟着补进来的卡涨；
+   * 隔天 / 结构非法的数据由 `normalizeMemoryReview` 在载入时丢掉。
+   */
+  private reviewSectionFor(
+    reviewedIds: string[],
+  ): MemoryReviewState | undefined {
+    if (reviewedIds.length === 0) return undefined;
+    return {
+      day: studyDay(this.now),
+      reviewedIds: [...reviewedIds],
+      total: Math.max(this.reviewTotal, reviewedIds.length),
+    };
   }
 
   /** 回到首页。 */
@@ -599,7 +691,7 @@ export class MemorySession {
       this.reviewTarget = rest;
     }
     this.clearRetryTarget(id);
-    if (this.run === "reviewing" && inRound) this.markReviewed(id);
+    if (this.run === "reviewing" && inRound) this.markReviewedAndSave(id);
 
     // 学习轮少了一张就补一张进来：池子始终是满的（与 `graduateInLearning` 同一条规矩）
     if (this.run === "learning") this.fillActivePool();
@@ -986,7 +1078,7 @@ export class MemorySession {
     // 这一道的本轮要求补完了：清掉落盘的待办，并立刻把阶梯 / streak 写下去
     // （「下一题」之后再关页面不该丢掉这次推进）
     this.clearRetryTarget(question.id);
-    this.markReviewed(question.id);
+    this.markReviewedAndSave(question.id);
     this.save();
     this.dropCurrent();
   }
@@ -1079,11 +1171,6 @@ export class MemorySession {
     return stillUnlearned ? this.appState.activePool : [];
   }
 
-  private markReviewed(id: string): void {
-    if (this.reviewedIds.includes(id)) return;
-    this.reviewedIds = [...this.reviewedIds, id];
-  }
-
   /** 排到队尾（学习流没连对够时用）。 */
   private requeue(id: string): void {
     this.queue = [...this.queue.slice(1), { id }];
@@ -1159,18 +1246,21 @@ export class MemorySession {
         if (!this.failedThisRound.includes(question.id)) {
           this.failedThisRound = [...this.failedThisRound, question.id];
         }
-        this.markReviewed(question.id);
+        const review = this.reviewSnapshot(question.id);
         return {
           ...base,
           activePool,
-          memory: this.writeRetryTarget(
-            this.writeProgress(
-              base,
+          memory: this.withReview(
+            this.writeRetryTarget(
+              this.writeProgress(
+                base,
+                question.id,
+                fuzzyReview(item, this.now),
+              ),
               question.id,
-              fuzzyReview(item, this.now),
+              this.streakToLearn,
             ),
-            question.id,
-            this.streakToLearn,
+            review,
           ),
           currentRound: base.currentRound + 1,
         };
@@ -1189,18 +1279,21 @@ export class MemorySession {
         }
         // 这道今天已经处理过了（之后还会再出现几次也不算新的一题），
         // 进度条与「今日已复习」都要认它
-        this.markReviewed(question.id);
+        const review = this.reviewSnapshot(question.id);
         return {
           ...base,
           activePool,
-          memory: this.writeRetryTarget(
-            this.writeProgress(
-              base,
+          memory: this.withReview(
+            this.writeRetryTarget(
+              this.writeProgress(
+                base,
+                question.id,
+                resetReview(item, this.now),
+              ),
               question.id,
-              resetReview(item, this.now),
+              this.streakToLearn,
             ),
-            question.id,
-            this.streakToLearn,
+            review,
           ),
           currentRound: base.currentRound + 1,
         };
@@ -1288,6 +1381,7 @@ export class MemorySession {
       settings:
         patch.settings ?? current?.settings ?? createDefaultMemorySettings(),
       retry: "retry" in patch ? patch.retry : current?.retry,
+      review: "review" in patch ? patch.review : current?.review,
       learnedDay: "learnedDay" in patch ? patch.learnedDay : current?.learnedDay,
     };
   }
@@ -1301,6 +1395,20 @@ export class MemorySession {
     return this.memorySection(base, {
       progress: { ...(base.memory?.progress ?? {}), [id]: progress },
     });
+  }
+
+  /**
+   * 把今天的复习清单并进一份刚重建的 `memory` 段。
+   *
+   * `writeProgress` / `writeRetryTarget` 都是从 `base` 重建的，看不见
+   * `reviewSnapshot` 刚记下的那一道，所以判分流最后要过这一道手。
+   * `review === undefined` 说明今天还没复习过任何一道，这时保持原样。
+   */
+  private withReview(
+    memory: MemoryStoredState,
+    review: MemoryReviewState | undefined,
+  ): MemoryStoredState {
+    return review === undefined ? memory : { ...memory, review };
   }
 
   private finishSession(): void {
@@ -1325,6 +1433,11 @@ export class MemorySession {
     this.queue = [];
     // 复习轮的到期队列用完就丢掉，同时把学习轮的活动池放回来
     // （复习期间它暂存在 `learningPool` 里）
+    //
+    // 今天这一份复习进度**不清**（`state.memory.review`）：它是「今天复习过哪些
+    // 卡」这个事实，不是「本轮还在跑」这个状态。清掉的话「答完最后一道 → 收尾
+    // 文案里数着刚才那几道 → 进度条却已经归零」，也说不清今天到底复习了几道。
+    // 它自己会在跨过凌晨 5 点（学习日变了）被净化掉。
     this.appState = {
       ...this.appState,
       activePool: this.appState.learningPool ?? [],
@@ -1414,9 +1527,11 @@ export class MemorySession {
       },
     });
     // 本轮计数是会话字段，换掉 appState 不会自动清：留着会让下一轮从旧的
-    // 「已掌握 X / Y」接着数，只学几道就提前结束本轮
+    // 「已掌握 X / Y」接着数，只学几道就提前结束本轮；复习进度条的两个数同理
     this.roundMastered = 0;
     this.roundGoal = 0;
+    this.reviewedIds = [];
+    this.reviewTotal = 0;
     this.exitSession();
     this.save();
   }
@@ -1571,9 +1686,12 @@ export class MemorySession {
       }),
     );
     // 备份里不带「本轮」的短周期状态（见 AGENTS.md），所以导入后必须按新一轮
-    // 重新开始：否则旧的 roundMastered 会叠到导入的进度上，几道就结束本轮
+    // 重新开始：否则旧的 roundMastered 会叠到导入的进度上，几道就结束本轮；
+    // 复习进度条的两个数也是「本轮」状态，一起归零
     this.roundMastered = 0;
     this.roundGoal = 0;
+    this.reviewedIds = [];
+    this.reviewTotal = 0;
     this.exitSession();
     this.deps.toast("进度已导入", "已覆盖当前进度。", "success");
     maybePlaySuccessSound(this.globalSettings, this.deps.sound);
@@ -1603,8 +1721,9 @@ export class MemorySession {
   private loadState(
     stored: ReturnType<typeof loadStoredState>,
   ): RuntimeState {
-    // 本轮的「重新连对」待办只保留今天的：昨天写下的要求今天已经没意义
-    // （那道卡今天本来就会到期，答对一次即过）
+    // 本轮的「重新连对」待办与今天的复习进度都只保留今天的：昨天写下的东西
+    // 今天已经没意义（那道卡今天本来就会到期，答对一次即过；复习进度条则要
+    // 从新的一天重新数）
     const today = studyDay(this.now);
     // 展开原段再覆盖要净化的字段：以后 `memory` 加字段时不会被这里悄悄抹掉
     const memory = stored.memory
@@ -1613,6 +1732,7 @@ export class MemorySession {
           progress: normalizeMemoryProgressMap(stored.memory.progress),
           settings: sanitizeMemorySettings(stored.memory.settings),
           retry: normalizeMemoryRetry(stored.memory.retry, today),
+          review: normalizeMemoryReview(stored.memory.review, today),
         }
       : { progress: {}, settings: createDefaultMemorySettings() };
     return this.withSyncedMasteredIds(

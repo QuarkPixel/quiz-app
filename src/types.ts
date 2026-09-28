@@ -202,12 +202,40 @@ export interface MemoryRetryState {
   targets: Record<string, number>;
 }
 
+/**
+ * 今天的复习轮进度（进度条的那两个数）。
+ *
+ * 和 `MemoryRetryState` 同一个道理：复习轮也是**可以中断续做**的一轮，
+ * 「今天已经复习了 5 / 10」这件事必须跨会话成立——中途按 Esc 退出、刷新页面、
+ * 切题库回来，进度条都不该从 0 / N 重新数（每道卡的复习阶梯本身是落盘的，
+ * 只有这两个计数原先只活在会话里，于是重新进来就成了「0 / 5」）。
+ *
+ * - `day`：这份进度属于哪个学习日（`studyDay` 锚点）。跨过凌晨 5 点就作废——
+ *   那时卡片按常规到期重新排，是**新的一天的一轮**，不该继承昨天的进度条
+ * - `reviewedIds`：今天已经复习完的卡（进度条上变绿的那些）
+ * - `total`：今天这一轮的总题数（进度条分母）。开轮时定下，中途不变——
+ *   否则「答错后回到本轮」这类补进来的卡会让分母一直长，进度条永远追不上
+ *
+ * 不进进度备份：它是「今天这一轮」这种短周期状态（见 AGENTS.md）。
+ */
+export interface MemoryReviewState {
+  day: number;
+  reviewedIds: string[];
+  total: number;
+}
+
 /** `StoredState.memory` 的结构。 */
 export interface MemoryStoredState {
   progress: MemoryProgressMap;
   settings: MemoryBankSettings;
   /** 本轮还没补完的「重新连对」要求；没有待办时不存在 */
   retry?: MemoryRetryState;
+  /**
+   * 今天复习轮的进度（已复习哪些 / 共几道）；今天没进过复习时不存在。
+   *
+   * 与 `retry` 配套：那两个数是进度条的分子分母，中途退出 / 刷新后要接着数。
+   */
+  review?: MemoryReviewState;
   /**
    * 最近一次「学完一轮」发生在哪个学习日（`studyDay` 锚点）。
    *

@@ -10,6 +10,7 @@ import type {
   MemoryProgress,
   MemoryProgressMap,
   MemoryRetryState,
+  MemoryReviewState,
   MemoryStoredState,
 } from "@/types";
 import { sanitizeMemorySettings } from "./settings";
@@ -112,6 +113,47 @@ export function normalizeMemoryRetry(
 }
 
 /**
+ * 净化「今天复习到哪儿了」的进度（进度条的分子分母）。
+ *
+ * 与 `normalizeMemoryRetry` 同一套规矩：`today` 传了就只认当天的，
+ * 隔天（跨过凌晨 5 点）自动作废——那时是**新的一天的一轮**，从 0 开始数。
+ * 结构非法 / 没有已复习的卡时返回 undefined，免得在存储里留下空壳。
+ */
+export function normalizeMemoryReview(
+  raw: unknown,
+  today?: number,
+): MemoryReviewState | undefined {
+  if (!isRecord(raw)) return undefined;
+
+  const day = toNonNegativeIntOrNull(raw.day);
+  if (day === null) return undefined;
+  if (
+    today !== undefined &&
+    Number.isFinite(today) &&
+    Math.floor(today) !== day
+  ) {
+    return undefined;
+  }
+
+  const reviewedIds: string[] = [];
+  const seen = new Set<string>();
+  for (const id of Array.isArray(raw.reviewedIds) ? raw.reviewedIds : []) {
+    if (typeof id !== "string" || id.length === 0 || seen.has(id)) continue;
+    seen.add(id);
+    reviewedIds.push(id);
+  }
+  if (reviewedIds.length === 0) return undefined;
+
+  const total = toNonNegativeIntOrNull(raw.total) ?? 0;
+  return {
+    day,
+    reviewedIds,
+    // 分母至少要有分子那么大，否则进度条会画出「6 / 5」
+    total: Math.max(total, reviewedIds.length),
+  };
+}
+
+/**
  * 净化整个 `StoredState.memory` 段。没有这个段时返回 undefined，
  * 这样刷题模式题库的状态里不会多出一个空段。
  */
@@ -121,11 +163,13 @@ export function normalizeMemoryState(
 ): MemoryStoredState | undefined {
   if (!isRecord(raw)) return undefined;
   const retry = normalizeMemoryRetry(raw.retry, today);
+  const review = normalizeMemoryReview(raw.review, today);
   const learnedDay = toNonNegativeIntOrNull(raw.learnedDay);
   return {
     progress: normalizeMemoryProgressMap(raw.progress),
     settings: sanitizeMemorySettings(raw.settings),
     ...(retry === undefined ? {} : { retry }),
+    ...(review === undefined ? {} : { review }),
     ...(learnedDay === null ? {} : { learnedDay }),
   };
 }

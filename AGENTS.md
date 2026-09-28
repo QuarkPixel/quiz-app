@@ -75,7 +75,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `algorithm.ts`：纯算法与常量（`memoryIntervalDays` 的 2^(level-1) 天曲线、`advanceReview` / `resetReview` / `reviewProgress` / `isDue`、默认值与边界）
   - `MemorySession.svelte.ts`：会话层，骨架与 `QuizSession` 一致（`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()`），额外持有记忆模式自己的 `run` / `progress` / `memorySettings`；两条流见「记忆模式（memory）」章节
   - `settings.ts`：`MemoryBankSettings` 默认值与净化（`createDefaultMemorySettings` / `sanitizeMemorySettings` / `MEMORY_SETTINGS_BOUNDS`）
-  - `normalize.ts`：`StoredState.memory` 的净化（`normalizeMemoryState` / `normalizeMemoryProgressMap` / `normalizeMemoryRetry`）
+  - `normalize.ts`：`StoredState.memory` 的净化（`normalizeMemoryState` / `normalizeMemoryProgressMap` / `normalizeMemoryRetry` / `normalizeMemoryReview`）
   - 窗口级快捷键**不再有记忆模式专属实现**：刷题与记忆共用 `src/features/appShortcuts.ts`
     （见「键盘 / 快捷键」一节）。记忆模式只提供能力（`isSessionActive` / `exitSession` / `markAsWrong` / `markAsFuzzy`）
   - `context.ts`：`provideMemorySession` / `useMemorySession`
@@ -83,7 +83,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `bankStore.ts`：`BankStore`（唯一 `QuizSource` 实现），维护 general 配置里的 library / activeBank，负责 import / export / rename / remove / moveToTop
   - `types.ts`：`QuizBank` / `MemoryBank` / `Bank`（判别联合）、`BankSummary`（含 `mode`）、`QuizSource`
   - `context.ts`：`provideQuizSource` / `useQuizSource`
-- `src/store.ts` — **每个题库**的状态读写（按 `hash` 分 key）：`StoredState` 加载 / 保存 / 重置；`saveState` 原样携带 `memory` 段。`buildRuntimeState` 会丢掉题库里已不存在的 `activePool` / `learningPool` / `memory.progress` 条目（以及这些题的 `memory.retry` 待办）——统计与导出都只认题库里真实存在的卡
+- `src/store.ts` — **每个题库**的状态读写（按 `hash` 分 key）：`StoredState` 加载 / 保存 / 重置；`saveState` 原样携带 `memory` 段。`buildRuntimeState` 会丢掉题库里已不存在的 `activePool` / `learningPool` / `memory.progress` 条目（以及这些题的 `memory.retry` 待办与 `memory.review.reviewedIds` 条目）——统计与导出都只认题库里真实存在的卡
 - `src/features/importExport.ts` — 进度编码：`{hash}.{base64url-deflate}`，`exportProgress` / `importProgress`。只依赖题目 `id`（`ProgressQuestion`），刷题 / 记忆模式通用；`FORMAT_VERSION = 9` 起记忆模式走第 10 个元素，记忆设置数组的**第 3 项**是 `lockRoundPool`（后加的，老备份那里是预留位 → 读不到就按关处理，所以没升版本号）
 - `src/algorithm.ts` — 纯算法：加权随机选题、`processAnswer`、`computeLearningSegments`
 - `src/features/quiz/` — UI 与算法之间的胶水层（`runtime.ts`、`answer.ts`、`answerMatcher.ts`、`filters.ts`、`settings.ts` …）
@@ -345,7 +345,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 
 记忆模式的状态段：
 
-- `StoredState.memory?: MemoryStoredState` — `{ progress: MemoryProgressMap, settings: MemoryBankSettings, retry?: MemoryRetryState, learnedDay?: number }`。只有记忆模式题库有这段；刷题模式题库保持 `undefined`（`normalizeMemoryState` 不会凭空造空段）
+- `StoredState.memory?: MemoryStoredState` — `{ progress: MemoryProgressMap, settings: MemoryBankSettings, retry?: MemoryRetryState, review?: MemoryReviewState, learnedDay?: number }`。只有记忆模式题库有这段；刷题模式题库保持 `undefined`（`normalizeMemoryState` 不会凭空造空段）
 - `MemoryProgressMap = Record<string, MemoryProgress>`，按题目 `id` 索引；**没有条目 = 未学习**
 - `MemoryProgress = { state: "learning" | "reviewing" | "mastered", level, streak, nextDue, lapses }`
   - `level`：掌握阶梯，从 1 开始；尚未进入阶梯（学习中 / 本轮还在连对）时为 0
@@ -355,6 +355,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 - `masteredIds` 在记忆模式里只是 `progress[].state === "mastered"` 的投影（导出文件名会数它）：`MemorySession.withSyncedMasteredIds()` 在载入 / 导入时同步一次，不要把它当成第二份真相
 - `StoredState.memory.learnedDay?: number` — 最近一次「学完一轮」发生在哪个学习日。首页据此把学习入口降一档颜色（今天学过一轮 → 白底按钮但仍可点）；跨过凌晨 5 点自然失效，不需要清理
 - `MemoryRetryState = { day, targets }`（`StoredState.memory.retry`）— 本轮「答错后还要重新连对几次」的待办：`day` = 写下的学习日（`studyDay` 锚点），`targets` = 题目 id → 还要连对几次。跨过凌晨 5 点自动作废；**不进进度备份**（属于「本轮」这种短周期状态）
+- `MemoryReviewState = { day, reviewedIds, total }`（`StoredState.memory.review`）— 今天复习轮的进度（进度条的分子分母）：`day` = 写下的学习日（`studyDay` 锚点），`reviewedIds` = 今天已经复习过的题，`total` = 今天这一轮的总题数（**开轮时**定下）。跨过凌晨 5 点自动作废；**不进进度备份**（同上）。详见「复习进度条的跨会话续做」
 - `MemoryBankSettings`（按题库，记忆模式）— `{ graduateLevel: 7, roundTarget: 5, lockRoundPool: false }`（掌握阶梯阈值 M / 一轮要掌握几题 / **每轮限定题数**），由 `sanitizeMemorySettings` 净化（`lockRoundPool` 只认真正的 `true`）
   - 连对次数 / 顺序**不重复存**，直接复用刷题模式的 `BankSettings`（`correctStreakToMaster` / `selectionMode`）；UI 在同一个面板里，但落的是同一个 `settings` 对象
   - 记忆模式**不用** `BankSettings.activePoolSize`：池子容量与本轮目标共用 `roundTarget`（见「两条流」）
@@ -649,7 +650,12 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     - 轮内连对次数本身仍不跨会话（复习中的卡重新载入时 `streak` 归 0），所以重新进来是「从 0 开始连对 N 次」
     - 首页与统计卡的「今日待复习」用 `reviewableCount`（= `dueCount` + `pendingRetryCount`）算，只看到期数会让答错后退出的人点不开复习
   - 失败**不会**回到「学习中」
-  - 复习进度条按「今天要复习的题」算：`reviewTotal` 是本轮队列总数（到期 + 待补连对），每过一题就 `markReviewed(id)`，进度条里那一格变绿
+  - **复习进度条的跨会话续做**：两个数（`reviewedIds` / `reviewTotal`）写进 `StoredState.memory.review = { day, reviewedIds, total }`（与 `memory.retry` 同一套「当天有效」的规矩，跨过凌晨 5 点作废）。每过一题 `reviewedIds` 加一道并立刻落盘，`startReview` 重新进来时接着这份数走——否则「今天复习了 5 / 10，退出（或刷新）再进来」会变成 0 / 5（**这是线上报过的 bug**：进度留住了，进度条却重置）
+    - `total` 是**开轮时**定下的分母，不跟着答错补回来的卡涨；重进时按 `max(存下来的 total, 已算过 ∪ 队列)` 兜底
+    - **「今天算过一道」≠「这道卡今天完事了」**：答「忘记 / 模糊」的卡立刻计入进度条（分子 +1），但只要 `memory.retry` 里还有它的待办，`startReview` 就必须继续把它排进队列
+    - 本轮队列走完（`finishSession`）**不清**这份记录：它是「今天复习过哪些卡」的事实；`reset()` / 导入进度才清
+    - 判分流里**不能**先改 `appState` 再 `writeProgress`：后者是从 `base` 重建整个 `memory` 段的，会把刚写进去的清单抹掉。走 `reviewSnapshot()` 拿快照，由 `withReview()` 并进那一次写入；不走判分流的（「下一题」结算、总览标熟）才用 `markReviewedAndSave()`
+    - 与 `reviewTotal` / `reviewedIds` 一起被净化的是 `normalizeMemoryReview()`（`normalizeMemoryState` 里调），`store.ts` 的 `cleanMemoryState` 还会丢掉题库里已不存在的 id
 
 一轮的队列状态（`shownIds` / `reviewTarget` / `reviewedIds` / `reviewTotal` / `failedThisRound`）只存在 session 上，不写进 `RuntimeState`；`MemoryProgress`、`memory.retry` 与学习轮的 `roundMastered` / `roundGoal` 落盘。
 

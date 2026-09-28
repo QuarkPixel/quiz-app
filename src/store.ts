@@ -182,8 +182,18 @@ function cleanMemoryState(
       }
     : undefined;
 
+  // 今天复习过的清单同理：题目没了就不该再算进进度条
+  const review = memory.review
+    ? {
+        ...memory.review,
+        reviewedIds: memory.review.reviewedIds.filter((id) =>
+          questionIds.has(id),
+        ),
+      }
+    : undefined;
+
   // 用展开而不是逐字段重建：`memory` 段以后再加字段时不会被这里悄悄抹掉
-  return { ...memory, progress, retry };
+  return { ...memory, progress, retry, review };
 }
 
 function stateKey(hash: string): string {

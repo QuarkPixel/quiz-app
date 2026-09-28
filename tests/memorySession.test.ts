@@ -610,8 +610,7 @@ describe("记忆模式：每轮限定题数", () => {
 // ---------------------------------------------------------------------------
 
 describe("记忆模式：复习流", () => {
-  it("答对一次即过：推进间隔", () => {
-    const hash = "memory_review_hash";
+  it("答对一次即过：推进间隔", () => {    const hash = "memory_review_hash";
     saveState(hash, {
       ...emptyState(),
       memory: {
@@ -1093,7 +1092,7 @@ describe("记忆模式：持久化", () => {
     expect(resumed.appState.learningPool).toBeUndefined();
   });
 
-  it("复习到一半退出：已复习的题当天不再出现，剩下的还能继续复习", () => {
+  it("复习到一半退出：已复习的题当天不再出现，进度条的计数也接着数", () => {
     const hash = "memory_review_resume_hash";
     saveState(hash, {
       ...emptyState(),
@@ -1116,14 +1115,27 @@ describe("记忆模式：持久化", () => {
     // 只复习一题就退出
     answer(session, true);
     expect(session.reviewDoneCount).toBe(1);
+    const doneId = session.reviewedIds[0];
     session.exitSession();
 
-    // 再进来：剩下的 2 题仍在到期列表里，已过的那题不会重复出现
+    // 再进来：剩下的 2 题仍在到期列表里，已过的那题不会重复出现；
+    // 进度条接着「今天已经复习了 1 / 3」数，而不是从 0 / 2 重来
     const resumed = makeSession(["a", "b", "c"], { hash, now });
     expect(resumed.dueCount).toBe(2);
     resumed.startReview();
-    expect(resumed.reviewTotal).toBe(2);
+    expect(resumed.reviewTotal).toBe(3);
+    expect(resumed.reviewDoneCount).toBe(1);
+    expect(resumed.reviewedIds).toEqual([doneId]);
+    expect(resumed.appState.activePool.map((i) => i.id)).not.toContain(doneId);
     expect(resumed.currentQuestion).toBeTruthy();
+
+    // 把剩下的做完：进度条正好走满
+    let guard = 0;
+    while (resumed.run === "reviewing" && resumed.currentQuestion) {
+      expect(guard++).toBeLessThan(10);
+      answer(resumed, true);
+    }
+    expect(resumed.reviewDoneCount).toBe(3);
   });
 
   it("重置进度会把调试用的时间偏移一起清零", () => {
@@ -1339,6 +1351,158 @@ describe("记忆模式：答错后的「重新连对」跨会话", () => {
     expect(resumed.progress.a.streak).toBe(0);
     expect(resumed.requiredStreak).toBe(3);
     expect(loadStoredState(hash).memory?.retry?.targets.a).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 复习进度条跨会话：中途退出 / 刷新后接着数（曾经重进来变成 0 / N）
+// ---------------------------------------------------------------------------
+
+describe("记忆模式：复习进度条的跨会话续做", () => {
+  /** 「今天」= BASE_TIME 的次日 06:00（一天从凌晨 5 点开始算） */
+  const dayAfterBase = addDays(startOfDay(BASE_TIME), 1) + 6 * 60 * 60_000;
+  /** 再下一天 */
+  const twoDaysAfterBase = addDays(startOfDay(BASE_TIME), 2) + 6 * 60 * 60_000;
+
+  const ids = "abcdefghij".split("");
+
+  function seedDue(hash: string, count: number): void {
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: Object.fromEntries(
+          ids
+            .slice(0, count)
+            .map((id) => [id, createReviewProgress(BASE_TIME)]),
+        ),
+        settings: createDefaultMemorySettings(),
+      },
+    });
+  }
+
+  it("10 道到期，复习 5 道后退出再进来：进度条仍是 5 / 10，剩下 5 道继续", () => {
+    const hash = "memory_review_bar_resume_hash";
+    seedDue(hash, 10);
+
+    const session = makeSession(ids.slice(0, 10), { hash, now: dayAfterBase });
+    session.startReview();
+    expect(session.reviewTotal).toBe(10);
+
+    for (let i = 0; i < 5; i++) answer(session, true);
+    expect(session.reviewDoneCount).toBe(5);
+    const doneSoFar = [...session.reviewedIds];
+
+    // 中途退出（「退出本轮」）
+    session.exitSession();
+    expect(session.reviewDoneCount).toBe(5);
+
+    // 重新进来（= 刷新页面后重开这个题库）：盘上带着今天的复习进度
+    const resumed = makeSession(ids.slice(0, 10), { hash, now: dayAfterBase });
+    resumed.startReview();
+    expect(resumed.run).toBe("reviewing");
+    expect(resumed.reviewDoneCount).toBe(5);
+    expect(resumed.reviewTotal).toBe(10);
+    expect(resumed.reviewedIds).toEqual(doneSoFar);
+    // 已经复习过的那 5 道不再出现，队列里只剩剩下的 5 道
+    expect(resumed.appState.activePool).toHaveLength(5);
+    for (const id of doneSoFar) {
+      expect(resumed.appState.activePool.map((i) => i.id)).not.toContain(id);
+    }
+
+    // 接着做完：进度条走满 10 / 10
+    let guard = 0;
+    while (resumed.run === "reviewing" && resumed.currentQuestion) {
+      expect(guard++).toBeLessThan(20);
+      answer(resumed, true);
+    }
+    expect(resumed.reviewDoneCount).toBe(10);
+    expect(resumed.reviewTotal).toBe(10);
+  });
+
+  it("进度条的两个数落盘在 memory.review 里（当天有效）", () => {
+    const hash = "memory_review_bar_persist_hash";
+    seedDue(hash, 3);
+
+    const session = makeSession(ids.slice(0, 3), { hash, now: dayAfterBase });
+    session.startReview();
+    answer(session, true);
+
+    const stored = loadStoredState(hash);
+    expect(stored.memory?.review?.day).toBe(studyDay(dayAfterBase));
+    expect(stored.memory?.review?.reviewedIds).toEqual(session.reviewedIds);
+    expect(stored.memory?.review?.total).toBe(3);
+  });
+
+  it("答错后回到本轮：分母不跟着涨（进度条不会越走越远）", () => {
+    const hash = "memory_review_bar_retry_hash";
+    seedDue(hash, 2);
+
+    const session = makeSession(ids.slice(0, 2), { hash, now: dayAfterBase });
+    session.startReview();
+    expect(session.reviewTotal).toBe(2);
+
+    // 答错一张：它要重新连对 N 次才过，但今天要复习的仍然是 2 道
+    const failedId = session.currentQuestion!.id;
+    answer(session, false);
+    expect(session.reviewDoneCount).toBe(1);
+    expect(session.reviewTotal).toBe(2);
+
+    session.exitSession();
+    const resumed = makeSession(ids.slice(0, 2), { hash, now: dayAfterBase });
+    resumed.startReview();
+    expect(resumed.reviewDoneCount).toBe(1);
+    expect(resumed.reviewTotal).toBe(2);
+    // 答错那道继续留在本轮，而且要连对 N 次（队列打散过，不一定是当前这一道）
+    expect(resumed.reviewTarget[failedId]).toBe(3);
+    expect(resumed.appState.activePool.map((i) => i.id)).toContain(failedId);
+  });
+
+  it("跨到下一个学习日：昨天的复习进度作废，进度条从新的一天重新数", () => {
+    const hash = "memory_review_bar_expired_hash";
+    seedDue(hash, 3);
+
+    const session = makeSession(ids.slice(0, 3), { hash, now: dayAfterBase });
+    session.startReview();
+    answer(session, true);
+    session.exitSession();
+    expect(loadStoredState(hash).memory?.review?.reviewedIds).toHaveLength(1);
+
+    // 第二天：昨天过的那道卡已经不在今天到期里，进度条是 0 / 2
+    const nextDay = makeSession(ids.slice(0, 3), { hash, now: twoDaysAfterBase });
+    expect(nextDay.dueCount).toBe(2);
+    nextDay.startReview();
+    expect(nextDay.reviewDoneCount).toBe(0);
+    expect(nextDay.reviewTotal).toBe(2);
+  });
+
+  it("复习收尾（队列走完）后，今天复习过的那份记录还在", () => {
+    const hash = "memory_review_bar_finish_hash";
+    seedDue(hash, 1);
+
+    const session = makeSession(ids.slice(0, 1), { hash, now: dayAfterBase });
+    session.startReview();
+    answer(session, true);
+    expect(session.run).toBe("idle");
+    expect(session.reviewDoneCount).toBe(1);
+
+    // 今天再点一次「复习」：没有到期的了，不会又冒出一轮
+    session.startReview();
+    expect(session.run).toBe("idle");
+    expect(loadStoredState(hash).memory?.review?.total).toBe(1);
+  });
+
+  it("重置进度会把复习进度一起清掉", () => {
+    const hash = "memory_review_bar_reset_hash";
+    seedDue(hash, 3);
+
+    const session = makeSession(ids.slice(0, 3), { hash, now: dayAfterBase });
+    session.startReview();
+    answer(session, true);
+    session.reset();
+
+    expect(loadStoredState(hash).memory?.review).toBeUndefined();
+    expect(session.reviewDoneCount).toBe(0);
+    expect(session.reviewTotal).toBe(0);
   });
 });
 
