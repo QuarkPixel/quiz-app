@@ -13,18 +13,29 @@
     import { createSource } from "./source";
     import { provideQuizSource } from "./source/context";
     import type { Bank } from "./source/types";
+    import { provideRouter, router } from "./features/routing/context";
     import { watchPageVisibility } from "./features/userActivity.svelte";
     import { IconFishBoneFilled } from "@tabler/icons-svelte";
 
     const source = createSource();
     provideQuizSource(source);
+    provideRouter(router);
+
     let activeBank = $state<Bank | null>(source.getActiveBank());
 
+    // 当前题库有两个来源，方向只有两条（见 `features/routing/router.svelte.ts`）：
+    //   - 路由（URL）：打开页面 / 前进后退 → 已经落在 `source` 上，这里只跟着读
+    //   - 侧边栏：用户点了一下 → `source` 先变，再把 URL 跟上（反向同步）
     onMount(() =>
         source.subscribe(() => {
             activeBank = source.getActiveBank();
+            router.syncFromSource();
         }),
     );
+
+    // 打开页面先把 URL 与本地记录对一次账：没有参数的地址 → 跳到本地记着的题库
+    // （`#/<hash>`），记忆模式还会带上 `/learn`、`/review` 那一层。
+    router.start(source);
 
     // 「页面在后台」也算「现在不能打断」：挂起的同步刷新等回到前台再补
     onMount(watchPageVisibility);

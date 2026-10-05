@@ -26,6 +26,7 @@
     import IconHandStop from "@tabler/icons-svelte/icons/hand-stop";
     import { createSoundPlayer } from "@/sound";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
+    import { useRouter } from "@/features/routing/context";
     import {
         OVERLAY_KEYS,
         userActivity,
@@ -55,6 +56,15 @@
         sound: soundPlayer,
     });
     provideMemorySession(session);
+
+    /**
+     * 子路径 ←→ 会话，两个方向都在下面两个 `$effect` 里。
+     *
+     * 这一层是「刷新之后别把我踢回首页」的全部实现：`/learn`、`/review` 落在 URL 上，
+     * 刷新回来 `syncModeToSession()` 照着它把会话重新开起来（学到一半的一轮、
+     * 今天复习了几道都落盘了，见 `MemorySession` 的两条流）。
+     */
+    const router = useRouter();
 
     let showSettings = $state(false);
     let showOverview = $state(false);
@@ -92,6 +102,63 @@
         if (open !== untrack(() => userActivity.overlayOpen)) {
             userActivity.setOverlay(OVERLAY_KEYS.settings, open);
         }
+    });
+
+    // ── 子路径 ←→ 会话 ─────────────────────────────────────────────────
+
+    /**
+     * 会话 → URL。
+     *
+     * 会话自己开始（首页那颗按钮）会走到这里；会话自己结束（学完一轮 / Esc）由
+     * `if (previousRun !== "idle" && mode !== "home")` 那一支收尾。
+     *
+     * **反过来「URL 写着 /learn 但会话还没开起来」时绝不能在这里纠正**：应用打开的
+     * 那一刻会话必然是 `idle`，而下面那个 effect 还要照着 URL 把它开起来。
+     * 早期版本无条件写 `run → mode`，于是挂载顺序一换就把 `/learn` 冲成首页，
+     * 「刷新后继续学」整个失效（`tests/memoryRouting.test.ts` 钉住了这一条）。
+     */
+    let previousRun = $state(session.run);
+    $effect(() => {
+        const mode = router.mode;
+        if (session.run === "idle") {
+            // 会话已经收尾，URL 还停在子路径上 → 跟回首页
+            if (previousRun !== "idle" && mode !== "home") router.setMode("home");
+            previousRun = "idle";
+            return;
+        }
+        const wanted = session.run === "learning" ? "learn" : "review";
+        previousRun = session.run;
+        if (mode !== wanted) router.setMode(wanted);
+    });
+
+    /**
+     * URL → 会话：刷新 / 从别处打开 `/learn`、`/review` 时把会话重新开起来。
+     *
+     * 只认**这一轮还在不在**，不认「URL 是刚变的还是刷新前就在」：
+     *   - `/learn`：学到一半的一轮（池子里还有卡）→ `startLearning()` 接着学；
+     *     没有半轮可续（池子被「结束本轮」清空了）→ 回首页，而不是硬开一轮新的；
+     *   - `/review`：`startReview()` 自己会把今天到期 + 还没补完连对的那批重新排上，
+     *     今天没有要复习的就什么都不做 → 回首页（它会自己弹一句「今天没有需要复习的题目」）。
+     *
+     * `session.run` 用 `untrack` 读：这个 effect 只该在**路由变化**时动会话，
+     * 否则会话自然收尾（`run` 由 learning 变回 idle）的那一刻会被它当成
+     * 「URL 还写着 /learn」又开一轮。
+     */
+    $effect(() => {
+        const mode = router.mode;
+        const run = untrack(() => session.run);
+
+        if (mode === "learn" && run === "idle") {
+            if (session.hasOngoingRound) session.startLearning();
+            if (session.run === "idle") router.setMode("home");
+            return;
+        }
+        if (mode === "review" && run === "idle") {
+            session.startReview();
+            if (session.run === "idle") router.setMode("home");
+            return;
+        }
+        if (mode === "home" && run !== "idle") session.exitSession();
     });
 
     // ── 答题区那一行：悬停点亮 ──────────────────────────────────────────
