@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { MemoryBank } from "@/source/types";
     import { MediaQuery } from "svelte/reactivity";
+    import { untrack } from "svelte";
     import { toastStore } from "@/features/toast.svelte";
     import { MemorySession } from "@/features/memory/MemorySession.svelte";
     import { provideMemorySession } from "@/features/memory/context";
@@ -25,6 +26,10 @@
     import IconHandStop from "@tabler/icons-svelte/icons/hand-stop";
     import { createSoundPlayer } from "@/sound";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
+    import {
+        OVERLAY_KEYS,
+        userActivity,
+    } from "@/features/userActivity.svelte";
     import { Kbd } from "@/lib/components/ui/kbd";
 
     /**
@@ -67,6 +72,26 @@
     const handleKeydown = createAppKeyboardHandler(session, {
         toggleReview: () => (showOverview = !showOverview),
         toggleSettings: () => (showSettings = !showSettings),
+    });
+
+    // ── 云同步的刷新让路 ────────────────────────────────────────────────
+    //
+    // 「正在答题」= 屏上有题（`currentQuestion` 非空），也就是指示点黄着的时候。
+    // 同步拉到当前这个题库的新内容时，刷新会被挂起，等这里回到 false 再补上
+    // （见 `@/features/userActivity.svelte`）。弹窗同理：开着设置 / 总览时刷新，
+    // 用户正在看的东西会连同弹窗一起消失。
+    $effect(() => {
+        userActivity.setAnswering(session.currentQuestion !== null);
+    });
+
+    $effect(() => {
+        const open =
+            showSettings || showOverview || session.importConfirmText !== null;
+        // 只在真的变了时写：直接写会在 effect 读写的**同一块** state 上打转
+        // （`effect_update_depth_exceeded`）
+        if (open !== untrack(() => userActivity.overlayOpen)) {
+            userActivity.setOverlay(OVERLAY_KEYS.settings, open);
+        }
     });
 
     // ── 答题区那一行：悬停点亮 ──────────────────────────────────────────

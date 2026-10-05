@@ -23,10 +23,16 @@
  *    于是所有设备的题库列表都被清空了。
  * 2. **冲突（同一个题库两边都改过）绝不自动选一边**：进入 conflict 状态，
  *    在设置面板里让用户决定，决定前那个题库（连同它所在的分片）都不动。
- * 3. 拉取到实际变化后会整页刷新一次，而不是逐个去刷新内存里的会话状态——
+ * 3. 拉取**动到了当前这个题库**时才会整页刷新，而不是逐个去刷新内存里的会话状态——
  *    题目 / 进度在内存里有好几份缓存（BankStore 的解析缓存、两个 Session 的
  *    runtime state），刷新是唯一不会漏掉某一处、也不会把「答题到一半」搞成
- *    状态撕裂的做法。只拉到「和本地一样的内容」时不刷新。
+ *    状态撕裂的做法。两个收窄条件都不能省：
+ *      - **只让当前题库触发刷新**：拉下来的要是别的题库，侧边栏那条列表已经跟着
+ *        localStorage 变了，页面本身没有一处是旧的——为它刷新纯属打断；
+ *      - **忙的时候挂起**（`@/features/userActivity`）：正在答题 / 开着弹窗 / 页面
+ *        在后台时，这一下刷新会把内存里的会话整个抹掉（答到一半的题、刚挑好的
+ *        活动池、复习进度条）。挂起的那笔等停手后自己补上，期间只是内存里的视图
+ *        停在旧内容上。
  */
 
 import { STORAGE_KEY_GENERAL } from "@/config";
@@ -67,6 +73,7 @@ import {
   saveSyncMeta,
 } from "./storage";
 import { resolveSyncTarget } from "./target";
+import { userActivity } from "@/features/userActivity.svelte";
 import {
   SYNC_FOCUS_THROTTLE_MS,
   SYNC_LOCAL_POLL_MS,
@@ -100,7 +107,13 @@ export interface SyncEvent {
 export interface SyncOutcome extends SyncTransferSummary {
   /** 没能自动解决的冲突（题库 hash） */
   conflicts: string[];
-  /** 拉取是否真的改动了本地内容（决定要不要刷新页面） */
+  /**
+   * 这一轮是不是真的改写了「当前正在看的那个题库」。
+   *
+   * **不是**「本地有没有被改过」：拉下来的题库要是用户没打开的那一份，
+   * 页面里没有一处是旧的（侧边栏读的是 localStorage），为它刷新只会打断人。
+   * 决定要不要刷新的是这个字段，见 `execute` 末尾那段。
+   */
   changedLocal: boolean;
 }
 
@@ -875,13 +888,16 @@ export class SyncEngine {
     // 所以不会出现「一边有冲突一边还在写数据」的情况。
     const outcome: SyncOutcome = { ...IDLE_OUTCOME };
 
+    // 刷新判定要的两份事实：动手之前「当前在看哪个题库」，以及这一轮写坏了哪些题库
+    const activeBefore = readActiveBankHash();
+    const touched = new Set<string>();
+
     // ── ① general 先落地，再落题库 ──
     //
     // 顺序不能反：题库列表在 general 里，先落题库会出现「内容在、列表里没有」
     // 的中间态（侧边栏是题库的唯一入口，那个中间态看起来就像丢数据）。
     if (plan.generalChangedLocal) {
       applyRemoteValue(STORAGE_KEY_GENERAL, JSON.stringify(plan.general));
-      outcome.changedLocal = true;
     }
 
     for (const action of plan.actions) {
@@ -889,10 +905,10 @@ export class SyncEngine {
         const bank = remote.banks.get(action.hash);
         if (!bank) continue;
         writeBankLocally(bank);
-        outcome.changedLocal = true;
+        touched.add(action.hash);
       } else if (action.verdict === "deleteLocal") {
         removeBankLocally(action.hash);
-        outcome.changedLocal = true;
+        touched.add(action.hash);
       }
     }
 
@@ -962,6 +978,19 @@ export class SyncEngine {
       }
     }
     outcome.settingsChanged = plan.settingsChanged;
+
+    // ── ⑤ 要不要整页刷新 ──
+    //
+    // 判据是「**当前正在看的那个题库**被改到了没有」，而不是「本地改过没有」：
+    // 拉的是别的题库时，页面里唯一读它的地方（侧边栏列表）本来就读 localStorage，
+    // 为它刷新只会把答题打断一次。两条分别对应两种「当前视图变旧了」：
+    //   - 当前题库的内容 / 进度被拉了下来，或者被删掉了；
+    //   - 本来没有当前题库，这一轮刚拉下来一个（新设备打开就是为了这件事）。
+    // 顺序上 `activeBefore` 要在写盘之前读，`after` 是写完之后重新读的那一份。
+    const activeAfter = readActiveBankHash();
+    outcome.changedLocal =
+      (activeBefore !== null && touched.has(activeBefore)) ||
+      (activeBefore === null && activeAfter !== null);
 
     this.finishStatus(outcome, fileCount, remoteBankCount(plan));
     if (outcome.changedLocal) this.reloadForAppliedChanges();
@@ -1123,13 +1152,34 @@ export class SyncEngine {
   }
 
   /**
-   * 拉取到实际变化后整页刷新。
+   * 拉取改到了当前正在看的题库 → 请求整页刷新。
    *
-   * `changedLocal` 只在真的写入了不同内容时才为真，所以不会出现
+   * **能不能刷由 `@/features/userActivity` 说了算**：正在答题 / 开着弹窗 / 页面在
+   * 后台时这一下会抹掉内存里的会话状态（答到一半的题、刚挑好的活动池、复习进度条），
+   * 所以那时它只把刷新挂起，等用户停手之后自己补上（`attachReloadGuard` 盯着）。
+   *
+   * `outcome.changedLocal` 只认「当前题库被改到」，所以不会出现
    * 「刷新 → 同步 → 刷新」的死循环。
    */
   private reloadForAppliedChanges(): void {
-    window.location.reload();
+    if (userActivity.requestReload("synced")) window.location.reload();
+  }
+}
+
+/**
+ * 盘上记的「当前题库」。
+ *
+ * 直接读 general 配置而不是问 `BankStore`：引擎不认识它，而且这里要的是
+ * 「此刻盘上是什么」（同一轮里写盘前后各读一次，用来判断当前视图有没有变旧）。
+ */
+function readActiveBankHash(): string | null {
+  const raw = readLocal(STORAGE_KEY_GENERAL);
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as { activeBank?: unknown };
+    return typeof value?.activeBank === "string" ? value.activeBank : null;
+  } catch {
+    return null;
   }
 }
 

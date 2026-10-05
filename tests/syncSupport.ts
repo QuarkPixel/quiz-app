@@ -16,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import { SyncEngine } from "@/features/sync/engine.svelte";
 import { SyncConfigStore } from "@/features/sync/config.svelte";
 import { installStorageHook, writeLocal } from "@/features/sync/storage";
+import { userActivity } from "@/features/userActivity.svelte";
 import { decodePayload } from "@/features/sync/payload";
 import {
   GIST_GENERAL_FILE,
@@ -207,6 +208,8 @@ export class SyncHarness {
     localStorage.clear();
     this.reloads = 0;
     this.clock = 1_700_000_000_000;
+    // 「正在答题 / 弹窗开着」是模块级单例，跨用例会互相影响
+    userActivity.reset();
   }
 
   /** 时间往前走一点（真实使用里每一步之间都有间隔）。 */
@@ -329,6 +332,18 @@ export class SyncHarness {
       ...(general.library ?? []).filter((b: { hash: string }) => b.hash !== hash),
       { hash, name, mode: "memory", count: 2, addedAt: Date.now() },
     ];
+    localStorage.setItem("quiz_app_general", JSON.stringify(general));
+    this.tick();
+  }
+
+  /**
+   * 把某个题库设成「当前正在看的那个」。
+   *
+   * 刷新判定看的就是它：只有当前题库的内容被拉到 / 被删掉才需要刷新页面。
+   */
+  setActive(hash: string | null): void {
+    const general = JSON.parse(localStorage.getItem("quiz_app_general") ?? "{}");
+    general.activeBank = hash;
     localStorage.setItem("quiz_app_general", JSON.stringify(general));
     this.tick();
   }

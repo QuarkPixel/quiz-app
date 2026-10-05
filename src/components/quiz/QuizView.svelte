@@ -22,6 +22,11 @@
     import { provideQuizSession } from "@/quiz/session/context";
     import { provideQuizUiActions } from "@/quiz/session/uiContext";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
+    import { untrack } from "svelte";
+    import {
+        OVERLAY_KEYS,
+        userActivity,
+    } from "@/features/userActivity.svelte";
     import { createSoundPlayer } from "@/sound";
 
     let { bank }: { bank: QuizBank } = $props();
@@ -69,6 +74,24 @@
     });
 
     session.initialize();
+
+    // ── 云同步的刷新让路 ────────────────────────────────────────────────
+    //
+    // 「正在答题」= 屏上有题，也就是指示点黄着的时候。同步拉到当前这个题库的新内容
+    // 时刷新会被挂起，等这里回到 false 再补（见 `@/features/userActivity.svelte`）。
+    $effect(() => {
+        userActivity.setAnswering(session.currentQuestion !== null);
+    });
+
+    // 弹窗开着时不刷新：设置 / 总览 / 导入确认都是「用户正在看的东西」
+    $effect(() => {
+        const open = showSettings || showReview || session.importConfirmText !== null;
+        // 只在真的变了时写：直接写会在 effect 读写的**同一块** state 上打转
+        // （`effect_update_depth_exceeded`）
+        if (open !== untrack(() => userActivity.overlayOpen)) {
+            userActivity.setOverlay(OVERLAY_KEYS.settings, open);
+        }
+    });
 
     // 窄版面时活动池是「折叠展开」而不是「并排」：高度得量出来才能做动画
     $effect(() => {

@@ -13,11 +13,11 @@
     import { createSource } from "./source";
     import { provideQuizSource } from "./source/context";
     import type { Bank } from "./source/types";
+    import { watchPageVisibility } from "./features/userActivity.svelte";
     import { IconFishBoneFilled } from "@tabler/icons-svelte";
 
     const source = createSource();
     provideQuizSource(source);
-
     let activeBank = $state<Bank | null>(source.getActiveBank());
 
     onMount(() =>
@@ -25,6 +25,9 @@
             activeBank = source.getActiveBank();
         }),
     );
+
+    // 「页面在后台」也算「现在不能打断」：挂起的同步刷新等回到前台再补
+    onMount(watchPageVisibility);
 
     // 按题库模式收窄：quiz 走刷题模式答题流；memory 走记忆模式的卡片流。
     const quizBank = $derived(activeBank?.mode === "quiz" ? activeBank : null);
