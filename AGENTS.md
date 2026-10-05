@@ -93,6 +93,21 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 - `src/features/globalSettingsDialog.svelte.ts` — **全局设置对话框的开关**（`globalSettingsDialog.open / show() / close()`）。
   三个入口分属不同的组件树分支（侧边栏左下角的按钮、页头那颗变红的同步指示点、⌘⇧I），
   所以开关不能留在某个组件里；对话框本身仍由 `Sidebar.svelte` 渲染（`bind:open={globalSettingsDialog.open}`）
+- `src/features/routing/` — **路由**：URL 是「当前题库 + 记忆模式子模式」的第二个真相（第一个是 `general.activeBank`）
+  - `route.ts`：纯函数（不碰 `window`）。路径形状 `/<题库 hash>`、`/<hash>/learn`、`/<hash>/review`；
+    `parseRoute` / `formatRoute` / `sameRoute` / `resolveInitialRoute` / `routePathFromLocation`（路径式与 `#/...` 式都认）
+  - `router.svelte.ts`：`Router` 壳。`start(source)` 对账（URL 指名 → 听 URL；没写 / 失效 → 读本地 `activeBank` → 跳 `/<hash>`；
+    都没有 → 退到列表第一个），`setActiveBank`（侧边栏点击，`push`）/ `setMode`（会话进出学习复习，`replace`）/
+    `syncFromSource`（题库被删等）。**读 URL 时会摘掉 `import.meta.env.BASE_URL` 前缀，写回去时再加回来**
+  - `context.ts`：`provideRouter` / `useRouter`（组件测试可以塞假的进来）
+  - **`Router.setActiveBank` 与 URL 里那一个相同时什么都不做**：写一次盘会让 `App.svelte` 用 `{#key}` 重建整个会话
+- `src/features/userActivity.svelte.ts` — **「现在能不能打断用户」+ 挂起的那笔刷新**（`userActivity` 单例）。
+  三条理由：`answering`（屏上有题）、`overlayOpen`（按名字记账的弹窗占位）、`hidden`（页面在后台）。
+  同步拉到当前题库的新内容时 `requestReload()`：能打断就返回 `true`（调用方自己 `location.reload()`），
+  否则挂起 → `attachReloadGuard()`（模块级 `$effect.root`）等状态回到空闲再补上，补之前弹一句提示。
+  视图侧只有两个 effect（`setAnswering(session.currentQuestion !== null)` / `setOverlay(OVERLAY_KEYS.…, open)`）；
+  **`setOverlay` 必须包在「值真的变了才写」的 `untrack` 判断里**，否则 effect 读写同一块 state 会
+  `effect_update_depth_exceeded`（踩过）
 - `src/features/globalSettingsShortcut.ts` — **⌘⇧I（Ctrl+Shift+I）打开全局设置**（`isGlobalSettingsShortcut` / `handleGlobalSettingsShortcut`）。
   应用级：跟具体题库无关，窗口监听挂在 `Sidebar.svelte` 的 `<svelte:window onkeydown>` 上（它始终挂载，且已经持有对话框开关）；
   焦点在对话框里时不吃这次按键，免得在题库设置上面再叠一个全局设置。与 `SHORTCUTS.toggleSettings`（⌘I = 当前题库设置）只差一个 ⇧，别写混。
@@ -220,7 +235,10 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   都没有进出场动画）。展开后**就一行**：`自动同步 [switch] ｜ 覆盖按钮 ×2`，
   自动同步的说明 Tooltip 直接挂在它的 `<Label>` 上（不再单独放一个问号按钮）。
 - `src/sound/` — 音效播放器（`createSoundPlayer`）与全局设置驱动的播放判断
-- `src/App.svelte` — 根组件。按 `activeBank.mode` 收窄：`quiz` 渲染 `QuizView`，`memory` 渲染 `MemoryView`（用 `{#key bank.hash}` 重建会话）
+- `src/App.svelte` — 根组件。按 `activeBank.mode` 收窄：`quiz` 渲染 `QuizView`，`memory` 渲染 `MemoryView`（用 `{#key bank.hash}` 重建会话）。
+  **当前题库由路由决定**：`provideRouter(router)` + `router.start(source)`（打开页面就对一次账，见「路由」），
+  `source.subscribe` 里除了读 `activeBank` 还要 `router.syncFromSource()`（反向：仓库变了 URL 跟上）；
+  `onMount(watchPageVisibility)` 把「页面在后台」也算成「不能打断」（云同步的挂起刷新靠它）
 - `src/components/layout/AppShell.svelte` — 外壳（页头 / 内容区）。页头右侧那颗**云同步指示点**，
   只在云同步开着时出现，三种状态（`tone`）各自一套底色 + 光晕（主题变量）：
   | tone | 条件 | 颜色 | 可点 | 点了干什么 |
@@ -306,7 +324,10 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `BankNameSetting.svelte` / `QuestionOrder.svelte` / `QuestionFilters.svelte`：按库设置里
     两边同构的行与控件
 - `src/components/memory/` — 记忆模式 UI（全部复用刷题模式的组件与样式）
-  - `MemoryView.svelte`：容器，版面对齐 `QuizView`（同一个 `ViewShell`、同一套工具栏按钮、同一个导入确认弹窗），内容区在首页 / `MemoryQuestionArea` 之间切换
+  - `MemoryView.svelte`：容器，版面对齐 `QuizView`（同一个 `ViewShell`、同一套工具栏按钮、同一个导入确认弹窗），内容区在首页 / `MemoryQuestionArea` 之间切换。
+    另有四个 effect：两个给云同步的刷新让路（`answering` / `overlayOpen`），两个把子路径与会话对上
+    （`会话 → URL`、`URL → 会话`）。**那对路由 effect 的顺序与判据见「记忆模式」一节的「子路径」**——
+    写错就会出现「刷新之后又回到首页」
   - `MemoryHome.svelte`：首页，两个入口 + 统计卡，全部用现有 `Button` / `Card`；每种状态各配水印图标
   - `MemoryOverview.svelte`：总览对话框，与 `ReviewView` 同构（顶部三张 `Card` + `ToggleGroup` 筛选 + `QuestionPreview` 列表）
   - `MemoryMasteryButton.svelte`：卡片右侧那句状态文字，**它同时是「标熟」按钮**（点两下确认，
@@ -496,6 +517,13 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - **强制覆盖是显式计划**：`forcePushPlan` / `forcePullPlan` 无条件按一边来，
   不算冲突、不做三方判定。用逐题库判定实现「用本地覆盖云端」是不对的——
   没有基准时它会认为「本地改过、该上传」，于是「用云端覆盖本地」变成空操作。
+- **拉到「当前题库」的新内容才会整页刷新，而且忙的时候挂起**（`execute` 第 ⑤ 步 +
+  `@/features/userActivity.svelte`）：`SyncOutcome.changedLocal` 的数法变了——它只认
+  「**正在看的那个题库**被改到（或本来没有当前题库、这一轮刚拉下来一个）」，
+  不是「本地有没有被改过」。拉的是别的题库时页面里没有一处是旧的（侧边栏读的是
+  localStorage），刷新纯属打断；是当前题库时再走 `userActivity.requestReload()`，
+  正在答题 / 开着弹窗 / 页面在后台就挂起，等停手后由 `attachReloadGuard` 补上并弹一句提示。
+  护栏在 `tests/syncRefreshGuard.test.ts`（9 条：别的题库不刷 / 当前题库挂起再补 / 空闲立刻刷 / 删除要刷 / 新设备要刷）。
 - **`tests/syncEngine.test.ts` / `tests/syncTwoDevice.test.ts` 是这一层的护栏**：
   用真模块 + 内存替身 Gitee 跑完整的推送 / 拉取 / 双设备来回。上面这些 bug
   几乎都是它们抓出来的，改同步逻辑前先看它们。
@@ -666,6 +694,21 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - 「顺序刷题」**只影响挑哪一批新题入池**（按题库原顺序取前 N 张还没学过的卡）；随机就是随机抽 N 张
 - **入池之后本轮内部一律随机出题**，复习模式同样打散（不再按逾期天数排序）
 
+### 子路径（`/<hash>/learn`、`/<hash>/review`）
+
+刷新页面不再把人踢回首页，靠的就是 URL 上这两段（路由本体见「关键模块」里的 `src/features/routing/`）。
+
+- 会话 → URL（`MemoryView` 里第一个路由 effect）：`run` 变 learning / reviewing 就 `router.setMode(...)`，
+  回 `idle` 时**只有 `previousRun !== "idle"` 且 URL 还停在子路径上**才跟回首页
+- URL → 会话（第二个）：`/learn` 且 `session.run === "idle"` 时，
+  **`hasOngoingRound` 为真（池子里还有没学完的卡）才 `startLearning()`**，否则回首页——
+  刷新不该凭空开一轮新的；`/review` 直接 `startReview()`，它今天就没什么要复习的自然什么都不做
+- **顺序有讲究**：`URL → 会话` 那条**不能**依赖对面先跑。早期版本让「会话 → URL」无条件写
+  `run === "idle" ⇒ home`，而应用打开那一刻会话必然是 `idle`，于是 `/learn` 刚读出来就被冲成
+  首页，整条功能静默失效（两个 effect 的执行顺序在 Svelte 里没有保证，别赌）
+- 这两段是**同一次会话的一部分**，所以 `setMode` 走 `replaceState`：后退键该回到「上一个题库」，
+  而不是在首页 / 答题区之间反复横跳
+
 ### 状态机
 
 `未学习`（`progress[id]` 不存在）→ `学习中`（`state: "learning"`，看 `streak`）→ `复习中`（`state: "reviewing"`，看 `level` / `nextDue`）→ `已掌握`（`state: "mastered"`，之后不会再出现）。
@@ -808,6 +851,15 @@ memoryPayload = [progress[][], memorySettings[], trailing]
   真实教训：`ShortcutHelp` 里两行快捷键同名撞了 `{#each}` 的 key，Svelte 抛
   `each_key_duplicate`，整个设置弹窗渲染失败，表现成「刷题模式设置打不开」，
   而当时 `check` / `test` / `build` 全绿。**改动共享外壳后请跑它。**
+- `tests/memoryRouting.test.ts` + `tests/MemoryViewHarness.svelte` — **子路径的接线**：
+  从 `/<hash>/learn` 挂起来时真的开了会话（接着学到一半的那一轮）、`/review` 今天没到期的退回首页、
+  首页点「学习新的题目」地址跟着变成 `/learn`、Esc 退出后地址跟回 `/<hash>`。
+  它守的是「地址解析对了」到「会话真的开起来」之间那一跳（没有类型检查兜底的那种）。
+- `tests/route.test.ts` / `tests/router.test.ts` — 路由的纯函数与壳（假 `history` / `location`）：
+  没参数打开时读本地 `activeBank`、URL 里的题库失效时退回、`push` 还是 `replace`、
+  子模式不被仓库变动抹平、子路径挂载前缀。
+- `tests/syncRefreshGuard.test.ts` / `tests/userActivity.test.ts` — **刷新前先看「能不能打断」**：
+  拉别的题库不刷、当前题库挂起并在停手后补上、空闲立刻刷、冲突与删除的边界。
 - `tests/ViewHarness.svelte` / `tests/ViewShellHarness.svelte` / `tests/SharedListHarness.svelte` /
   `tests/HeatmapHarness.svelte` / `tests/SettingsPrimitivesHarness.svelte` /
   `tests/MemoryOverviewHarness.svelte` / `tests/ToolbarIconButtonHarness.svelte` /
