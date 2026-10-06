@@ -62,12 +62,15 @@ export interface BankRecord {
   /** 它落在哪个分片（`shardIndexOf(hash)`） */
   shard: number;
   /**
-   * 题库**内容**的哈希：题目 + 进度 + 模式，**不含题库名**。
+   * 题库**内容**哈希：题目 + 模式（**不含进度、不含题库名**）。
    *
    * 名字存在 `_general.json` 的题库列表里，是另一份文件的事；把它算进内容哈希
-   * 会让「改个名」变成「题库内容变了」，平白多出一堆冲突。
+   * 会让「改个名」变成「题库内容变了」。进度同理，而且更要紧——见
+   * `bankContentHash` 的说明。
    */
   contentHash: string;
+  /** 题库**进度**哈希（`state` 整段）；与内容哈希是两回事，冲突判定要分开看 */
+  progressHash: string;
   /** 本地最后改动时间（题目键 / 进度键里最晚的那个） */
   localAt: number;
   snapshot: BankSnapshot;
@@ -130,13 +133,43 @@ function parseJson(raw: string | null): unknown {
 }
 
 /**
- * 题库内容的哈希。
+ * 题库**内容**的哈希：题目本身 + 模式。
  *
- * `state` 用 `?? null` 归一：本地没有进度时字段是 undefined（`JSON.stringify`
- * 会把它丢掉），云端解出来则是缺字段——两边必须映射到同一个值，
- * 否则「其实一模一样」会被判成「内容不同」。
+ * 这一份是「还是不是同一份题」的判据，**进度不参与**——那是有意的：从前把
+ * `state`（全部进度 + 设置）也算进来，于是「你在两台设备上先后做了同一份题库」
+ * 这种最日常的情形，在判定里表现得和「两边把题目改得不一样了」一模一样：
+ * 每同步一轮报一次冲突，而裁决又是整库二选一，怎么选都要丢掉一边的进度。
+ *
+ * 拆开之后内容一样就把两边进度**按卡合并**（`merge.ts` 的
+ * `mergeBankSnapshots`），只有题目真的分叉了才需要人来裁决。
  */
 export function bankContentHash(snapshot: BankSnapshot): string {
+  return stableHash({
+    mode: snapshot.mode,
+    questions: snapshot.questions,
+  });
+}
+
+/**
+ * 题库**进度**的哈希：`state` 整段（刷题的掌握集合 / 活动池 / 设置，
+ * 记忆模式的每张卡阶梯 + 按库设置）。
+ *
+ * 只用来判断「这一轮要不要把合并后的结果写回去」，**不参与冲突判定**。
+ * `state` 用 `?? null` 归一：本地没有进度时字段是 undefined（`JSON.stringify`
+ * 会把它丢掉），云端解出来则是缺字段——两边必须映射到同一个值。
+ */
+export function bankProgressHash(snapshot: BankSnapshot): string {
+  return stableHash(snapshot.state ?? null);
+}
+
+/**
+ * 题库的**完整**哈希：题目 + 进度。
+ *
+ * 用途只有一个——「本地和上次同步成功的基准比，还有没有没推上去的东西」
+ * （`engine.computePendingChanges`）。冲突判定走上面那两个拆开的哈希，
+ * 别用这一个（那正是旧版的老毛病）。
+ */
+export function bankFullHash(snapshot: BankSnapshot): string {
   return stableHash({
     mode: snapshot.mode,
     questions: snapshot.questions,
@@ -223,6 +256,7 @@ export function collectLocalState(
       hash,
       shard: shardIndexOf(hash),
       contentHash: bankContentHash(snapshot),
+      progressHash: bankProgressHash(snapshot),
       // 题库的「本地改动时间」取题目键与进度键里最晚的那个：
       // 导入（换题目）和刷题（改进度）都算这个题库变了。
       localAt: Math.max(localAtOf(questionsKey), localAtOf(stateKey)),

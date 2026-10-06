@@ -348,6 +348,17 @@ export class SyncHarness {
     this.tick();
   }
 
+  /**
+   * 模拟「这份题库的**题目**被改了」（内容冲突靠它造出来）。
+   *
+   * 与 `studyBank` 的区别是这里动的是题目本身：进度差异现在会自动按卡合并
+   * （见 `progressMerge.ts`），只有题目真的分叉了才需要人来裁决。
+   * hash 只由题目数组决定，所以改完还是同一个题库（同一份进度）。
+   */
+  editBank(hash: string, name: string, marker: string): void {
+    this.seedBank(hash, name, marker);
+  }
+
   /** 模拟刷题：改这个题库的进度。 */
   studyBank(hash: string, round: number): void {
     localStorage.setItem(

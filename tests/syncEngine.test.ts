@@ -430,13 +430,13 @@ describe("引擎（端到端，对着替身）", () => {
 
     // 两边各改各的 → 冲突
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     h.save("A");
     await a.sync();
     h.save("A");
 
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     h.save("B");
     const conflicted = await b.sync();
     h.save("B");
@@ -480,13 +480,13 @@ describe("引擎（端到端，对着替身）", () => {
     h.save("B");
 
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     h.save("A");
     await a.sync();
     h.save("A");
 
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     h.save("B");
     await b.sync();
     h.save("B");
@@ -503,11 +503,12 @@ describe("引擎（端到端，对着替身）", () => {
       { timeout: 4000 },
     );
 
-    // 谁都没被覆盖
-    await expect(h.cloudShard(gistId, HASH_A)).resolves.toMatchObject({
-      banks: { [HASH_A]: { state: { currentRound: 3 } } },
-    });
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toContain("9");
+    // 谁都没被覆盖：云端还是 A 改的那份题干，本地还是 B 改的那份
+    const shard = await h.cloudShard(gistId, HASH_A);
+    expect(JSON.stringify(shard?.banks[HASH_A]?.questions)).toContain("A 改过的题干");
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).toContain(
+      "B 改过的题干",
+    );
   });
 
   test("冲突条目带着两个时间点：第一次看到冲突的时间 + 云端那份的上传时间", async () => {
@@ -530,7 +531,7 @@ describe("引擎（端到端，对着替身）", () => {
 
     // A 上传一份 → 云端快照的时间就在这之后
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     h.save("A");
     await a.sync();
     h.save("A");
@@ -538,7 +539,7 @@ describe("引擎（端到端，对着替身）", () => {
     // 本地是 B 刚改的：冲突这一刻就在这一轮里
     const before = Date.now();
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     h.save("B");
     await b.sync();
     h.save("B");
@@ -581,13 +582,13 @@ describe("引擎（端到端，对着替身）", () => {
     h.save("B");
 
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     h.save("A");
     await a.sync();
     h.save("A");
 
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     h.save("B");
     await b.sync();
     const detectedAt = b.status.conflicts[0].detectedAt!;
@@ -626,13 +627,13 @@ describe("引擎（端到端，对着替身）", () => {
     h.save("B");
 
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     h.save("A");
     await a.sync();
     h.save("A");
 
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     h.save("B");
     await b.sync();
     h.save("B");

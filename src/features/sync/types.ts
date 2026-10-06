@@ -198,14 +198,47 @@ export interface SyncTarget extends SyncConfig {
  * Gist 级别、不区分文件：整体时间变了但某个文件其实没变，逐文件比对哈希才不会误报。
  */
 export interface SyncRowMeta {
-  /** 上次同步成功时，该行内容的哈希（`stableHash`） */
+  /**
+   * 上次同步成功时，该行内容的**完整**哈希（题目 + 进度，`bankFullHash`）。
+   *
+   * `computePendingChanges` 拿它回答「还有没有没推上去的东西」——进度也算。
+   * **冲突判定不要读它**：那边只认题目（见 `contentHash`），混用会让「两台设备
+   * 各答各的题」平白变成一次冲突。
+   */
   remoteHash: string;
+  /**
+   * 题库行专用：上次同步成功时该题库的**内容**哈希（题目 + 模式，不含进度）。
+   *
+   * 与 `remoteHash` 分开是踩出来的：一个字段兼两种用途时，「进度变了」会被
+   * 冲突判定当成「题目变了」。老记账里没有这个字段，读不到时退回 `remoteHash`
+   * 比（那时的 `remoteHash` 正好就是内容哈希）。
+   */
+  contentHash?: string;
   /** 上次成功同步的时间（本机时钟，毫秒）——判断「本地改过没有」的基准线 */
   syncedAt: number;
   /** 上次同步时 Gist 的 `updated_at`（毫秒），仅用于展示 */
   remoteUpdatedAt: number;
   /** 题库行专用：它当时落在哪个分片（排查用） */
   shard?: number;
+  /**
+   * 题库行专用：这份题库是哪个模式（`quiz` / `memory`）。
+   *
+   * 拉取时要靠它：那一刻题库还没进 `general.library`，而 `collectLocalState`
+   * 是从库列表里取 `mode` 的——缺了它就按默认的 `quiz` 算**内容哈希**，于是
+   * 「同一份题库」在本地与云端算出来是两个哈希，下一轮同步会莫名其妙地判成
+   * 「题目不一样」（踩过：题库看起来没变，却一直对不上）。
+   */
+  mode?: "quiz" | "memory";
+  /**
+   * 上次同步成功时这个题库的快照（题库行专用）。
+   *
+   * 只在「两边都动过、题目却一样」时用得上：合并进度要拿它当三方参照，
+   * 才知道每一处是谁改的（见 `progressMerge.ts`）。旧版记账里没有这段，
+   * 读不到就退化成「两边各取更靠前的」，不影响正确性。
+   *
+   * 它不进 `generalBaseline` 那种体积考量——一个题库只存一份，不随题目数量增长。
+   */
+  snapshot?: unknown;
 }
 
 /** 题库行的键：`bank:<hash>`。 */

@@ -236,9 +236,12 @@ function normalizeRowMeta(value: unknown): SyncRowMeta | null {
   }
   const raw = value as {
     remoteHash?: unknown;
+    contentHash?: unknown;
     remoteUpdatedAt?: unknown;
     syncedAt?: unknown;
     shard?: unknown;
+    mode?: unknown;
+    snapshot?: unknown;
   };
   const numberOrZero = (v: unknown): number =>
     typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
@@ -251,11 +254,19 @@ function normalizeRowMeta(value: unknown): SyncRowMeta | null {
 
   return {
     remoteHash: raw.remoteHash,
+    ...(typeof raw.contentHash === "string" && raw.contentHash.length > 0
+      ? { contentHash: raw.contentHash }
+      : {}),
     syncedAt: numberOrZero(raw.syncedAt),
     remoteUpdatedAt: numberOrZero(raw.remoteUpdatedAt),
     ...(typeof raw.shard === "number" && Number.isInteger(raw.shard)
       ? { shard: raw.shard }
       : {}),
+    // 这两个字段加进来的时候漏了这里：写是写进去了，**读回来被静默丢掉**，
+    // 于是「合并进度要的三方参照」永远读不到（真踩过：合并结果看着对，
+    // 下一轮又退化成各取更靠前的）。往 `SyncRowMeta` 加字段时记得同步这里。
+    ...(raw.mode === "quiz" || raw.mode === "memory" ? { mode: raw.mode } : {}),
+    ...(raw.snapshot === undefined ? {} : { snapshot: raw.snapshot }),
   };
 }
 

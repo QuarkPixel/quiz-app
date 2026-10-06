@@ -17,6 +17,7 @@ import { giteeApiBase, maskToken, resolveSyncTarget } from "@/features/sync/targ
 import { decodePayload, encodePayload } from "@/features/sync/payload";
 import {
   bankContentHash,
+  bankProgressHash,
   collectLocalState,
   stableHash,
   type BankRecord,
@@ -94,6 +95,7 @@ function localBank(
     hash,
     shard: shardIndexOf(hash),
     contentHash: bankContentHash(snapshot),
+    progressHash: bankProgressHash(snapshot),
     localAt: options.localAt ?? 0,
     snapshot,
   };
@@ -109,6 +111,7 @@ function remoteBank(
     hash,
     shard: shardIndexOf(hash),
     contentHash: bankContentHash(snapshot),
+    progressHash: bankProgressHash(snapshot),
     name,
     snapshot,
   };
@@ -359,9 +362,9 @@ describe("逐题库三方合并", () => {
     ).toBe("pull");
   });
 
-  test("两边都改过 → 冲突，绝不自动选边", () => {
-    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+  test("两边都把**题目**改了 → 冲突，绝不自动选边", () => {
+    const local = localBank(HASH_A, "题库", { marker: "本地改过的题干", localAt: 900 });
+    const remote = remoteBank(HASH_A, "题库", { marker: "云端改过的题干" });
     expect(
       judgeBank({
         local,
@@ -369,6 +372,32 @@ describe("逐题库三方合并", () => {
         row: { remoteHash: "旧哈希", syncedAt: 500, remoteUpdatedAt: 0 },
       }),
     ).toBe("conflict");
+  });
+
+  test("两边都**做过题**（题目一样、进度都动过）→ 上传，交给引擎按卡合并", () => {
+    // 这是最日常的用法：手机上做了几道、电脑上也做了几道。旧版判成冲突，
+    // 而裁决是整库二选一 —— 无论选哪边都要丢掉另一边的进度。
+    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(
+      judgeBank({
+        local,
+        remote,
+        row: { remoteHash: local.contentHash, syncedAt: 500, remoteUpdatedAt: 0 },
+      }),
+    ).toBe("push");
+  });
+
+  test("题目一样、云端动过进度而本地没动 → 下载（合上云端那份）", () => {
+    const local = localBank(HASH_A, "题库", { localAt: 100, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(
+      judgeBank({
+        local,
+        remote,
+        row: { remoteHash: local.contentHash, syncedAt: 500, remoteUpdatedAt: 0 },
+      }),
+    ).toBe("pull");
   });
 
   test("没有基准时：本地没进度、云端有 → 听云端的（本地没什么可丢）", () => {
@@ -383,9 +412,15 @@ describe("逐题库三方合并", () => {
     expect(judgeBank({ local, remote })).toBe("push");
   });
 
-  test("没有基准、两边都有进度但不一样 → 冲突（不猜）", () => {
+  test("没有基准、两边都有进度但不一样：题目一样 → 上传并合并（不猜也不用问）", () => {
     const local = localBank(HASH_A, "题库", { state: { round: 2 } });
     const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(judgeBank({ local, remote })).toBe("push");
+  });
+
+  test("没有基准、**题目**也不一样、两边都有进度 → 还是冲突（题目没法自动合）", () => {
+    const local = localBank(HASH_A, "题库", { marker: "本地题干", state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { marker: "云端题干", state: { round: 3 } });
     expect(judgeBank({ local, remote })).toBe("conflict");
   });
 
@@ -434,9 +469,9 @@ describe("逐题库三方合并", () => {
     ).toBe("push");
   });
 
-  test("老格式兜底：分片文件变了、本地也动过 → 冲突", () => {
-    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+  test("老格式兜底：分片文件变了、本地也动过 → 冲突（题目不同）", () => {
+    const local = localBank(HASH_A, "题库", { marker: "本地题干", localAt: 900 });
+    const remote = remoteBank(HASH_A, "题库", { marker: "云端题干" });
     expect(
       judgeBank({
         local,
@@ -446,14 +481,27 @@ describe("逐题库三方合并", () => {
       }),
     ).toBe("conflict");
   });
+
+  test("老格式兜底：文件变了但题目一样、只有进度不同 → 不冲突", () => {
+    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(
+      judgeBank({
+        local,
+        remote,
+        fileRow: { remoteHash: "旧文件哈希", syncedAt: 500, remoteUpdatedAt: 0 },
+        remoteFileHash: "新文件哈希",
+      }),
+    ).toBe("push");
+  });
 });
 
 describe("合并计划", () => {
   test("本地改了 A、云端改了 B → 各走各的，互不牵连", () => {
     const localA = localBank(HASH_A, "题库一", { localAt: 900, state: { round: 2 } });
     const remoteA = remoteBank(HASH_A, "题库一");
-    const localB = localBank(HASH_B, "题库二", { localAt: 100 });
-    const remoteB = remoteBank(HASH_B, "题库二", { state: { round: 3 } });
+    const localB = localBank(HASH_B, "题库二", { localAt: 100, marker: "本地题干" });
+    const remoteB = remoteBank(HASH_B, "题库二", { marker: "云端题干" });
 
     const plan = buildSyncPlan({
       local: localState([localA, localB]),
@@ -478,8 +526,8 @@ describe("合并计划", () => {
     // 就等于替用户选了「保留本地」。
     const sameShard = findSameShardHashes(2);
     const [hash1, hash2] = sameShard;
-    const local1 = localBank(hash1, "题库一", { localAt: 900, state: { round: 2 } });
-    const remote1 = remoteBank(hash1, "题库一", { state: { round: 3 } });
+    const local1 = localBank(hash1, "题库一", { localAt: 900, marker: "本地题干" });
+    const remote1 = remoteBank(hash1, "题库一", { marker: "云端题干" });
     const local2 = localBank(hash2, "题库二", { localAt: 900, state: { round: 5 } });
     const remote2 = remoteBank(hash2, "题库二");
 
@@ -566,8 +614,8 @@ describe("合并计划", () => {
   });
 
   test("冲突裁决后重算计划：keepLocal 全推、keepRemote 全拉", () => {
-    const local = localBank(HASH_A, "题库一", { localAt: 900, state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库一", { state: { round: 3 } });
+    const local = localBank(HASH_A, "题库一", { localAt: 900, marker: "本地题干" });
+    const remote = remoteBank(HASH_A, "题库一", { marker: "云端题干" });
     const plan = buildSyncPlan({
       local: localState([local]),
       remote: remoteState([remote]),
@@ -591,10 +639,10 @@ describe("合并计划", () => {
     // 顺手把它也裁决掉——用户没见过的冲突必须重新问。
     const sameShard = findSameShardHashes(2);
     const [hash1, hash2] = sameShard;
-    const local1 = localBank(hash1, "题库一", { localAt: 900, state: { round: 2 } });
-    const remote1 = remoteBank(hash1, "题库一", { state: { round: 3 } });
-    const local2 = localBank(hash2, "题库二", { localAt: 900, state: { round: 5 } });
-    const remote2 = remoteBank(hash2, "题库二", { state: { round: 6 } });
+    const local1 = localBank(hash1, "题库一", { localAt: 900, marker: "本地题干" });
+    const remote1 = remoteBank(hash1, "题库一", { marker: "云端题干" });
+    const local2 = localBank(hash2, "题库二", { localAt: 900, marker: "本地题干" });
+    const remote2 = remoteBank(hash2, "题库二", { marker: "云端题干" });
 
     const plan = buildSyncPlan({
       local: localState([local1, local2]),

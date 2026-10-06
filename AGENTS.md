@@ -119,8 +119,13 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `target.ts`：`giteeApiBase`（可用 `VITE_GITEE_API_BASE` 指向 mock）、`resolveSyncTarget`、`maskToken`
   - `storage.ts`：`isSyncableKey` 白名单、mtime 记录、同步元数据（`loadSyncMeta` / `saveSyncMeta`）、localStorage 包装（`installStorageHook` / `writeLocal` / `removeLocal`）、**存储健康探针**（`probeStorageHealth`）
   - `payload.ts`：`encodePayload` / `decodePayload`（deflateRaw + base64url，带版本号）
-  - `collect.ts`：`collectLocalState`（键 → **逐题库**）、`filesOfState` / `collectLocalFiles`（题库装进分片后的样子）、`bankContentHash`、`stableHash`
-  - `merge.ts`：**逐题库**三方合并的纯函数（`buildSyncPlan` / `judgeBank` / `mergeGeneral` / `buildRemoteState` / `applyResolution` / `forcePushPlan` / `forcePullPlan`），重点测试对象
+  - `collect.ts`：`collectLocalState`（键 → **逐题库**）、`filesOfState` / `collectLocalFiles`（题库装进分片后的样子）、
+    **三个哈希**（`bankContentHash` 只含题目 + 模式、`bankProgressHash` 只含 `state`、`bankFullHash` 两者都含）、`stableHash`。
+    **冲突判定只认第一个**，`computePendingChanges` 用第三个——混用会让「两台设备各答各的题」变成一次冲突（踩过）
+  - `merge.ts`：**逐题库**三方合并的纯函数（`buildSyncPlan` / `judgeBank` / `mergeGeneral` / `buildRemoteState` / `applyResolution` / `forcePushPlan` / `forcePullPlan`），重点测试对象。
+    「题目一样、进度两边都动过」时它只返回 `push`，真正的合并交给 `progressMerge.ts`（见下一条）
+  - `progressMerge.ts`：**进度按卡合并**（`mergeProgressMap` / `mergeBankSnapshots` / `planProgressMerge` / `sameProgress`）。
+    内容冲突给人、进度冲突自动解——这是「两台设备都做过同一份题库」不再报冲突的全部实现
   - `gitee.ts`：Gitee Gists API 客户端（`GiteeClient` 的 `createGist` / `getGist` / `listGists` / `updateFiles` / `deleteFiles` / `deleteGist` / `ping`）+ `GistSummary` + `describeHttpError`
   - `engine.svelte.ts`：`syncEngine` 单例（打开页面即对账 / 防抖上传 20 秒 / 焦点与轮询检查 / 冲突状态机 / 拉取后刷新）
   - `src/features/toast.svelte.ts`：**全局提示**的单例（`toastStore`）。整个应用只在
@@ -130,7 +135,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `src/lib/time.ts`：`formatRelativeTime`（「20 秒前」）/ `formatAbsoluteTime`（title 用）/
     `formatShortDate`。相对时间由调用方把 `now` 传进来，跟着页面的心跳刷新。
   - `src/lib/identicon.ts`：DiceBear 头像的**唯一入口**，动态加载（见「首屏体积」那节）
-  - `summary.ts`：`describeSyncResult()`——把一轮同步说成人话（新增 / 删除 / 上传 / 下载 + 设置），状态行与 Toast 共用这一份文案
+  - `summary.ts`：`describeSyncResult()`——把一轮同步说成人话（新增 / 删除 / 上传 / 下载 / **合并进度** + 设置），状态行与 Toast 共用这一份文案
   - `shortcut.ts`：**⌘Y（Ctrl+Y）立即同步**（`isSyncNowShortcut` / `handleSyncNowShortcut`）——**等价于点页头那颗同步指示点**。
     窗口监听挂在 `AppShell.svelte` 上（指示点住在那儿，而且空题库状态也挂载——新设备打开正是为了拉云端题库），
     **不进** `features/appShortcuts.ts` 的分发表（那张表的宿主「答题视图」在没有题库时根本不挂载）。
@@ -429,11 +434,29 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - **同步单元是「题库」，不是「文件」**（`merge.ts`，纯函数，重点测试对象）。
   分片只是容器：合并 / 冲突 / 删除都按题库逐条判定。两个独立信号：
   - 本地改过没有 → 比 `SyncRowMeta.syncedAt` 与该题库的 mtime（题目键 / 进度键里最晚的）
-  - 云端改过没有 → 比 `SyncRowMeta.remoteHash` 与该题库重新算出来的**内容哈希**
+  - 云端改过没有 → 比 `SyncRowMeta.contentHash` 与该题库重新算出来的**内容哈希**
+    （只含题目与模式；老记账里没有这个字段时退回 `remoteHash`，那时它正好就是内容哈希）
   用哈希而不是 `updated_at`，是因为 Gitee 的时间戳只在 Gist 级别：改了题库 A，
   整个 Gist 时间就变，题库 B 不该被误判成冲突。内容哈希 = `bankContentHash`，
-  覆盖 `{mode, questions, state}`，**不含题库名**（名字在 general 的题库列表里，
-  算进去会让「改个名」变成「题库内容变了」）。
+  只覆盖 `{mode, questions}`，**不含题库名**（名字在 general 的题库列表里，
+  算进去会让「改个名」变成「题库内容变了」），**也不含进度**——见下一条。
+- **进度不参与冲突判定，按卡自动合并**（`progressMerge.ts`）：
+  从前 `state`（全部进度 + 设置）也算进内容哈希，于是「你在两台设备上先后做了同一份
+  题库」和「两边把题目改得不一样了」在判定里长得一模一样：报冲突 → 用户在「保留本地 /
+  保留云端」里二选一 → 怎么选都要丢掉另一边的进度（线上反馈「总是莫名其妙冲突」的根因）。
+  现在：题目一样就走合并，逐张卡取「更靠前」的那一份
+  （`mastered` > `reviewing` > `learning`，同档比 `level`；`lapses` 取大；
+  `mastered` 是终态、绝不被拖回去）。三方参照是 `SyncRowMeta.snapshot`
+  ——**写进基准线的完整快照**，没有它只能退化成「两边各取更靠前的」，同一张卡上
+  「一边推进、一边归零」就会合错。
+  只有题目真的分叉了才报冲突、才需要人裁决。
+- **`SyncRowMeta` 的四个字段各管一件事**（往它加字段时**同时改 `storage.ts` 的
+  `normalizeRowMeta`**，否则写进去读不回来——这个坑真踩过）：
+  `remoteHash` = 完整哈希（有没有没推上去的东西，`computePendingChanges` 用）、
+  `contentHash` = 只含题目（冲突判定用）、`syncedAt` = 本地改动的基准线、
+  `snapshot` = 进度合并的三方参照、`mode` = 拉取时保住题库模式
+  （`collectLocalState` 是从库列表取 `mode` 的，库列表还没有这个题库时会按 `quiz`
+  算内容哈希，同一份题库于是在两边算出两个哈希）。
 - **只在一侧存在的题库**（对称的两条，删除靠它们传播）：
   - 有题库行的基准 → 另一边删过它 → 跟着删（`deleteRemote` / `deleteLocal`）
   - 没有基准 → 那边新导入的 → 传过去（`push` / `pull`）
@@ -483,7 +506,10 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   还会把 `quiz_app_sync_config` 这个键本身删掉），或者 `forgetGist()`（丢掉 Gist id + 记账）。
 - **一轮同步干了几件事，分开数**（`summary.ts` 的 `describeSyncResult`，`SyncOutcome` 里带着计数）：
   `新增`（某一侧新出现的题库，两个方向合计）/ `删除`（某一侧删掉、传播到另一侧的）/
-  `上传` `下载`（**已有**题库的内容改动，两个方向各算各的）+ `设置已更新`。
+  `上传` `下载`（**已有**题库的内容改动，两个方向各算各的）+ `合并进度` + `设置已更新`。
+  只有「真的从云端取到了新东西」才算合并：云端那份压根没有进度、或本地本来就是
+  两者中更靠前的那个，都不报「合并进度」（用户只在一台设备上做过题，报合并会让他
+  以为两台都做过）。
   前四项互斥：新题库只算「新增」，`pushed` / `pulled` 里扣掉它才是「上传 / 下载」。
   只列非零项，四项全零就说「题库没有改动」。
   `设置已更新` 来自 `plan.settingsChanged`（`sameSettings()` 三方比：当前题库 / 全局设置 /
@@ -512,6 +538,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   就不是 `idle`，指示点自然也是黄的。
 - **拉取不写 mtime**（`applyRemoteValue` 只写内容）：拉下来的内容不是这台设备改的，
   记成「本地改动」会让下一轮白推一遍甚至撞成冲突。拉取还会顺手清掉该题库的 mtime。
+  连带的：`schedulePush()` 先看一眼「本地到底动过没有」（`mtime > 0`），拉取不排队上传。
   注意 `installStorageHook` 只包 `localStorage.setItem` —— 测试里装快照要用
   `writeLocal`（原始写入），否则每装一次设备快照就等于把所有键都"改"了一遍。
 - **强制覆盖是显式计划**：`forcePushPlan` / `forcePullPlan` 无条件按一边来，
@@ -527,6 +554,10 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - **`tests/syncEngine.test.ts` / `tests/syncTwoDevice.test.ts` 是这一层的护栏**：
   用真模块 + 内存替身 Gitee 跑完整的推送 / 拉取 / 双设备来回。上面这些 bug
   几乎都是它们抓出来的，改同步逻辑前先看它们。
+  `tests/syncProgressMerge.test.ts` 专门守「两台设备都做过同一份题库」：
+  不冲突、两边进度都在、同一张卡取更靠前的、题目分叉才报冲突。
+  造冲突要用 `h.editBank()`（改题目）——只改进度现在会自动合并，
+  用 `h.studyBank()` 造冲突的旧用例已经全部改掉了。
 - **`config.svelte.ts` 丢弃旧版凭据**：Supabase 时代的 `supabaseUrl` / `supabaseKey` /
   `credentials` / `relayUrl` 在新的存储后端上毫无意义，留着只会让人以为还在生效。
 - **Gist 的网页地址用 Gitee 给的 `html_url`**（`GiteeGist.htmlUrl` → `SyncConfig.gistUrl`）：

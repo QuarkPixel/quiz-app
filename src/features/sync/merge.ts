@@ -33,11 +33,13 @@
 
 import {
   bankContentHash,
+  bankProgressHash,
   normalizeGeneral,
   stableHash,
   type BankRecord,
   type CollectedState,
 } from "./collect";
+import { planProgressMerge } from "./progressMerge";
 import {
   GIST_GENERAL_FILE,
   bankRowKey,
@@ -62,8 +64,10 @@ export interface RemoteBank {
   hash: string;
   /** 它落在哪个分片 */
   shard: number;
-  /** 内容哈希（与 `BankRecord.contentHash` 同一套口径） */
+  /** **内容**哈希（题目 + 模式，与 `BankRecord.contentHash` 同一套口径） */
   contentHash: string;
+  /** **进度**哈希（`state` 整段）；与内容哈希分开，冲突判定只认内容 */
+  progressHash: string;
   name: string;
   snapshot: BankSnapshot;
 }
@@ -103,6 +107,23 @@ export interface BankAction {
   remoteHash?: string;
   /** 本地最后改动时间（毫秒） */
   localAt: number;
+  /**
+   * 两边都动过、但**题目一样**时合出来的那份快照（见 `mergeBankSnapshots`）。
+   *
+   * 有它就说明这一轮不需要人裁决：引擎会把它**同时**写到本地与云端，
+   * 两台设备的进度都保住。题目真的分叉了才会是 `conflict`，那时没有这个字段。
+   */
+  merged?: unknown;
+  /** 这次合并是不是只有进度不同（用于给用户报一句「已合并进度」） */
+  progressMerged?: boolean;
+  /**
+   * 这个 push 是「按卡合并进度」来的（不是普通的内容上传）。
+   *
+   * 用途只有一个：合并出来的那一份**即使和本地逐字节一样也要真的推上去**——
+   * 云端那一份可能是空的（本地有进度、云端没有），照「没变化就不传」的规矩
+   * 跳过就等于把本地进度永远留在本地。
+   */
+  mergedFromProgress?: boolean;
 }
 
 /** 云端某个分片文件里装了哪些题库（回收空文件时要重算）。 */
@@ -179,10 +200,27 @@ export function judgeBank(params: {
 
   // ── 两边都有 ──
   if (local && remote) {
-    // ① 内容一模一样就别折腾。应用一启动会重写一遍本地的配置 / 进度，
-    //    mtime 因此常常是新鲜的；只看 mtime 会把「其实没变」判成冲突。
-    if (local.contentHash === remote.contentHash) return "skip";
+    // ① **题目一模一样**：这一轮没有任何需要裁决的东西，只看进度怎么合
+    //
+    //    进度不参与「内容冲突」的判定是有意的：两台设备先后做同一份题库是
+    //    最日常的用法，判成冲突再让人二选一，等于必然丢掉一边的进度。
+    if (local.contentHash === remote.contentHash) {
+      if (local.progressHash === remote.progressHash) return "skip";
 
+      const baseline = row ?? fileRow;
+      if (baseline === undefined) {
+        // 第一次接上这个云端（没有任何基准）：
+        //   - 本地没进度 → 听云端的
+        //   - 本地有进度 → 推上去（别白丢本地那份），顺带把基准立起来
+        return local.snapshot.state === undefined ? "pull" : "push";
+      }
+      // 本地没动过 → 跟着云端那份进度走
+      if (local.localAt <= baseline.syncedAt) return "pull";
+      // 两边都动过 → 按卡合并（合并结果由 `buildSyncPlan` 生成后交给引擎）
+      return "push";
+    }
+
+    // ② 题目不一样：按两个信号判谁改过
     const baseline = row ?? fileRow;
     if (baseline === undefined) {
       // 没有任何基准（这台设备第一次接上这个云端，而且两边都已经有这份题库）。
@@ -195,14 +233,17 @@ export function judgeBank(params: {
     }
 
     const localChanged = local.localAt > baseline.syncedAt;
-    // 老格式只有文件级的哈希：文件没变就说明云端这个题库也没变
+    // 老格式只有文件级的哈希：文件没变就说明云端这个题库也没变。
+    // 题库行的基准优先读 `contentHash`（只含题目），读不到才退回 `remoteHash`
+    // ——老记账里那个字段正好就是内容哈希。
+    const baselineContentHash = row ? (row.contentHash ?? row.remoteHash) : undefined;
     const remoteChanged =
-      baseline.remoteHash !== (row ? remote.contentHash : remoteFileHash);
+      baselineContentHash !== (row ? remote.contentHash : remoteFileHash);
 
     if (localChanged && remoteChanged) return "conflict";
     if (localChanged) return "push";
     if (remoteChanged) return "pull";
-    // 内容不同、两边按基准看都没动过：老格式的文件级基准才会走到这里
+    // 题目不同、两边按基准看都没动过：老格式的文件级基准才会走到这里
     // （同片的别的题库动过就会让文件哈希变，从而两边都"动过"）。
     // 这时以本地为准——总比永远跳过、差异一直摆在那里强。
     return "push";
@@ -334,6 +375,20 @@ export function buildSyncPlan(params: {
     return localIndex === undefined ? undefined : meta.rows[shardFileName(localIndex)];
   };
 
+  /**
+   * 三方合并要的那份「上次同步成功时这个题库长什么样」。
+   *
+   * 题库行优先，但**它没有快照时退回任何一个有快照的行**（老格式的文件行、
+   * 或者升级上来还没有快照的题库行）。没有它，`mergeBankSnapshots` 只能退化成
+   * 「两边各取更靠前的」——同一张卡上「一边答对推进、另一边答错归零」这类
+   * 情形就会合错（真踩过：合并之后掌握档位被另一边拖回去）。
+   */
+  const baseSnapshotOf = (hash: string): unknown => {
+    const row = meta.rows[bankRowKey(hash)];
+    if (row?.snapshot !== undefined) return row.snapshot;
+    return fileBaselineOf(hash)?.snapshot;
+  };
+
   const actions: BankAction[] = [];
   const hashes = new Set<string>([
     ...local.banks.keys(),
@@ -343,7 +398,7 @@ export function buildSyncPlan(params: {
   for (const hash of hashes) {
     const localBank = local.banks.get(hash);
     const remoteBank = remote.banks.get(hash);
-    const verdict = judgeBank({
+    const judged = judgeBank({
       local: localBank,
       remote: remoteBank,
       row: meta.rows[bankRowKey(hash)],
@@ -356,17 +411,40 @@ export function buildSyncPlan(params: {
             )?.hash,
     });
 
-    actions.push({
+    const action: BankAction = {
       hash,
       name:
         localBank?.snapshot.name ??
         remoteBank?.name ??
         "未命名题库",
-      verdict,
+      verdict: judged,
       localHash: localBank?.contentHash,
       remoteHash: remoteBank?.contentHash,
       localAt: localBank?.localAt ?? 0,
-    });
+    };
+
+    // 「题目一样、进度两边都动过」→ 这里把两份进度合起来交给引擎
+    // （同时写本地与云端）。判定本身只说 push，合并的活儿归这里，
+    // 免得 `judgeBank` 的返回值既可能是结论又可能带数据、调用方还要分辨。
+    if (
+      judged === "push" &&
+      localBank !== undefined &&
+      remoteBank !== undefined &&
+      localBank.contentHash === remoteBank.contentHash
+    ) {
+      const merge = planProgressMerge({
+        base: baseSnapshotOf(hash),
+        local: localBank.snapshot,
+        remote: remoteBank.snapshot,
+      });
+      if (merge.kind === "skip") action.verdict = "skip";
+      else if (merge.kind === "merge") {
+        action.merged = merge.snapshot;
+        action.progressMerged = true;
+      }
+    }
+
+    actions.push(action);
   }
 
   actions.sort((a, b) => (a.hash < b.hash ? -1 : 1));
@@ -838,6 +916,7 @@ export function buildRemoteState(files: readonly RemoteFile[]): RemoteState {
         shard: index,
         // 哈希算在归一化后的快照上，和本地那份用同一套口径
         contentHash: bankContentHash(snapshot),
+        progressHash: bankProgressHash(snapshot),
         name,
         snapshot,
       });

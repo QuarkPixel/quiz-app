@@ -7,6 +7,7 @@
  *   - 新增：某一侧新出现的题库，同步到了另一侧
  *   - 删除：某一侧删掉的题库，同步到了另一侧
  *   - 上传 / 下载：**已有**题库的内容改动，两个方向各算各的
+ *   - 合并进度：题目一样、两边都做过这个题库 → 按卡合起来，两边都不丢
  *   - 设置：`_general.json`（题库列表与顺序、当前题库、全局 / 默认设置）也动了
  *
  * 前四项是**互斥**的：新题库只算「新增」，不算「上传」——否则同一个题库会被数两遍。
@@ -26,6 +27,13 @@ export interface SyncTransferSummary {
   removed: number;
   /** `_general.json` 也变了（改设置 / 改题库名 / 调顺序这类，与题库增删无关） */
   settingsChanged: boolean;
+  /**
+   * 按卡合并了进度的题库数（题目一样、两边都动过）。
+   *
+   * 单列一项而不是算进「上传」：用户需要知道「我两边做的题都没丢」，
+   * 而「上传 1」看起来像是把云端那份盖掉了。
+   */
+  progressMerged: number;
 }
 
 /**
@@ -46,6 +54,7 @@ export function describeSyncResult(outcome: SyncTransferSummary): string {
   if (outcome.removed > 0) parts.push(`删除 ${outcome.removed}`);
   if (uploaded > 0) parts.push(`上传 ${uploaded}`);
   if (downloaded > 0) parts.push(`下载 ${downloaded}`);
+  if (outcome.progressMerged > 0) parts.push(`合并进度 ${outcome.progressMerged}`);
   if (parts.length === 0) parts.push("题库没有改动");
   if (outcome.settingsChanged) parts.push("设置已更新");
 

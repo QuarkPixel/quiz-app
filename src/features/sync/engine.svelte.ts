@@ -37,6 +37,7 @@
 
 import { STORAGE_KEY_GENERAL } from "@/config";
 import {
+  bankFullHash,
   buildShardSnapshot,
   collectLocalState,
   filesOfState,
@@ -61,6 +62,7 @@ import { describeSyncResult, type SyncTransferSummary } from "./summary";
 import {
   applyRemoteValue,
   clearMtime,
+  isSyncableKey,
   clearSyncMeta,
   installStorageHook,
   loadSyncMeta,
@@ -82,6 +84,7 @@ import {
 } from "@/config";
 import {
   GIST_GENERAL_FILE,
+  bankHashFromRowKey,
   bankRowKey,
   shardFileName,
   shardIndexOf,
@@ -107,6 +110,8 @@ export interface SyncEvent {
 export interface SyncOutcome extends SyncTransferSummary {
   /** 没能自动解决的冲突（题库 hash） */
   conflicts: string[];
+  /** 有几份题库是「题目一样、进度两边都动过」自动合起来的 */
+  progressMerged: number;
   /**
    * 这一轮是不是真的改写了「当前正在看的那个题库」。
    *
@@ -118,6 +123,7 @@ export interface SyncOutcome extends SyncTransferSummary {
 }
 
 const IDLE_OUTCOME: SyncOutcome = {
+  progressMerged: 0,
   pushed: 0,
   pulled: 0,
   newOnCloud: 0,
@@ -337,10 +343,17 @@ export class SyncEngine {
 
   // ── 对外动作 ──────────────────────────────────────────────────────────────
 
-  /** 本地改动后的防抖上传。云同步关掉、或关掉自动同步时是空操作。 */
+  /**
+   * 本地改动后的防抖上传。云同步关掉、或关掉自动同步时是空操作。
+   *
+   * 先看一眼「本地到底动过没有」（`mtime > 0`）：**拉取也会触发一次写入**，
+   * 而拉取是清掉 mtime 的（见 `applyRemoteValue`），于是刚拉下来的题库不会被
+   * 当成「本地改动」再传一遍。白跑一轮事小，把别的设备的改动捎带着推回去事大。
+   */
   schedulePush(): void {
     if (!this.isOn()) return;
     if (!this.config.value.autoSync) return;
+    if (!this.hasLocalDirtyKeys()) return;
     if (this.pushTimer !== null) clearTimeout(this.pushTimer);
     this.pushTimer = setTimeout(() => {
       this.pushTimer = null;
@@ -348,6 +361,27 @@ export class SyncEngine {
       if (document.visibilityState !== "visible") return;
       void this.sync();
     }, SYNC_PUSH_DEBOUNCE_MS);
+  }
+
+  /**
+   * 本地有没有「真的被本机改过」的可同步键。
+   *
+   * 判据是 mtime：`installStorageHook` 只给**真实写入**记时间，拉取走
+   * `applyRemoteValue` 并顺手 `clearMtime`。随手扫一遍键，比全量收集便宜得多。
+   */
+  private hasLocalDirtyKeys(): boolean {
+    try {
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const key = localStorage.key(i);
+        if (key === null) continue;
+        if (!isSyncableKey(key)) continue;
+        if (mtimeOf(key) > 0) return true;
+      }
+    } catch {
+      // 读不了就当有改动：宁可多传一轮，也别把改动漏掉
+      return true;
+    }
+    return false;
   }
 
   /** 双向同步（默认入口）。 */
@@ -905,10 +939,27 @@ export class SyncEngine {
         const bank = remote.banks.get(action.hash);
         if (!bank) continue;
         writeBankLocally(bank);
+        ensureLibraryEntry(action.hash, bank.snapshot.mode);
         touched.add(action.hash);
       } else if (action.verdict === "deleteLocal") {
         removeBankLocally(action.hash);
         touched.add(action.hash);
+      } else if (action.merged !== undefined) {
+        // 两边都做过这同一个题库、题目却一样：合并出来的那一份**先落到本地**，
+        // 后面第 ③ 步再从本地重建分片推上去——于是两台设备的进度都在，
+        // 不需要用户去「保留本地 / 保留云端」里二选一。
+        const hash = action.hash;
+        applyRemoteValue(
+          `quiz_app_questions_${hash}`,
+          JSON.stringify((action.merged as { questions: unknown[] }).questions),
+        );
+        const mergedState = (action.merged as { state?: unknown }).state;
+        if (mergedState === undefined) removeLocal(`quiz_app_state_${hash}`);
+        else applyRemoteValue(`quiz_app_state_${hash}`, JSON.stringify(mergedState));
+        clearMtime(`quiz_app_questions_${hash}`);
+        clearMtime(`quiz_app_state_${hash}`);
+        touched.add(hash);
+        outcome.progressMerged += action.progressMerged === true ? 1 : 0;
       }
     }
 
@@ -1026,7 +1077,8 @@ export class SyncEngine {
       outcome.pushed > 0 ||
       outcome.pulled > 0 ||
       outcome.removed > 0 ||
-      outcome.settingsChanged
+      outcome.settingsChanged ||
+      outcome.progressMerged > 0
     ) {
       this.emit({
         kind: "synced",
@@ -1140,7 +1192,9 @@ export class SyncEngine {
       seen.add(key);
       const row = meta.rows[key];
       // 没有基准 = 这个题库还没上去过；内容不一样 = 同步之后又改了
-      if (row === undefined || row.remoteHash !== bank.contentHash) return true;
+      // 比的是**完整**哈希（题目 + 进度）：这个函数回答的是「还有没有没推上去的
+      // 东西」，进度改了当然也算。冲突判定才只认内容哈希，两者别混。
+      if (row === undefined || row.remoteHash !== bankFullHash(bank.snapshot)) return true;
     }
 
     // 记账里还有、本地已经没有的题库 = 删除还没推到云端
@@ -1296,6 +1350,35 @@ function writeBankLocally(bank: {
   clearMtime(stateKey);
 }
 
+/**
+ * 拉取之后把这个题库补进 `general.library`（只补 `mode`）。
+ *
+ * 为什么非得补：`collectLocalState` 是从库列表里取 `mode` 的，而**进度哈希**
+ * 虽然不看 mode、**内容哈希**却看——库列表里没有这个题库时它会按默认的 `quiz`
+ * 算，于是同一份题库在本地与云端算出两个哈希，下一轮同步平白判成「题目不一样」。
+ * 库列表的权威是 `_general.json`（下一轮合并会把它补全），这里只是**先把哈希
+ * 口径对齐**，不碰名字 / 顺序那些真正的列表内容。
+ */
+function ensureLibraryEntry(hash: string, mode: "quiz" | "memory"): void {
+  const raw = readLocal(STORAGE_KEY_GENERAL);
+  if (raw === null) return;
+  let general: { library?: unknown };
+  try {
+    general = JSON.parse(raw) as { library?: unknown };
+  } catch {
+    return;
+  }
+  if (!Array.isArray(general.library)) return;
+  const entry = general.library.find(
+    (item): item is { hash?: unknown } =>
+      item !== null && typeof item === "object" && (item as { hash?: unknown }).hash === hash,
+  );
+  if (entry === undefined) return; // 列表里没有它：那是 general 的事，别在这里插队
+  if ((entry as { mode?: unknown }).mode === mode) return;
+  (entry as { mode?: unknown }).mode = mode;
+  applyRemoteValue(STORAGE_KEY_GENERAL, JSON.stringify(general));
+}
+
 /** 删掉本地一个题库的题目与进度。 */
 function removeBankLocally(hash: string): void {
   removeLocal(`quiz_app_questions_${hash}`);
@@ -1310,10 +1393,14 @@ function baselineMeta(state: CollectedState, remoteUpdatedAt: number): SyncMeta 
   const rows: Record<string, SyncRowMeta> = {};
   for (const bank of state.banks.values()) {
     rows[bankRowKey(bank.hash)] = {
-      remoteHash: bank.contentHash,
+      // `remoteHash` = 完整哈希（有没有没推上去的东西），`contentHash` = 只含题目
+      remoteHash: bankFullHash(bank.snapshot),
+      contentHash: bank.contentHash,
       syncedAt: now,
       remoteUpdatedAt,
       shard: bank.shard,
+      mode: bank.snapshot.mode,
+      snapshot: bank.snapshot,
     };
   }
   return {
@@ -1355,20 +1442,30 @@ function nextMeta(params: {
           break;
         }
         rows[key] = {
-          remoteHash: bank.contentHash,
+          remoteHash: bankFullHash(bank.snapshot),
+          contentHash: bank.contentHash,
           syncedAt: now,
           remoteUpdatedAt,
           shard: bank.shard,
+          mode: bank.snapshot.mode,
+          // 合并过的那一份，云端与本地都已经是它了（第 ③ 步从本地重建上传），
+          // 所以基准记的就是 `bank.snapshot`——下一轮它就是三方合并的参照
+          snapshot: bank.snapshot,
         };
         break;
+
       case "skip":
         // 两边内容一样，基准线怎么写都不会错
+        // （`snapshot` 每次同步都刷新：旧版记账里没有它）
         if (bank !== undefined) {
           rows[key] = {
-            remoteHash: bank.contentHash,
+            remoteHash: bankFullHash(bank.snapshot),
+            contentHash: bank.contentHash,
             syncedAt: now,
             remoteUpdatedAt,
             shard: bank.shard,
+            mode: bank.snapshot.mode,
+            snapshot: bank.snapshot,
           };
         }
         break;
@@ -1381,6 +1478,17 @@ function nextMeta(params: {
         // 保持旧基准，等用户裁决
         break;
     }
+  }
+
+  // 旧版记账里没有 `snapshot` 的行：这一轮没被上面几个分支更新到的，借着
+  // 本地现成的那份补上——下一轮合并进度时才有三方参照可用。
+  for (const [key, row] of Object.entries(rows)) {
+    const hash = bankHashFromRowKey(key);
+    if (hash === null) continue;
+    const local = state.banks.get(hash);
+    if (local === undefined) continue;
+    if (row.snapshot === undefined) row.snapshot = local.snapshot;
+    row.mode ??= local.snapshot.mode;
   }
 
   // 本地已经不存在的题库（以及老格式遗留的分片行）不再留着

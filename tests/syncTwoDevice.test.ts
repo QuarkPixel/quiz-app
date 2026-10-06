@@ -126,22 +126,24 @@ describe("双设备同步", () => {
 
     // 两台设备各刷各的题
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     await h.on("A", (engine) => engine.sync());
 
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     const conflicted = await h.on("B", (engine) => engine.sync());
 
     expect(conflicted.conflicts).toEqual([HASH_A]);
     expect(h.engine("B").status.phase).toBe("conflict");
     expect(h.engine("B").status.conflicts[0].name).toBe("题库一");
     // 云端还是 A 那份，本地还是 B 那份
-    expect((await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state).toMatchObject({
-      currentRound: 3,
-    });
+    expect(
+      JSON.stringify((await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.questions),
+    ).toContain("A 改过的题干");
     expect(h.engine("B").status.remoteBanks).toBe(1);
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toContain("9");
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).toContain(
+      "B 改过的题干",
+    );
     expect(a).toBeDefined();
   });
 
@@ -160,12 +162,12 @@ describe("双设备同步", () => {
 
     // A 改了题库一（进度 3）并推上去
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     await h.on("A", (engine) => engine.sync());
 
     // B 也改了题库一（进度 9）——冲突
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     await h.on("B", (engine) => engine.sync());
 
     // A 再导入一个新题库：对 B 来说这是一次「该拉下来」的更新
@@ -186,16 +188,23 @@ describe("双设备同步", () => {
     ).toEqual([HASH_A]);
     // 这一轮什么都不该动：新题库没拉下来，冲突题库两边各自保持原样
     expect(h.localQuestionText(HASH_B), "别的题库也要等用户裁决").toBeNull();
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toContain("9");
-    expect((await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state).toMatchObject({
-      currentRound: 3,
-    });
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).toContain(
+      "B 改过的题干",
+    );
+    expect(
+      JSON.stringify((await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.questions),
+    ).toContain("A 改过的题干");
 
     // 用户选了「保留云端」之后，一切照常继续（包括把新题库拉下来）
     await h.on("B", (engine) => engine.keepRemote());
     h.engine("B");
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toContain("3");
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).not.toContain("9");
+    // 「保留云端」= B 那份被换掉，题目回到 A 改的那一版
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).toContain(
+      "A 改过的题干",
+    );
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).not.toContain(
+      "B 改过的题干",
+    );
     expect(h.localQuestionText(HASH_B), "裁决之后新题库就该拉下来").toContain("second");
   });
 
@@ -211,11 +220,11 @@ describe("双设备同步", () => {
     await h.on("B", (engine) => engine.sync());
 
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     await h.on("A", (engine) => engine.sync());
 
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     await h.on("B", (engine) => engine.sync());
     expect(h.engine("B").status.conflicts).toHaveLength(1);
 
@@ -232,9 +241,9 @@ describe("双设备同步", () => {
       "点了「保留本地」之后不该还剩着冲突（那说明这一下白点了）",
     ).toEqual([]);
     expect(
-      (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state,
+      JSON.stringify((await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.questions),
       "用户的选择不能因为「正好有同步在跑」而丢掉",
-    ).toMatchObject({ currentRound: 9 });
+    ).toContain("B 改过的题干");
   });
 
   test("冲突裁决：保留本地 → 云端换成 B 的；保留云端 → B 换回云端的", async () => {
@@ -249,39 +258,45 @@ describe("双设备同步", () => {
     await h.on("B", (engine) => engine.sync());
 
     h.engine("A");
-    h.studyBank(HASH_A, 3);
+    h.editBank(HASH_A, "题库一", "A 改过的题干");
     await h.on("A", (engine) => engine.sync());
 
     h.engine("B");
-    h.studyBank(HASH_A, 9);
+    h.editBank(HASH_A, "题库一", "B 改过的题干");
     await h.on("B", (engine) => engine.sync());
 
-    // 保留本地：B 把 9 推上去
+    // 保留本地：B 把「B 改过的题干」推上去
     const keepLocal = await h.on("B", (engine) => engine.keepLocal());
     expect(keepLocal.conflicts).toEqual([]);
     expect(keepLocal.pushed).toBe(1);
-    expect((await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state).toMatchObject({
-      currentRound: 9,
-    });
+    expect(
+      JSON.stringify((await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.questions),
+    ).toContain("B 改过的题干");
 
-    // A 再同步 → 拿到 B 的 9
+    // A 再同步 → 拿到 B 那份
     await h.on("A", (engine) => engine.sync());
     h.engine("A");
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toContain("9");
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).toContain(
+      "B 改过的题干",
+    );
 
-    // 反过来：A 改成 5 推上去，B 改成 12，B 选「保留云端」→ B 换成 5
-    h.studyBank(HASH_A, 5);
+    // 反过来：A 改成另一版推上去，B 再改一版，B 选「保留云端」→ B 换成 A 那份
+    h.editBank(HASH_A, "题库一", "A 再改的题干");
     await h.on("A", (engine) => engine.sync());
 
     h.engine("B");
-    h.studyBank(HASH_A, 12);
+    h.editBank(HASH_A, "题库一", "B 再改的题干");
     await h.on("B", (engine) => engine.sync());
     const keepRemote = await h.on("B", (engine) => engine.keepRemote());
 
     expect(keepRemote.conflicts).toEqual([]);
     h.engine("B");
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toContain("5");
-    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).not.toContain("12");
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).toContain(
+      "A 再改的题干",
+    );
+    expect(localStorage.getItem(`quiz_app_questions_${HASH_A}`)).not.toContain(
+      "B 再改的题干",
+    );
   });
 
   test("删除会双向传播：A 删题库 → 云端回收 → B 也跟着删", async () => {

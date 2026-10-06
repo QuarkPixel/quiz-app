@@ -385,15 +385,16 @@ describe("头部的云同步指示点", () => {
       await syncEngine.sync();
       h.save("B");
 
-      // A 改进度 3、B 改进度 9 → 两边都改过同一个题库
+      // A、B 各自把**题目**改成不同的版本 → 两边都改过同一个题库（真冲突）。
+      // 只改进度不再是冲突了：那会按卡自动合并（见 `syncProgressMerge.test.ts`）。
       h.use("A");
-      h.studyBank(HASH, 3);
+      h.editBank(HASH, "题库一", "A 改过的题干");
       h.save("A");
       await syncEngine.sync();
       h.save("A");
 
       h.use("B");
-      h.studyBank(HASH, 9);
+      h.editBank(HASH, "题库一", "B 改过的题干");
       h.save("B");
       render();
       await syncEngine.sync();
