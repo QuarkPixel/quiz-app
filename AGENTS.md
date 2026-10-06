@@ -568,6 +568,32 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   `tests/giteeClient.test.ts` 把探针学到的约定固化成不碰网络的契约测试。
 - 不做「同源或中转」这类分支：Gitee 直连在国内是稳的，没有 Supabase 那个问题。
 
+### 部署（静态托管必须配 SPA 回退）
+
+应用是纯静态产物（`dist/index.html` + `dist/assets/*`），但**路由是路径式的**
+（`/<题库 hash>`、`/<hash>/learn`、`/<hash>/review`，见「路由」一节），所以托管方
+必须把「找不到文件的路径」回退到 `index.html`——否则用户在这三个地址上按刷新
+（或把地址发给别人打开）就是托管方的 404 页。
+
+- **Vercel：`vercel.json` 里那一条 rewrite**（仓库里已经有了）：
+
+  ```json
+  { "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }
+  ```
+
+  判定顺序是「文件系统 → rewrite」，所以 `assets/*.js`、`site.webmanifest`、图标
+  这些真实文件照旧按文件给；rewrite 只吃掉深链接，而且**地址栏不变**，
+  前端路由才拿得到 `/<hash>/learn`。`outputDirectory` 不用写（Vercel 认 Vite 的 `dist`）；
+  若在面板里改过 Root Directory / Output Directory，那两个设置优先，别在这里重复一遍。
+- **根路径部署**：`vite.config.ts` 没设 `base`、PWA manifest 的 `start_url` / `scope`
+  都是 `/`，所以子路径部署本来就跑不起来（题库地址会变成 `/子路径/<hash>`，
+  rewrite 也会把 `/子路径/index.html` 再套一层）。要换路径得三处一起改。
+- **`#/...` 只是读的退路**：`routePathFromLocation` 认 `#/<hash>/learn`，但 `Router.write()`
+  永远写路径式，所以在没有回退的托管上，`#/...` 只能手敲进去看一眼，站内一点又会变回路径。
+  换句话说：**rewrite 不是可选项**。
+- **本地怎么验**：改完路由或托管配置，起 `pnpm preview`（或任何静态服务器）后直接
+  访问 `/<hash>/learn` 与 `/<hash>/review` 刷新一次——能出应用、且地址栏不被改写才算对。
+
 ### 题库哈希
 
 `hashQuestionsJson` = SHA-1 hex 前 16 字符，**只覆盖 `questions` 数组**（不含 `mode` / `state`）：
