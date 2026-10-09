@@ -195,8 +195,18 @@ export function judgeBank(params: {
   fileRow?: SyncRowMeta;
   /** 云端那个分片文件当前的内容哈希（配合 fileRow 判断「云端改过没有」） */
   remoteFileHash?: string;
+  /**
+   * 云端那份**该题库**的内容哈希（只含题目 + 模式）。
+   *
+   * 「只有本地有」时才有意义：`remote` 为 undefined 只能说明**当前**云端解析出来的
+   * 题库表里没有它，但为了判断「云端是删了它、还是改了它」，调用方可以从云端分片
+   * 快照里再查一次（改过题目但同片的其它题库仍在时，它仍会在分片里）。
+   * 查不到就是 `undefined` = 云端确实没有它。
+   */
+  remoteBankContentHash?: string;
 }): BankVerdict {
-  const { local, remote, row, fileRow, remoteFileHash } = params;
+  const { local, remote, row, fileRow, remoteFileHash, remoteBankContentHash } =
+    params;
 
   // ── 两边都有 ──
   if (local && remote) {
@@ -251,19 +261,77 @@ export function judgeBank(params: {
 
   // ── 只有本地有 ──
   if (local && !remote) {
-    // 有题库行的基准 = 上次同步时它还在云端 → 云端删了它 → 本地跟着删
-    if (row !== undefined) return "deleteLocal";
+    // 有题库行的基准 = 上次同步时它还在云端。但**删除不能压过编辑**：
+    // 只有「云端相对基准也没动」才说明那边真的只是删了。
+    //
+    // 判据用基准行里记的**题库内容哈希**（`contentHash`，只含题目 + 模式）。
+    // 老格式只有分片文件的 `remoteHash`，跟单个题库不是一个口径，比不出结论
+    // ——那种情况按「纯删除」处理（与改动前一致），不冒险报假冲突。
+    //
+    // 云端那个题库的内容哈希 `remoteBankContentHash` 由调用方从**当前云端分片**
+    // 里取（题库已经不在云端了时是 undefined = 云端确实没有它 = 真删除）。
+    if (row !== undefined) {
+      const cloudChanged =
+        row.contentHash !== undefined &&
+        remoteBankContentHash !== undefined &&
+        row.contentHash !== remoteBankContentHash;
+      return cloudChanged ? "conflict" : "deleteLocal";
+    }
     return "push";
   }
 
   // ── 只有云端有 ──
   if (!local && remote) {
-    // 有题库行的基准 = 这台设备删过它 → 回收云端那一份
-    if (row !== undefined) return "deleteRemote";
+    // 本地没有它：可能是「这台设备删了它」，也可能是「别的设备新导入的」
+    // （后者没有基准行，走下面的 `pull`）。
+    //
+    // 有基准行时**不能直接删**：还得看云端那份相对基准动过没有。
+    //   - 没动过 → 本地确实只是删了它 → 回收云端那一份（正常删除传播）
+    //   - 动过   → 云端在基准之后被改过（例如另一台设备改了题目），
+    //              这时删掉就是「删除压过编辑」，必须让用户裁决
+    //
+    // 判据用**题库内容哈希**（`contentHash`，只含题目 + 模式）。老格式只有分片
+    // 文件的 `remoteHash`，跟单个题库不是一个口径，比不出结论——那种情况按
+    // 「纯删除」处理（与改动前一致），不冒险报假冲突。
+    if (row !== undefined) {
+      const cloudChanged =
+        row.contentHash !== undefined &&
+        remote.contentHash !== row.contentHash;
+      return cloudChanged ? "conflict" : "deleteRemote";
+    }
     return "pull";
   }
 
   return "skip";
+}
+
+/**
+ * 在云端分片里按 hash 找这个题库、算出它的内容哈希。
+ *
+ * 用在「只有本地有」的删除判定上：`remote.banks` 是按**题目内容**归拢的，
+ * 云端改过题目时匹配不上，但分片快照里的 `banks[<hash>]` 仍然在。
+ * 找到就用 `bankContentHash` 算（与本地同一个口径），找不到返回 undefined
+ * （= 云端确实没有这个题库 = 真删除）。
+ */
+function bankContentHashInRemoteFiles(
+  remote: RemoteState,
+  hash: string,
+): string | undefined {
+  const index = shardIndexOf(hash);
+  const file = remote.files.find(
+    (candidate) => shardIndexFromFileName(candidate.name) === index,
+  );
+  if (file?.json == null) return undefined;
+  try {
+    const parsed = JSON.parse(file.json) as { banks?: Record<string, unknown> };
+    const bank = parsed?.banks?.[hash];
+    if (bank === null || typeof bank !== "object") return undefined;
+    const snapshot = bank as BankSnapshot;
+    if (!Array.isArray(snapshot.questions)) return undefined;
+    return bankContentHash(snapshot);
+  } catch {
+    return undefined;
+  }
 }
 
 /** 「用本地覆盖云端」：无条件把本地全部推上去，云端多出来的题库删掉。 */
@@ -409,6 +477,11 @@ export function buildSyncPlan(params: {
           : remote.files.find(
               (file) => shardIndexFromFileName(file.name) === remoteBank.shard,
             )?.hash,
+      // 「云端改过没有」要用**题库**的内容哈希。`remoteBank` 为 undefined 时
+      // 再从云端分片快照里找一次：那边可能改了题目（所以按题库表匹配不上），
+      // 但同片的快照里仍然有这个 hash。
+      remoteBankContentHash:
+        remoteBank?.contentHash ?? bankContentHashInRemoteFiles(remote, hash),
     });
 
     const action: BankAction = {

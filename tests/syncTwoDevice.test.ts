@@ -324,6 +324,84 @@ describe("双设备同步", () => {
     expect(h.localLibrary().map((x) => x.hash)).toEqual([]);
   });
 
+  /**
+   * **删除不能压过编辑**。
+   *
+   * 踩过：A 删掉题库、B 却改过它的题目。A 先同步时 `judgeBank` 只看「有没有基准
+   * 行」就无条件 `deleteRemote`，于是 B 的编辑从本地和云端一起消失，而且没有任何
+   * 提示——最坏的一种数据丢失。
+   *
+   * 现在：云端相对基准改过 → 报冲突，让用户自己决定。
+   */
+  test("A 删题库、B 改过题目 → 报冲突，B 的编辑不许被静默删掉", async () => {
+    h.freshDevice("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    h.setActive(HASH_A);
+    h.open("A");
+    await h.on("A", (engine) => engine.sync());
+    const gistId = h.store("A").value.gistId;
+    h.save("A");
+
+    h.freshDevice("B");
+    h.open("B", { gistId });
+    await h.on("B", (engine) => engine.sync());
+    h.save("B");
+
+    // B 改了题目并推上云端
+    h.use("B");
+    h.editBank(HASH_A, "题库一", "EDITED-BY-B");
+    h.save("B");
+    await h.on("B", (engine) => engine.sync());
+    h.save("B");
+
+    // A 删掉本地那份再同步：云端已经和 A 的基准不一样了 → 冲突
+    h.use("A");
+    h.deleteBank(HASH_A);
+    h.save("A");
+    await h.on("A", (engine) => engine.sync());
+    h.save("A");
+    expect(
+      h.engine("A").status.conflicts.length,
+      "云端改过就该报冲突，而不是直接删掉",
+    ).toBe(1);
+    // 云端那一份还在（没被回收）
+    expect(await h.cloudBanks(gistId)).toContain(HASH_A);
+
+    // B 再同步：编辑还在
+    await h.on("B", (engine) => engine.sync());
+    h.use("B");
+    expect(h.localQuestionText(HASH_A), "B 的编辑被静默删除了").toContain(
+      "EDITED-BY-B",
+    );
+  });
+
+  test("云端没改过的正常删除仍然照常传播（别被上一条误伤）", async () => {
+    h.freshDevice("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    h.open("A");
+    await h.on("A", (engine) => engine.sync());
+    const gistId = h.store("A").value.gistId;
+    h.save("A");
+
+    h.freshDevice("B");
+    h.open("B", { gistId });
+    await h.on("B", (engine) => engine.sync());
+    h.save("B");
+
+    // A 删掉（B 什么都没改）→ 正常传播到云端与 B
+    h.use("A");
+    h.deleteBank(HASH_A);
+    h.save("A");
+    await h.on("A", (engine) => engine.sync());
+    h.save("A");
+    expect(h.engine("A").status.conflicts.length).toBe(0);
+    expect(await h.cloudBanks(gistId)).toEqual([]);
+
+    await h.on("B", (engine) => engine.sync());
+    h.use("B");
+    expect(h.localQuestionText(HASH_A)).toBeNull();
+  });
+
   test("同一片里两个题库各改各的 → 不该互相牵连成冲突", async () => {
     const [hash1, hash2] = hashesInSameShard(2);
     expect(shardIndexOf(hash1)).toBe(shardIndexOf(hash2));
