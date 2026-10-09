@@ -21,6 +21,8 @@
  * 与 `merge.ts` 一样是**纯函数**：不碰网络、不碰 localStorage。
  */
 
+import { stableHash } from "./collect";
+
 type Json = Record<string, unknown>;
 
 /** 记忆模式的一张卡（`MemoryProgress` 的结构版）。 */
@@ -59,10 +61,22 @@ function strArray(value: unknown): string[] {
     : [];
 }
 
-/** 两个值一样吗（JSON 比较；键序由 `JSON.stringify` 的插入顺序决定，够用）。 */
+/**
+ * 两个值一样吗。
+ *
+ * **必须与全项目同一个口径**（`merge.ts` 的 `same()`、`collect.ts` 的 `stableHash`）：
+ * 以前这里用 `JSON.stringify` 比，而它比的是**键的插入顺序**——本地这份是内存对象、
+ * 云端那份是解码出来的 JSON 文本，键序天然可能不同（`stableHash` 的开头就写着这件事，
+ * 它为此专门递归排序键名）。用 stringify 比会带来两类误判：
+ *
+ *   - 「其实一模一样」被判成「变了」→ 多写一次盘、多传一次分片，
+ *     `planProgressMerge` 还会把它报成一次「合并进度」；
+ *   - `pickField` 里若本地那份只是键序不同、却被判成「本地改过」，
+ *     「两边都改过 → 听本地」那条分支就会**丢掉云端真正的改动**。
+ */
 function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return stableHash(a ?? null) === stableHash(b ?? null);
 }
 
 /**

@@ -16,7 +16,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import { SyncHarness } from "./syncSupport";
 import { loadSyncMeta } from "@/features/sync/storage";
 import { bankRowKey } from "@/features/sync/types";
-import { mergeProgressMap, planProgressMerge } from "@/features/sync/progressMerge";
+import {
+  mergeProgressMap,
+  planProgressMerge,
+  sameProgress,
+} from "@/features/sync/progressMerge";
 
 const HASH_A = "aaaabbbbccccdddd";
 
@@ -365,5 +369,64 @@ describe("这一轮到底要做什么（planProgressMerge）", () => {
     ).snapshot.state.memory.progress;
     expect(plan.kind).toBe("merge");
     expect(progress.q2, "云端那张不能被落下").toBeDefined();
+  });
+});
+
+/**
+ * 「一样」的判据必须**与键序无关**。
+ *
+ * 本地那份是内存对象、云端那份是解码出来的 JSON 文本，两者键序天然可能不同
+ * （`stableHash` 的开头就写着这件事，它为此递归排序键名）。以前这里用
+ * `JSON.stringify` 比，于是「其实一模一样」会被判成「变了」——多写一次盘、
+ * 多传一次分片，还会报成一次「合并进度」；`pickField` 更严重：本地只是键序不同
+ * 却被判成「改过」，落到「两边都改过 → 听本地」那条分支就会**丢掉云端真正的改动**。
+ */
+describe("键序不影响「一样」的判定", () => {
+  test("sameProgress：语义相同、键序不同 → 算一样", () => {
+    const a = { state: { memory: { progress: { q1: { state: "reviewing", level: 2 } } } } };
+    const b = { state: { memory: { progress: { q1: { level: 2, state: "reviewing" } } } } };
+    expect(sameProgress(a, b)).toBe(true);
+    expect(sameProgress(b, a)).toBe(true);
+  });
+
+  test("sameProgress：真的不一样时仍然是 false", () => {
+    const a = { state: { memory: { progress: { q1: { level: 2 } } } } };
+    const b = { state: { memory: { progress: { q1: { level: 9 } } } } };
+    expect(sameProgress(a, b)).toBe(false);
+  });
+
+  test("mergeProgressMap：基准与某一侧只是键序不同 → 结果不该被当成「两边都改了」", () => {
+    // base 与 remote 是同一份内容（键序不同），local 才是真改了的那一边
+    const base = { q1: { state: "reviewing", level: 3, nextDue: 0, lapses: 0 } };
+    const local = { q1: { state: "reviewing", level: 7, nextDue: 0, lapses: 1 } };
+    const remote = { q1: { nextDue: 0, lapses: 0, level: 3, state: "reviewing" } };
+    const merged = mergeProgressMap(base, local, remote);
+    expect(merged.q1.level, "本地那份才是改动过的那一边").toBe(7);
+    expect(merged.q1.lapses).toBe(1);
+  });
+
+  test("planProgressMerge：合并结果与本地只是键序不同 → 跳过，不白写一次盘", () => {
+    // 同一张卡、同一档位，只是两侧的键序不同
+    const local = {
+      mode: "memory",
+      name: "题库一",
+      questions: [{ id: "q1", type: "memory", question: "题干", answer: "答案" }],
+      state: {
+        memory: {
+          progress: { q1: { state: "reviewing", level: 4, streak: 0, nextDue: 0, lapses: 2 } },
+        },
+      },
+    };
+    const remote = {
+      mode: "memory",
+      name: "题库一",
+      questions: [{ id: "q1", type: "memory", question: "题干", answer: "答案" }],
+      state: {
+        memory: {
+          progress: { q1: { lapses: 2, nextDue: 0, streak: 0, level: 4, state: "reviewing" } },
+        },
+      },
+    };
+    expect(planProgressMerge({ local, remote }).kind).toBe("skip");
   });
 });

@@ -454,6 +454,12 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   的 MAX_SAFE_INTEGER 如果只当同分时的 tie-break，就会漏掉「本地没动、云端动了」
   那条分支——于是「A 上已掌握、B 上重新学」同步回来会把 A 的掌握状态拖回学习中
   （踩过）。掌握是单向的（`advanceReview` 走完 M 才给），跨设备合并永远不该倒退。
+  **「一样」的判据必须与键序无关**：`sameValue` 走 `stableHash`（`collect.ts`），
+  不要用 `JSON.stringify` 比——本地那份是内存对象、云端那份是解码出来的 JSON 文本，
+  键序天然可能不同（`stableHash` 就是为此递归排序键名）。用 stringify 比的话，
+  「其实一模一样」会被判成「变了」：多写一次盘、多传一次分片，还会报成一次
+  「合并进度」；更糟的是 `pickField` 里本地只是键序不同却被当成「改过」，
+  落到「两边都改过 → 听本地」那条分支就会**丢掉云端真正的改动**。
 - **`SyncRowMeta` 的四个字段各管一件事**（往它加字段时**同时改 `storage.ts` 的
   `normalizeRowMeta`**，否则写进去读不回来——这个坑真踩过）：
   `remoteHash` = 完整哈希（有没有没推上去的东西，`computePendingChanges` 用）、
