@@ -320,11 +320,14 @@ export class MemorySession {
 
   /**
    * 今天可以进入复习的卡片数：到期的 + 还没补完连对的。
-   * 首页入口的可点击性与「今日待复习」统计都用它，否则答错后退出再进来
-   * 会因为「到期 0 道」而点不开复习。
+   *
+   * **直接数 `reviewQueueToday()` 的长度**，不再自己拼一遍「到期 + 待补」——
+   * 首页这个数字与「复习」入口的队列必须是同一个判据，否则会出现
+   * 「首页说还有 12 道，点进去却说今天没有需要复习的题目」（真踩过）。
+   * 这里多算一次队列很便宜（题量级的一次 filter），换来的是两边不会各说各话。
    */
   get reviewableCount(): number {
-    return this.dueCount + this.pendingRetryCount;
+    return this.reviewQueueToday().length;
   }
 
   /**
@@ -485,56 +488,72 @@ export class MemorySession {
   }
 
   /**
-   * 开始「复习」：今天到期的题 + 还没补完连对的题，全部排进本轮队列。
+   * 今天这一轮的复习队列：**到期的 + 还没补完连对的**，与首页 `dueCount` /
+   * `reviewableCount` 同一份判据。
    *
-   * 出题顺序一律随机（不再按逾期天数排序）。答错过的卡已经不在「到期」里了，
-   * 所以要靠 `state.memory.retry` 把它们捞回来，否则「答错后必须连对 N 次」
-   * 一出会话就没了。
+   * 这里刻意**不看** `memory.review.reviewedIds`：那份清单只回答「进度条的分子
+   * 现在是多少」，不回答「这道卡今天还能不能练」。之前拿它把卡踢出队列，于是
+   * 「到期 12 道、其中 12 道今天已经复习过」时首页说还有 12 道、点进来却是
+   * 「今天没有需要复习的题目」——两个入口各说各话（真踩过，用户直接点不开复习）。
    *
-   * **今天已经复习过的卡不再排队，但计数留着**：进度条接着上一次的数走
-   * （`state.memory.review`），否则「今天复习了 5 / 10，退出再进来」会变成 0 / 5。
-   * 注意「已经算过一道」≠「这道卡今天完事了」：答「忘记 / 模糊」的卡会立刻
-   * 计入进度条，但它还得在本轮连对 N 次，所以只要待办还在就继续排队。
+   * 到期就得能复习：今天的卡今天想再过一遍是完全正常的需求，分母会跟着长
+   * （见 `startReview` 里 `reviewTotal` 的算法）。
    */
-  startReview(): void {
+  private reviewQueueToday(): MemoryQuestion[] {
     const now = this.now;
     const due = this.questions.filter((q) => {
       const item = this.progress[q.id];
       return item ? isDue(item, now) : false;
     });
 
-    // 答错后还没补完连对的卡：它们仍留在本轮（今天），即使已经不在到期列表里
+    // 答错后还没补完连对的卡：它们已经不在「到期」里了（`nextDue` 被推到明天），
+    // 但仍留在本轮（今天），否则「答错后必须连对 N 次」一出会话就没了
     const retryTargets = this.retryTargetsToday();
     const dueIds = new Set(due.map((q) => q.id));
-
-    // 今天已经复习过的那一份（进度条分子；隔天会被净化掉）
-    const stored = this.storedReviewToday();
-    const reviewedBefore = stored?.reviewedIds ?? [];
-    const countedToday = new Set(reviewedBefore);
-
     const retryQuestions = this.questions.filter(
       (q) => retryTargets[q.id] !== undefined && !dueIds.has(q.id),
     );
-    const queueQuestions = [...due, ...retryQuestions].filter((q) => {
-      if (retryTargets[q.id] !== undefined) return true; // 待办没补完，继续排
-      return !countedToday.has(q.id); // 没待办又算过 = 今天完事了，不再出现
-    });
+
+    return [...due, ...retryQuestions];
+  }
+
+  /**
+   * 开始「复习」：今天到期的题 + 还没补完连对的题，全部排进本轮队列。
+   *
+   * 出题顺序一律随机（不再按逾期天数排序）。
+   *
+   * **进度条的计数跨会话保留**（`state.memory.review`）：今天已经复习过 5 道，
+   * 退出再进来仍是 5 / N，而不是从 0 重来。那份额外的清单只用来算数，
+   * 不参与「谁进队列」——见 `reviewQueueToday()`。
+   */
+  startReview(): void {
+    const retryTargets = this.retryTargetsToday();
+    const queueQuestions = this.reviewQueueToday();
 
     if (queueQuestions.length === 0) {
       this.deps.toast("今天没有需要复习的题目");
       return;
     }
 
+    // 今天已经复习过的那一份（进度条分子；隔天会被净化掉）
+    const stored = this.storedReviewToday();
+    const reviewedBefore = stored?.reviewedIds ?? [];
+
     this.run = "reviewing";
     this.completed = 0;
     this.shownIds = [];
     this.reviewTarget = { ...retryTargets };
-    // 进度条的两个数：分子就是那份清单（今天算过几道），分母 = 今天这一轮
-    // 总共要过几道（开轮时定下，中途不因为答错补回来几张卡就变大）
+    // 进度条的两个数：
+    //   分子 = 今天已经复习过的（跨会话保留，退出再进来接着数）
+    //   分母 = 今天这一轮总共要过几道。**开轮时就按当前队列定下并落盘**，
+    //          中途不因为答错补回来几张卡就变大（否则进度条永远追不上）；
+    //          重进时取「存下来的 total」与「这一轮实际要过的题」的较大值——
+    //          到期数变了（例如今天又到期了新卡）时分母跟着长，不会画出「6 / 5」
+    const queueIds = new Set(queueQuestions.map((q) => q.id));
     this.reviewedIds = [...reviewedBefore];
     this.reviewTotal = Math.max(
       stored?.total ?? 0,
-      new Set([...reviewedBefore, ...queueQuestions.map((q) => q.id)]).size,
+      new Set([...reviewedBefore, ...queueIds]).size,
     );
     // 带待办的卡都是本轮答错过的：重新进来后完成连对时同样不许推进掌握阶梯
     // （阶梯已经归零并定在「明天」，推进了就会变成和一次答对一样的间隔）

@@ -1380,7 +1380,7 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     });
   }
 
-  it("10 道到期，复习 5 道后退出再进来：进度条仍是 5 / 10，剩下 5 道继续", () => {
+  it("10 道到期，复习 5 道后退出再进来：进度条仍是 5 / 10，到期的照常能接着复习", () => {
     const hash = "memory_review_bar_resume_hash";
     seedDue(hash, 10);
 
@@ -1398,21 +1398,22 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
 
     // 重新进来（= 刷新页面后重开这个题库）：盘上带着今天的复习进度
     const resumed = makeSession(ids.slice(0, 10), { hash, now: dayAfterBase });
+    // 首页说的数字与复习入口必须一致（同一份判据 `reviewQueueToday`）：
+    // 刚过的那 5 道已经推到未来了，所以现在只剩 5 道到期
+    expect(resumed.dueCount).toBe(5);
+    expect(resumed.reviewableCount).toBe(5);
     resumed.startReview();
     expect(resumed.run).toBe("reviewing");
     expect(resumed.reviewDoneCount).toBe(5);
+    // 分母接着开轮时定下的 10，不会因为队列只剩 5 道就缩成 5 / 5
     expect(resumed.reviewTotal).toBe(10);
     expect(resumed.reviewedIds).toEqual(doneSoFar);
-    // 已经复习过的那 5 道不再出现，队列里只剩剩下的 5 道
     expect(resumed.appState.activePool).toHaveLength(5);
-    for (const id of doneSoFar) {
-      expect(resumed.appState.activePool.map((i) => i.id)).not.toContain(id);
-    }
 
     // 接着做完：进度条走满 10 / 10
     let guard = 0;
     while (resumed.run === "reviewing" && resumed.currentQuestion) {
-      expect(guard++).toBeLessThan(20);
+      expect(guard++).toBeLessThan(30);
       answer(resumed, true);
     }
     expect(resumed.reviewDoneCount).toBe(10);
@@ -1503,6 +1504,75 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     expect(loadStoredState(hash).memory?.review).toBeUndefined();
     expect(session.reviewDoneCount).toBe(0);
     expect(session.reviewTotal).toBe(0);
+  });
+
+  // ── 线上真实数据复现（用户那份 json） ──────────────────────────────────
+  //
+  // 症状：复习完一轮退出，首页说「今天有 12 道待复习」，点「复习」却弹
+  // 「今天没有需要复习的题目」——**入口直接点不开**。
+  // 根因：首页数的是「到期」（dueCount），而 startReview 额外用
+  // `memory.review.reviewedIds` 把今天复习过的卡踢出队列，于是
+  // 「12 道全都在今天复习过」时队列为 0。两个判据必须合一。
+  it("到期 12 道且全在今天复习过：首页与复习入口的数字一致，且点得进去", () => {
+    const hash = "memory_review_all_done_today_hash";
+    // 用户那份数据：12 道到期、nextDue 都 ≤ 今天，且 12 道全部记在 review 清单里
+    const dueIds = [
+      "1-6",
+      "1-7",
+      "1-8",
+      "2-7",
+      "2-8",
+      "2-9",
+      "2-10",
+      "2-16",
+      "2-17",
+      "2-18",
+      "2-19",
+      "2-20",
+    ];
+    const today = startOfDay(dayAfterBase);
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: Object.fromEntries(
+          dueIds.map((id) => [
+            id,
+            // level 5 的间隔是 16 天；这里直接压成「今天到期」，等价于用户那份
+            // nextDue ≤ 今天的状态
+            { ...createReviewProgress(BASE_TIME), level: 5, nextDue: today },
+          ]),
+        ),
+        settings: createDefaultMemorySettings(),
+        // 那一轮复习把 12 道全过了一遍（还有 2 道是别的原因没到期，一起记着）
+        review: {
+          day: studyDay(dayAfterBase),
+          reviewedIds: [...dueIds, "2-15", "2-6"],
+          total: 14,
+        },
+      },
+    });
+
+    const session = makeSession(dueIds, { hash, now: dayAfterBase });
+
+    // 首页说的数字
+    expect(session.dueCount).toBe(12);
+    expect(session.reviewableCount).toBe(12);
+
+    // 点「复习」必须点得进去（以前这里会弹「今天没有需要复习的题目」）
+    const toasts: string[] = [];
+    const clickable = makeSession(dueIds, {
+      hash,
+      now: dayAfterBase,
+      toast: (title) => toasts.push(title),
+    });
+    clickable.startReview();
+    expect(toasts).not.toContain("今天没有需要复习的题目");
+    expect(clickable.run).toBe("reviewing");
+    expect(clickable.appState.activePool).toHaveLength(12);
+    // 进度条接着今天那份数走：14 道里 2 道（2-15 / 2-6）本来就不在「今天到期」
+    // 的集合里（那份 state 的 nextDue 还没到），所以分子只保留仍在队列中的那 12 道
+    expect(clickable.reviewDoneCount).toBe(12);
+    expect(clickable.reviewTotal).toBe(14);
   });
 });
 
