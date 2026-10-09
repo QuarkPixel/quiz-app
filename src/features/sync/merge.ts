@@ -517,6 +517,14 @@ export function buildSyncPlan(params: {
     // 「题目一样、进度两边都动过」→ 这里把两份进度合起来交给引擎
     // （同时写本地与云端）。判定本身只说 push，合并的活儿归这里，
     // 免得 `judgeBank` 的返回值既可能是结论又可能带数据、调用方还要分辨。
+    //
+    // **`merge.kind === "skip"` 绝不能把 `push` 降成 `skip`**（踩过）：
+    // `merge.kind` 回答的是「**云端有没有本地没见过的卡**」，那是「要不要把合并
+    // 结果写回本地」的问题；`push` 回答的是「**本地改过、要传上去**」。混成一件
+    // 事时本地那次改动就**永远传不上去**——这一轮什么都不做，可基准线照常刷新，
+    // 于是下一轮 `localAt <= syncedAt` 成立、判成 `pull`，云端那份旧进度**反过来
+    // 把本地这次改动覆盖掉**。（线上表现：复习完一道题，同步「成功」，刷新之后
+    // 那道题又变回待复习，而且每同步一次复发一次。）
     if (
       judged === "push" &&
       localBank !== undefined &&
@@ -528,11 +536,12 @@ export function buildSyncPlan(params: {
         local: localBank.snapshot,
         remote: remoteBank.snapshot,
       });
-      if (merge.kind === "skip") action.verdict = "skip";
-      else if (merge.kind === "merge") {
+      if (merge.kind === "merge") {
         action.merged = merge.snapshot;
         action.progressMerged = true;
       }
+      // `skip` 时什么都不做：verdict 保持 `push`（照常把本地那份传上去），
+      // 只是没有 `merged`、也不报「合并进度」——云端本来就没给出新东西。
     }
 
     actions.push(action);

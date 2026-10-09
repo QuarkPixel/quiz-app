@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import { SyncHarness } from "./syncSupport";
 import { loadSyncMeta } from "@/features/sync/storage";
 import { bankRowKey } from "@/features/sync/types";
+import { advanceReview, isDue, studyDay } from "@/features/memory/algorithm";
 import {
   mergeProgressMap,
   planProgressMerge,
@@ -428,5 +429,50 @@ describe("键序不影响「一样」的判定", () => {
       },
     };
     expect(planProgressMerge({ local, remote }).kind).toBe("skip");
+  });
+});
+
+describe("复习完的卡不能在同步后又变回待复习", () => {
+  /**
+   * 端到端：**「知道」这条路径**。
+   *
+   * 答「知道」是把档位往上推（level 5 → 6），按档位挑也不会挑错——所以这条
+   * 单独钉住的是**另一个**毛病：本地这次改动压根没被传上去。
+   * `buildSyncPlan` 曾把 `merge.kind === "skip"`（云端没有本地没见过的卡）
+   * 当成「这一轮不用做」，把 `push` 降级成 `skip`，于是改动留在本地，
+   * 而基准线照常刷新 → 下一轮判成 pull → 云端旧进度反手覆盖回来。
+   */
+  test("端到端：答「知道」复习完 → 同步 → 再同步，那道卡不再到期", async () => {
+    const { gistId } = await twoDevices();
+    const now = Date.now();
+    const due = { state: "reviewing", level: 5, streak: 0, nextDue: studyDay(now), lapses: 0 };
+    const reviewed = advanceReview(due, 7, now);
+    expect(reviewed.level, "答对推进一级").toBe(6);
+
+    h.engine("A");
+    study(HASH_A, { currentRound: 2, progress: { q1: due, q2: due } });
+    await h.on("A", (engine) => engine.sync());
+    await h.on("B", (engine) => engine.sync());
+
+    // A 复习了 q1
+    h.engine("A");
+    study(HASH_A, { currentRound: 3, progress: { q1: reviewed, q2: due } });
+    const up = await h.on("A", (engine) => engine.sync());
+    expect(up.pushed, "本地改过就得传上去（别被降级成 skip 丢掉）").toBe(1);
+
+    // 再同步一次：那道卡不该被云端那份旧的拽回来
+    h.engine("A");
+    await h.on("A", (engine) => engine.sync());
+
+    const state = JSON.parse(
+      localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}",
+    ) as { memory: { progress: Record<string, { level: number; nextDue: number }> } };
+    expect(state.memory.progress.q1.level).toBe(6);
+    expect(isDue(state.memory.progress.q1 as never, Date.now())).toBe(false);
+
+    const cloud = (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state as {
+      memory: { progress: Record<string, { level: number }> };
+    };
+    expect(cloud.memory.progress.q1.level, "云端也得是这一份").toBe(6);
   });
 });

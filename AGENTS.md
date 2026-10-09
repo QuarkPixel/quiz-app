@@ -476,6 +476,14 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   `snapshot` = 进度合并的三方参照、`mode` = 拉取时保住题库模式
   （`collectLocalState` 是从库列表取 `mode` 的，库列表还没有这个题库时会按 `quiz`
   算内容哈希，同一份题库于是在两边算出两个哈希）。
+- **`push` 不能被 `planProgressMerge` 的 `skip` 降级成 `skip`**（`buildSyncPlan`）：
+  两个 `skip` 回答的是**不同的问题**——`merge.kind === "skip"` 是「云端有没有本地
+  没见过的卡」（决定要不要把合并结果写回本地），而 `push` 是「本地改过、要传上去」。
+  混成一件的后果是本地那次改动**永远传不上去**：这一轮什么都不做，基准线却照常
+  刷新，于是下一轮 `localAt <= syncedAt` 成立、判成 `pull`，云端那份旧进度反手
+  把本地这次改动覆盖掉。线上表现就是「复习完一道题 → 同步成功 → 刷新之后那道题
+  又变回待复习」。`merge.kind === "skip"` 时正确的做法是**只**不设 `action.merged`、
+  不报「合并进度」，verdict 保持 `push`。
 - **只在一侧存在的题库**（对称的两条，删除靠它们传播）：
   - 有题库行的基准、且**另一边相对基准没动** → 那边删过它 → 跟着删
     （`deleteRemote` / `deleteLocal`）
