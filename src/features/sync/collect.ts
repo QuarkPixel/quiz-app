@@ -249,7 +249,11 @@ export function collectLocalState(
           ? summary.name
           : "未命名题库",
       questions,
-      ...(state === undefined ? {} : { state }),
+      // `== null` 而不是 `=== undefined`：盘上存着字符串 `"null"` 时
+      // `JSON.parse` 得到 `null`，那和「没有进度键」是同一个意思。
+      // `writeBankLocally` 会把云端的 `null` 原样写回来，所以这种值真的会存在；
+      // 留成 `null` 会被下游读成「有进度」（见 `merge.ts` 的 `hasNoState`）。
+      ...(state == null ? {} : { state }),
     };
 
     banks.set(hash, {

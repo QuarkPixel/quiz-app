@@ -180,6 +180,24 @@ function same(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * 这份快照「没有进度」吗。
+ *
+ * `null` 与 `undefined` 必须当成**同一件事**，别只判 `undefined`：
+ *
+ *   - `bankProgressHash` 用 `state ?? null` 归一（两者算出同一个哈希），
+ *     `progressMerge` 的 `stateOf` 用 `asRecord`（`null` → `undefined`）——
+ *     那两处都把它们当「没有进度」；
+ *   - 但 `writeBankLocally` 会把 `null` 原样 `JSON.stringify` 成字符串 `"null"`
+ *     写进 localStorage，于是这份「空进度」会一路传到云端、再传回来。
+ *
+ * 判定这里漏掉 `null` 的后果很具体：「本地没进度、云端有进度」会被读成
+ * 「本地有进度」，于是走 `push`，**把云端那份真进度覆盖成空**。
+ */
+function hasNoState(bank: { snapshot: { state?: unknown } }): boolean {
+  return bank.snapshot.state == null;
+}
+
+/**
  * 单个题库的三方判定。
  *
  * `baseline` 是「上次同步时这一行是什么」：新格式是题库行（`bank:<hash>`），
@@ -222,7 +240,7 @@ export function judgeBank(params: {
         // 第一次接上这个云端（没有任何基准）：
         //   - 本地没进度 → 听云端的
         //   - 本地有进度 → 推上去（别白丢本地那份），顺带把基准立起来
-        return local.snapshot.state === undefined ? "pull" : "push";
+        return hasNoState(local) ? "pull" : "push";
       }
       // 本地没动过 → 跟着云端那份进度走
       if (local.localAt <= baseline.syncedAt) return "pull";
@@ -235,8 +253,8 @@ export function judgeBank(params: {
     if (baseline === undefined) {
       // 没有任何基准（这台设备第一次接上这个云端，而且两边都已经有这份题库）。
       // 先看有没有「空的一边」可以安全地让路，再退到让用户裁决。
-      const localHasState = local.snapshot.state !== undefined;
-      const remoteHasState = remote.snapshot.state !== undefined;
+      const localHasState = !hasNoState(local);
+      const remoteHasState = !hasNoState(remote);
       if (!localHasState && remoteHasState) return "pull";
       if (localHasState && !remoteHasState) return "push";
       return "conflict";
@@ -981,7 +999,11 @@ export function buildRemoteState(files: readonly RemoteFile[]): RemoteState {
         mode: bank.mode === "memory" ? "memory" : "quiz",
         name,
         questions: bank.questions,
-        ...(bank.state === undefined ? {} : { state: bank.state }),
+        // `== null` 而不是 `=== undefined`：云端分片里写着 `"state": null` 时，
+        // `JSON.parse` 得到 `null`，它和「没有这个字段」是同一个意思（进度哈希
+        // 也把它们归一到同一个值）。原样留成 `null` 会让下游把「没进度」读成
+        // 「有进度」——本地快照那一侧（`collectLocalState`）同样这么归一。
+        ...(bank.state == null ? {} : { state: bank.state }),
       };
       hashes.push(hash);
       banks.set(hash, {

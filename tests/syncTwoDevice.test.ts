@@ -14,7 +14,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { SyncEngine } from "@/features/sync/engine.svelte";
-import { shardIndexOf } from "@/features/sync/types";
+import { shardFileName, shardIndexOf } from "@/features/sync/types";
+import { decodePayload, encodePayload } from "@/features/sync/payload";
 import { SyncHarness } from "./syncSupport";
 
 const HASH_A = "aaaabbbbccccdddd";
@@ -551,5 +552,42 @@ describe("双设备同步", () => {
     }
     h.save("A");
     expect(configured.status.message).not.toBe("请先测试连接");
+  });
+  /**
+   * 云端的 `state` 写成 `null` 时，拉下来**不该在盘上留下一份 "null"**。
+   *
+   * `null` 与「没有 state 字段」是同一个意思（`bankProgressHash` 用 `?? null`
+   * 归一，两者哈希相同）。以前 `writeBankLocally` 只判 `=== undefined`，于是把
+   * 云端的 `null` 原样 `JSON.stringify` 成字符串 `"null"` 写进 localStorage——
+   * 再收集起来就成了一份「有进度」的空壳，判定还会把它当真进度，
+   * 反手把云端那份真进度覆盖掉（见 `merge.ts` 的 `hasNoState`）。
+   */
+  test("云端的 state 是 null → 拉下来不留一份「null」进度", async () => {
+    h.freshDevice("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    h.open("A");
+    await h.on("A", (engine) => engine.sync());
+    const gistId = h.store("A").value.gistId;
+    h.save("A");
+
+    // 手工把云端那份改成 state: null（模拟老版本 / 别的工具写过的数据）
+    const shard = shardFileName(shardIndexOf(HASH_A));
+    const parsed = JSON.parse(
+      (await decodePayload(h.cloudFiles(gistId)[shard])) ?? "{}",
+    );
+    parsed.banks[HASH_A].state = null;
+    h.fake.put(gistId, shard, await encodePayload(parsed));
+
+    // 全新设备拉下来
+    h.freshDevice("B");
+    h.open("B", { gistId });
+    await h.on("B", (engine) => engine.sync());
+    h.use("B");
+
+    expect(h.localQuestionText(HASH_A), "题库应当被拉下来").not.toBeNull();
+    expect(
+      localStorage.getItem(`quiz_app_state_${HASH_A}`),
+      "不该在盘上留下字符串 null",
+    ).toBeNull();
   });
 });

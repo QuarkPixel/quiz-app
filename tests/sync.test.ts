@@ -406,9 +406,40 @@ describe("逐题库三方合并", () => {
     expect(judgeBank({ local, remote })).toBe("pull");
   });
 
+  /**
+   * `state: null` 必须和「没有 state 字段」一样看待。
+   *
+   * 踩过：判定只判 `=== undefined`，于是 `null` 被读成「本地有进度」，
+   * 「本地没进度、云端有进度」走进 `push`，**把云端那份真进度覆盖成空**。
+   * `null` 是真实存在的——`writeBankLocally` 会把云端的 `null` 原样
+   * `JSON.stringify` 成字符串 `"null"` 存进 localStorage，读回来就是 `null`。
+   * 项目里另外两处（`bankProgressHash` 的 `?? null`、`progressMerge.stateOf`
+   * 的 `asRecord`）本来就把两者当同一件事，只有判定这里漏了。
+   */
+  test("没有基准时：本地 state 是 null、云端有进度 → 同样听云端的（别覆盖成空）", () => {
+    const local = localBank(HASH_A, "题库", { state: null });
+    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    expect(judgeBank({ local, remote })).toBe("pull");
+  });
+
+  test("没有基准、题目也不一样时：本地 state 是 null → 也让路（pull），不是冲突", () => {
+    const local = localBank(HASH_A, "题库", { state: null });
+    const remote = remoteBank(HASH_A, "题库", {
+      marker: "云端题干",
+      state: { round: 3 },
+    });
+    expect(judgeBank({ local, remote })).toBe("pull");
+  });
+
   test("没有基准时：只有本地有进度 → 上传", () => {
     const local = localBank(HASH_A, "题库", { state: { round: 2 } });
     const remote = remoteBank(HASH_A, "题库");
+    expect(judgeBank({ local, remote })).toBe("push");
+  });
+
+  test("没有基准时：云端 state 是 null、本地有进度 → 上传", () => {
+    const local = localBank(HASH_A, "题库", { state: { round: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: null });
     expect(judgeBank({ local, remote })).toBe("push");
   });
 
@@ -1111,6 +1142,47 @@ describe("把云端文件解成状态", () => {
     const a = makeBankSnapshot("旧名字", { state: { round: 2 } });
     const b = makeBankSnapshot("新名字", { state: { round: 2 } });
     expect(bankContentHash(a)).toBe(bankContentHash(b));
+  });
+
+  /**
+   * 盘上存着字符串 `"null"` 时，收集出来的快照**不该带 `state` 字段**。
+   *
+   * 这种值真的会出现：`writeBankLocally` 拉取云端那份 `state: null` 时会原样
+   * `JSON.stringify(null)` 写成 `"null"`。收集阶段不归一的话，`state: null`
+   * 会一路带着走，而 `merge.ts` 的判定会把它读成「有进度」。
+   */
+  test("盘上 state 是字符串 \"null\" → 收集出的快照不带 state（与缺字段同义）", () => {
+    localStorage.setItem(
+      `quiz_app_questions_${HASH_A}`,
+      JSON.stringify(makeBankSnapshot("题库一").questions),
+    );
+    localStorage.setItem(`quiz_app_state_${HASH_A}`, "null");
+
+    const local = collectLocalState(mtimeOf);
+    const snapshot = local.banks.get(HASH_A)?.snapshot;
+    expect(snapshot, "题库应当被收集到").toBeDefined();
+    expect("state" in (snapshot as object)).toBe(false);
+    // 与「干脆没有这个键」算出同一个进度哈希
+    localStorage.removeItem(`quiz_app_state_${HASH_A}`);
+    const withoutKey = collectLocalState(mtimeOf).banks.get(HASH_A)?.snapshot;
+    expect(bankProgressHash(snapshot as never)).toBe(
+      bankProgressHash(withoutKey as never),
+    );
+  });
+
+  test("云端分片里写着 \"state\": null → 解出来同样不带 state", () => {
+    const remote = buildRemoteState([
+      {
+        name: shardFileName(shardIndexOf(HASH_A)),
+        hash: "s",
+        json: JSON.stringify({
+          banks: { [HASH_A]: { ...makeBankSnapshot("题库一"), state: null } },
+        }),
+      },
+    ]);
+    const snapshot = remote.banks.get(HASH_A)?.snapshot;
+    expect(snapshot, "题库应当被解出来").toBeDefined();
+    expect("state" in (snapshot as object)).toBe(false);
   });
 });
 

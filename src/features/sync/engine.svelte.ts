@@ -1340,8 +1340,10 @@ function writeBankLocally(bank: {
   const stateKey = `quiz_app_state_${bank.hash}`;
 
   applyRemoteValue(questionsKey, JSON.stringify(bank.snapshot.questions));
-  if (bank.snapshot.state === undefined) {
-    // 云端这份没有进度 = 就是没有进度（跟着云端走，别留一份孤儿进度）
+  if (bank.snapshot.state == null) {
+    // 云端这份没有进度 = 就是没有进度（跟着云端走，别留一份孤儿进度）。
+    // `== null` 而不是 `=== undefined`：`null` 与缺字段是同一个意思，原样写下去
+    // 会在盘上留下字符串 `"null"`，然后被当成「有进度」一路传（见 `hasNoState`）。
     removeLocal(stateKey);
   } else {
     applyRemoteValue(stateKey, JSON.stringify(bank.snapshot.state));

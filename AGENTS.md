@@ -460,6 +460,15 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   「其实一模一样」会被判成「变了」：多写一次盘、多传一次分片，还会报成一次
   「合并进度」；更糟的是 `pickField` 里本地只是键序不同却被当成「改过」，
   落到「两边都改过 → 听本地」那条分支就会**丢掉云端真正的改动**。
+- **`state` 的 `null` 与「缺字段」是同一件事**（`hasNoState`）：
+  `bankProgressHash` 用 `state ?? null` 归一（两者哈希相同）、`progressMerge.stateOf`
+  用 `asRecord`（`null` → `undefined`）——判定这里也必须一起归一，别只判 `=== undefined`。
+  它真的会出现：`writeBankLocally` 拉取云端那份 `state: null` 时若只判 `undefined`，
+  会把 `null` 原样 `JSON.stringify` 成字符串 `"null"` 写进 localStorage，再收集起来
+  就成了一份「有进度」的空壳。后果是「本地没进度、云端有进度」被读成「本地有进度」，
+  走 `push` 把云端那份真进度**覆盖成空**（数据丢失）。
+  归一的位置一共四层，缺一层就会漏：收集本地（`collectLocalState`）、解云端分片
+  （`buildRemoteState`）、判定（`judgeBank`）、写回（`writeBankLocally`）。
 - **`SyncRowMeta` 的四个字段各管一件事**（往它加字段时**同时改 `storage.ts` 的
   `normalizeRowMeta`**，否则写进去读不回来——这个坑真踩过）：
   `remoteHash` = 完整哈希（有没有没推上去的东西，`computePendingChanges` 用）、
