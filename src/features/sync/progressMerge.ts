@@ -105,21 +105,23 @@ function rank(entry: ProgressEntry): number {
 }
 
 /**
- * 从两份里挑出该留下的那一份，**终态优先于「谁改了听谁」**。
+ * 「已掌握」这份终态该不该压过一切：该压就返回那一份，不该压返回 `undefined`。
  *
- * `rank` 里的「已掌握是终态」必须在这一层兜住，不能只当同分时的 tie-break：
- * 「本地没动、云端动了」那条分支（`winner = inRemote`）会绕过 rank，于是
- * 「A 上已掌握、B 上重新学」同步回来会把 A 的掌握状态拖回学习中。
- * 而掌握是**单向**的（`advanceReview` 走到 M 才给，`resetReview` 只在本地答错时
- * 发生），跨设备合并时永远不该倒退。
+ * 掌握是**单向**的（`advanceReview` 走完 M 才给，`resetReview` / `fuzzyReview`
+ * 只在本地答错时发生），跨设备合并时永远不该倒退。所以只要两边 mastered 状态
+ * 不同，mastered 那份赢——**压过下面「谁改了听谁」那条规矩**。
+ *
+ * 注意它只在两边 mastered 状态**不同**时给答案；相同时返回 `undefined`，
+ * 把选择权交回给调用方（都掌握了或都没掌握，就没有「终态」可言了）。
  */
-function pickEntry(inLocal: ProgressEntry, inRemote: ProgressEntry): ProgressEntry {
+function pickTerminal(
+  inLocal: ProgressEntry,
+  inRemote: ProgressEntry,
+): ProgressEntry | undefined {
   const localMastered = inLocal.state === "mastered";
   const remoteMastered = inRemote.state === "mastered";
-  if (localMastered !== remoteMastered) {
-    return localMastered ? inLocal : inRemote;
-  }
-  return rank(inLocal) >= rank(inRemote) ? inLocal : inRemote;
+  if (localMastered === remoteMastered) return undefined;
+  return localMastered ? inLocal : inRemote;
 }
 
 /**
@@ -127,8 +129,8 @@ function pickEntry(inLocal: ProgressEntry, inRemote: ProgressEntry): ProgressEnt
  *
  * 三种情形，各一条规矩：
  *   1. 只有一边还有这张卡（另一边删过）→ 留着还在的那份，进度不该因为一次合并消失；
- *   2. 一边相对基准改了、另一边没动 → 听改了的那边（三方比较），
- *      但**已掌握那一份永远赢**（见 `pickEntry`）；
+ *   2. 一边相对基准改了、另一边没动 → **听改了的那边**（三方比较），
+ *      但**已掌握那一份永远赢**（见 `pickTerminal`）；
  *   3. 两边都改了（同一张卡两边都答过）→ 取更靠前的档位；`lapses` 取两边最大值
  *      （累计答错次数只会涨，取大不丢数据）。
  */
@@ -158,10 +160,29 @@ export function mergeProgressMap(
     const localChanged = !sameValue(inLocal, inBase);
     const remoteChanged = !sameValue(inRemote, inBase);
 
+    // 选择的优先级，别把顺序写反（写反过一次，见下面第 ② 条）：
+    //   ① 已掌握是终态，两边 mastered 状态不同时它赢，压过「谁改了听谁」；
+    //   ② 只有一边相对基准改过 → **听改了的那边**；
+    //   ③ 都改过 / 都没改过 → 取更靠前的档位。
+    const terminal = pickTerminal(inLocal, inRemote);
     let winner: ProgressEntry;
-    if (localChanged && !remoteChanged) winner = pickEntry(inLocal, inRemote);
-    else if (!localChanged && remoteChanged) winner = pickEntry(inRemote, inLocal);
-    else winner = pickEntry(inLocal, inRemote);
+    if (terminal !== undefined) {
+      winner = terminal;
+    } else if (localChanged && !remoteChanged) {
+      // 只有本地改过 → 听本地的。
+      //
+      // **这一格绝不能改用 `rank` 去挑**（踩过）：复习时答「模糊 / 忘记」就是
+      // 故意把档位**往下退**（退一级 / 归零），同时把 `nextDue` 推到将来。
+      // 按档位挑的话，云端那份「还没动过的旧高档位」会赢，于是**连同它旧的
+      // `nextDue`（今天）一起被拿回来**——刚复习完的卡立刻又变成「待复习」，
+      // 而且每同步一次就复发一次。三方比较的意义正是「改过的那边说了算」，
+      // 与档位高低无关。
+      winner = inLocal;
+    } else if (!localChanged && remoteChanged) {
+      winner = inRemote;
+    } else {
+      winner = rank(inLocal) >= rank(inRemote) ? inLocal : inRemote;
+    }
 
     result[id] = {
       ...winner,

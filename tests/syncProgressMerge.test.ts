@@ -16,12 +16,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import { SyncHarness } from "./syncSupport";
 import { loadSyncMeta } from "@/features/sync/storage";
 import { bankRowKey } from "@/features/sync/types";
-import { advanceReview, isDue, studyDay } from "@/features/memory/algorithm";
 import {
   mergeProgressMap,
   planProgressMerge,
   sameProgress,
 } from "@/features/sync/progressMerge";
+import {
+  advanceReview,
+  fuzzyReview,
+  isDue,
+  resetReview,
+  studyDay,
+} from "@/features/memory/algorithm";
 
 const HASH_A = "aaaabbbbccccdddd";
 
@@ -236,6 +242,26 @@ describe("按卡合并的规矩（纯函数）", () => {
     expect(mergeProgressMap(base, remote, local).q1.level).toBe(5);
   });
 
+  /**
+   * 「听改了的那边」**与档位高低无关**——改过的那边可能是**更低**的一档。
+   *
+   * 这条是补上面那条的漏：上面那条里「改过的那边」恰好也是档位更高的那边，
+   * 于是「按档位挑」和「按谁改过挑」会给出同一个答案，**区分不出来**。
+   * 而复习时答「模糊 / 忘记」正是故意往下退的操作，咬人的就是这一格。
+   */
+  test("改过的那边档位更低 → 仍然听它的（不是挑高的）", () => {
+    const base = { q1: entry({ level: 5 }) };
+    const lowered = { q1: entry({ level: 4 }) };
+    expect(
+      mergeProgressMap(base, lowered, base).q1.level,
+      "只有本地改过，哪怕档位更低也听本地的",
+    ).toBe(4);
+    expect(
+      mergeProgressMap(base, base, lowered).q1.level,
+      "只有云端改过，哪怕档位更低也听云端的",
+    ).toBe(4);
+  });
+
   test("两边都改了 → 取更靠前的档位（mastered > reviewing > learning）", () => {
     const merged = mergeProgressMap(undefined, undefined, undefined);
     expect(merged).toEqual({});
@@ -432,14 +458,75 @@ describe("键序不影响「一样」的判定", () => {
   });
 });
 
+/**
+ * 「刚复习完的卡，同步之后不能又变成待复习」。
+ *
+ * 线上反馈：**始终有一道题目待复习**。点进去复习完、刷新一切正常，
+ * 但同步成功之后再刷新，那道题又回来了——每同步一次复发一次。
+ *
+ * 根因在 `mergeProgressMap` 的选择顺序：复习时答「模糊 / 忘记」是**故意把
+ * 档位往下退**（退一级 / 归零），同时把 `nextDue` 推到将来；如果合并时按
+ * **档位高低**挑赢家，云端那份「还没动过的旧高档位」就会赢，**连同它旧的
+ * `nextDue`（今天）一起被拿回来**，于是那张卡立刻又到期。
+ *
+ * 三方比较的规矩是「改过的那边说了算」，与档位高低无关——这一组用例就是钉它。
+ * 注意「往下退」这个方向：只测「往上进」的话，两种挑法答案相同，测不出来。
+ */
 describe("复习完的卡不能在同步后又变回待复习", () => {
+  const at = (patch: Record<string, unknown>) => ({
+    state: "reviewing",
+    level: 5,
+    streak: 0,
+    nextDue: 0,
+    lapses: 0,
+    ...patch,
+  });
+
+  /** 云端的基准：第 5 级、今天到期。 */
+  const before = at({ nextDue: studyDay(Date.now()) });
+
+  test("本地答「模糊」（退一级 + 推到将来）→ 合并后不该被云端退回今天", () => {
+    const local = fuzzyReview(before, Date.now());
+    expect(local.level, "模糊就是往下退一级").toBe(4);
+    const merged = mergeProgressMap(
+      { q1: before },
+      { q1: local },
+      { q1: before },
+    ).q1;
+    expect(merged.level).toBe(4);
+    expect(isDue(merged, Date.now()), "刚复习完的卡不该又到期").toBe(false);
+  });
+
+  test("本地答「忘记」（归零 + 推到明天）→ 合并后不该被云端退回今天", () => {
+    const local = resetReview(before, Date.now());
+    expect(local.level, "忘记就是打回第 1 级").toBe(1);
+    const merged = mergeProgressMap(
+      { q1: before },
+      { q1: local },
+      { q1: before },
+    ).q1;
+    expect(merged.level).toBe(1);
+    expect(isDue(merged, Date.now())).toBe(false);
+  });
+
+  test("镜像：只有云端复习过（本地没动）→ 同样不该留着本地那份旧的到期时间", () => {
+    const remote = fuzzyReview(before, Date.now());
+    const merged = mergeProgressMap(
+      { q1: before },
+      { q1: before },
+      { q1: remote },
+    ).q1;
+    expect(merged.level).toBe(4);
+    expect(isDue(merged, Date.now())).toBe(false);
+  });
+
   /**
    * 端到端：**「知道」这条路径**。
    *
-   * 答「知道」是把档位往上推（level 5 → 6），按档位挑也不会挑错——所以这条
-   * 单独钉住的是**另一个**毛病：本地这次改动压根没被传上去。
+   * 答「知道」是把档位往上推（level 5 → 6），所以按档位挑也不会挑错——
+   * 它单独钉住的是**另一个**毛病：本地这次改动压根没被传上去。
    * `buildSyncPlan` 曾把 `merge.kind === "skip"`（云端没有本地没见过的卡）
-   * 当成「这一轮不用做」，把 `push` 降级成 `skip`，于是改动留在本地，
+   * 当成「这一轮不用做」，把 `push` 降级成 `skip`，于是这次改动留在本地，
    * 而基准线照常刷新 → 下一轮判成 pull → 云端旧进度反手覆盖回来。
    */
   test("端到端：答「知道」复习完 → 同步 → 再同步，那道卡不再到期", async () => {
@@ -474,5 +561,42 @@ describe("复习完的卡不能在同步后又变回待复习", () => {
       memory: { progress: Record<string, { level: number }> };
     };
     expect(cloud.memory.progress.q1.level, "云端也得是这一份").toBe(6);
+  });
+
+  /**
+   * 端到端：「模糊」这条路径（档位往下退）。
+   *
+   * 这条要**两个修复都对**才过：既不能被降级成 skip（传不上去），
+   * 也不能在合并时按档位挑（挑中云端那份旧的高档位）。
+   */
+  test("端到端：答「模糊」复习完 → 同步 → 再同步，那道卡不再到期", async () => {
+    const { gistId } = await twoDevices();
+    const now = Date.now();
+    const due = { state: "reviewing", level: 5, streak: 0, nextDue: studyDay(now), lapses: 0 };
+    const reviewed = fuzzyReview(due, now);
+
+    h.engine("A");
+    study(HASH_A, { currentRound: 2, progress: { q1: due, q2: due } });
+    await h.on("A", (engine) => engine.sync());
+    await h.on("B", (engine) => engine.sync());
+
+    h.engine("A");
+    study(HASH_A, { currentRound: 3, progress: { q1: reviewed, q2: due } });
+    await h.on("A", (engine) => engine.sync());
+
+    h.engine("A");
+    await h.on("A", (engine) => engine.sync());
+
+    const state = JSON.parse(
+      localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}",
+    ) as { memory: { progress: Record<string, { level: number; nextDue: number }> } };
+    const q1 = state.memory.progress.q1;
+    expect(q1.level, "复习过的卡不该被云端那份旧档位覆盖").toBe(4);
+    expect(isDue(q1 as never, Date.now()), "同步之后它不该又变成待复习").toBe(false);
+
+    const cloud = (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state as {
+      memory: { progress: Record<string, { level: number }> };
+    };
+    expect(cloud.memory.progress.q1.level).toBe(4);
   });
 });
