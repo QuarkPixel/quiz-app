@@ -243,6 +243,45 @@ describe("按卡合并的规矩（纯函数）", () => {
     expect(both.q1.state, "已经掌握的那张不会被「学习中」覆盖回去").toBe("mastered");
   });
 
+  /**
+   * 「已掌握是终态」必须压过「谁改了听谁」。
+   *
+   * 踩过：`rank()` 里给 mastered 的 MAX_SAFE_INTEGER 只在「两边都改」那条
+   * `else` 分支生效；「本地没动、云端动了」会直接取云端那一份，于是
+   * 「A 上已掌握、B 上重新学」同步回来会把 A 的掌握状态拖回学习中。
+   */
+  test("本地已掌握且未改动、云端把它重置了 → 掌握状态不许被拖回去", () => {
+    const mastered = entry({ state: "mastered", level: 0 });
+    const reset = entry({ state: "learning", level: 0, lapses: 1 });
+
+    const merged = mergeProgressMap({ q1: mastered }, { q1: mastered }, { q1: reset });
+    expect(merged.q1.state, "mastered 是终态，不该被云端的 learning 覆盖").toBe(
+      "mastered",
+    );
+
+    // 镜像：本地动了、云端是 mastered → 也听 mastered
+    const mirror = mergeProgressMap(
+      { q1: entry({ state: "reviewing", level: 3 }) },
+      { q1: entry({ state: "learning", level: 0 }) },
+      { q1: mastered },
+    );
+    expect(mirror.q1.state).toBe("mastered");
+
+    // 两边都已掌握 → 走 rank，仍然是 mastered
+    const both = mergeProgressMap({ q1: mastered }, { q1: mastered }, { q1: mastered });
+    expect(both.q1.state).toBe("mastered");
+    // lapses 仍然取两边最大值（累计答错只涨不落）
+    expect(merged.q1.lapses).toBe(1);
+  });
+
+  test("两边都不是 mastered → 仍然按「谁改了听谁」走，不会被终态护栏影响", () => {
+    const base = { q1: entry({ state: "reviewing", level: 2 }) };
+    const local = { q1: entry({ state: "reviewing", level: 6 }) };
+    const remote = { q1: entry({ state: "reviewing", level: 2 }) };
+    expect(mergeProgressMap(base, local, remote).q1.level).toBe(6);
+    expect(mergeProgressMap(base, remote, local).q1.level).toBe(6);
+  });
+
   test("一边删过这张卡 → 留着还在的那份，进度不会凭空消失", () => {
     const merged = mergeProgressMap(
       { q1: entry({ level: 3 }) },

@@ -450,6 +450,10 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   ——**写进基准线的完整快照**，没有它只能退化成「两边各取更靠前的」，同一张卡上
   「一边推进、一边归零」就会合错。
   只有题目真的分叉了才报冲突、才需要人裁决。
+  **「已掌握是终态」必须压过「谁改了听谁」**（`pickEntry`）：`rank()` 里给 mastered
+  的 MAX_SAFE_INTEGER 如果只当同分时的 tie-break，就会漏掉「本地没动、云端动了」
+  那条分支——于是「A 上已掌握、B 上重新学」同步回来会把 A 的掌握状态拖回学习中
+  （踩过）。掌握是单向的（`advanceReview` 走完 M 才给），跨设备合并永远不该倒退。
 - **`SyncRowMeta` 的四个字段各管一件事**（往它加字段时**同时改 `storage.ts` 的
   `normalizeRowMeta`**，否则写进去读不回来——这个坑真踩过）：
   `remoteHash` = 完整哈希（有没有没推上去的东西，`computePendingChanges` 用）、

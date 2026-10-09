@@ -91,11 +91,30 @@ function rank(entry: ProgressEntry): number {
 }
 
 /**
+ * 从两份里挑出该留下的那一份，**终态优先于「谁改了听谁」**。
+ *
+ * `rank` 里的「已掌握是终态」必须在这一层兜住，不能只当同分时的 tie-break：
+ * 「本地没动、云端动了」那条分支（`winner = inRemote`）会绕过 rank，于是
+ * 「A 上已掌握、B 上重新学」同步回来会把 A 的掌握状态拖回学习中。
+ * 而掌握是**单向**的（`advanceReview` 走到 M 才给，`resetReview` 只在本地答错时
+ * 发生），跨设备合并时永远不该倒退。
+ */
+function pickEntry(inLocal: ProgressEntry, inRemote: ProgressEntry): ProgressEntry {
+  const localMastered = inLocal.state === "mastered";
+  const remoteMastered = inRemote.state === "mastered";
+  if (localMastered !== remoteMastered) {
+    return localMastered ? inLocal : inRemote;
+  }
+  return rank(inLocal) >= rank(inRemote) ? inLocal : inRemote;
+}
+
+/**
  * 按卡合并记忆模式的进度表。
  *
  * 三种情形，各一条规矩：
  *   1. 只有一边还有这张卡（另一边删过）→ 留着还在的那份，进度不该因为一次合并消失；
- *   2. 一边相对基准改了、另一边没动 → 听改了的那边（三方比较）；
+ *   2. 一边相对基准改了、另一边没动 → 听改了的那边（三方比较），
+ *      但**已掌握那一份永远赢**（见 `pickEntry`）；
  *   3. 两边都改了（同一张卡两边都答过）→ 取更靠前的档位；`lapses` 取两边最大值
  *      （累计答错次数只会涨，取大不丢数据）。
  */
@@ -126,9 +145,9 @@ export function mergeProgressMap(
     const remoteChanged = !sameValue(inRemote, inBase);
 
     let winner: ProgressEntry;
-    if (localChanged && !remoteChanged) winner = inLocal;
-    else if (!localChanged && remoteChanged) winner = inRemote;
-    else winner = rank(inLocal) >= rank(inRemote) ? inLocal : inRemote;
+    if (localChanged && !remoteChanged) winner = pickEntry(inLocal, inRemote);
+    else if (!localChanged && remoteChanged) winner = pickEntry(inRemote, inLocal);
+    else winner = pickEntry(inLocal, inRemote);
 
     result[id] = {
       ...winner,
