@@ -67,6 +67,31 @@ describe("本地存储探针", () => {
     localStorage.removeItem = () => {};
     expect(probeStorageHealth()).toBe("silent");
   });
+
+  /**
+   * 探针自己写的那个键必须**无论如何**都擦掉。
+   *
+   * 踩过：`silent` 路径是提前 return 的，而钩子不通知时那次 `removeItem` 也
+   * 一并失灵，于是 `quiz_app_state___probe__` 就常驻在盘上了——它虽然会被
+   * `collectLocalState` 跳过（没有对应的题目键），但白占一个键，还会在存储用量
+   * 一类的地方露出来。清理必须放在 `finally` 里，走原始方法删。
+   */
+  test("silent 路径不会把探针键留在盘上", () => {
+    localStorage.setItem = rawSetItem();
+    expect(probeStorageHealth()).toBe("silent");
+    expect(localStorage.getItem("quiz_app_state___probe__")).toBeNull();
+  });
+
+  test("normal / blocked 路径同样不留探针键", () => {
+    expect(probeStorageHealth()).toBe("ok");
+    expect(localStorage.getItem("quiz_app_state___probe__")).toBeNull();
+
+    localStorage.setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+    expect(probeStorageHealth()).toBe("blocked");
+    expect(localStorage.getItem("quiz_app_state___probe__")).toBeNull();
+  });
 });
 
 describe("引擎遇到 iOS 那种「钩子不生效」", () => {

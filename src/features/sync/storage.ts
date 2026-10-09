@@ -149,6 +149,16 @@ export function probeStorageHealth(): StorageHealth {
     return notified ? "ok" : "silent";
   } finally {
     hookState.listeners.delete(listener);
+    // 探针键必须**无论如何**都擦掉：`silent` 路径（钩子不通知时写进去了、
+    // 也就删不掉）会提前 return，只靠上面那次 removeItem 就留下一个
+    // `quiz_app_state___probe__` 常驻在盘上。它虽然因为「没有对应的题目键」
+    // 被 `collectLocalState` 跳过、不会真被当成一个题库，但白占一个键、
+    // 还会在「存储用量」一类的地方露出来，属于探针自己该收的尾。
+    try {
+      removeLocal(PROBE_KEY);
+    } catch {
+      /* 删不掉就算了：这一轮已经尽力 */
+    }
     clearMtime(PROBE_KEY);
   }
 }
