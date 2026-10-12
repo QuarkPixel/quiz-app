@@ -1659,7 +1659,7 @@ describe("记忆模式：已掌握卡的不变量", () => {
         nextDue: 123,
         lapses: 4,
       }),
-    ).toEqual({ state: "mastered", level: 0, streak: 0, nextDue: 0, lapses: 4 });
+    ).toEqual({ state: "mastered", level: 0, streak: 0, nextDue: 0, lapses: 4, rev: 0 });
   });
 
   it("离谱的 nextDue（超出 Date 上界）会被净化掉，避免「NaN 天后复习」", () => {
@@ -1802,11 +1802,13 @@ describe("记忆模式：净化", () => {
       nextDue: 123,
       lapses: 2,
     };
-    expect(normalizeMemoryProgress(raw)).toEqual(raw);
+    // 净化会补上 rev：老数据没有戳 → 0，而且之后必须原样带回来（同步要用）
+    expect(normalizeMemoryProgress(raw)).toEqual({ ...raw, rev: 0 });
+    expect(normalizeMemoryProgress({ ...raw, rev: 12345 })).toEqual({ ...raw, rev: 12345 });
     expect(normalizeMemoryProgress(null)).toBeNull();
     expect(
       normalizeMemoryProgress({ state: "learning", streak: 2, nextDue: 999 }),
-    ).toEqual({ state: "learning", level: 0, streak: 2, nextDue: 0, lapses: 0 });
+    ).toEqual({ state: "learning", level: 0, streak: 2, nextDue: 0, lapses: 0, rev: 0 });
   });
 
   it("设置净化把越界值钳到边界", () => {
@@ -2203,13 +2205,15 @@ describe("记忆模式：总览里「标熟」", () => {
     session.masterQuestion("a");
 
     // 与 advanceReview 走完阶梯的终态同形：level / streak / nextDue 一起清零
-    expect(session.progress.a).toEqual({
+    expect(session.progress.a).toMatchObject({
       state: "mastered",
       level: 0,
       streak: 0,
       nextDue: 0,
       lapses: 5,
     });
+    // 「标熟」也是一次改动，同样要盖修订戳（否则它同步不出去）
+    expect(session.progress.a.rev ?? 0).toBeGreaterThan(0);
     expect(session.masteredCount).toBe(1);
     // masteredIds 是 progress 的投影，标熟后必须跟着同步（导出文件名会数它）
     expect(session.appState.masteredIds).toEqual(["a"]);

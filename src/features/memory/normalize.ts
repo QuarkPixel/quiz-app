@@ -47,13 +47,16 @@ export function normalizeMemoryProgress(
   const lapses = toInt(value.lapses, 0, 0);
   const rawNextDue = toInt(value.nextDue, 0, 0);
   const nextDue = rawNextDue > MAX_DUE_TIMESTAMP ? 0 : rawNextDue;
+  // 修订戳必须**原样带过去**（只做非负取整）：它在同步时是并发更新的排序依据，
+  // 净化时丢掉的话拉回来的那份就退化成「老数据」，永远合并不对。
+  const rev = toInt(value.rev, 0, 0);
 
   if (state === "learning") {
-    return { state, level: 0, streak, nextDue: 0, lapses };
+    return { state, level: 0, streak, nextDue: 0, lapses, rev };
   }
   if (state === "mastered") {
     // 已掌握是终态：阶梯与到期日一起清零（和 advanceReview 写出的形状一致）
-    return { state, level: 0, streak: 0, nextDue: 0, lapses };
+    return { state, level: 0, streak: 0, nextDue: 0, lapses, rev };
   }
   return {
     state,
@@ -63,6 +66,7 @@ export function normalizeMemoryProgress(
     streak: 0,
     nextDue,
     lapses,
+    rev,
   };
 }
 

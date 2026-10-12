@@ -39,6 +39,7 @@ import {
   resetReview,
   studyDay,
 } from "@/features/memory/algorithm";
+import { nextRev, revOf } from "@/lib/rev";
 import {
   normalizeMemoryProgressMap,
   normalizeMemoryRetry,
@@ -1405,14 +1406,27 @@ export class MemorySession {
     };
   }
 
-  /** 写一条进度，并原样保住 `memory` 段里的其它字段。 */
+  /**
+   * 写一条进度，并原样保住 `memory` 段里的其它字段。
+   *
+   * **这里是进度写入的唯一收口，也是唯一盖修订戳的地方**（见 `src/lib/rev.ts`）。
+   * 盖戳的基准取"本机见过的同一条卡的最大戳"（本地那份与本次要写的那份取大），
+   * 这样本机钟慢于对端时，本机的新改动也不会被判成旧改动。
+   *
+   * 注意：**从云端拉回来 / 合并出来的那份不走这里**（`sync/apply` 直接落盘），
+   * 否则两台设备各盖各的戳，同样的内容会算出不同状态，永远收敛不了。
+   */
   private writeProgress(
     base: RuntimeState,
     id: string,
     progress: MemoryProgress,
   ): MemoryStoredState {
+    const stamped: MemoryProgress = {
+      ...progress,
+      rev: nextRev(Date.now(), Math.max(revOf(base.memory?.progress?.[id]), revOf(progress))),
+    };
     return this.memorySection(base, {
-      progress: { ...(base.memory?.progress ?? {}), [id]: progress },
+      progress: { ...(base.memory?.progress ?? {}), [id]: stamped },
     });
   }
 

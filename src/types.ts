@@ -151,6 +151,16 @@ export interface MemoryProgress {
   nextDue: number;
   /** 累计答错次数（`忘记` / `记错了`），仅用于统计 */
   lapses: number;
+  /**
+   * 这条进度最后一次被改动的时刻（毫秒）。**合并并发更新时唯一的排序依据**
+   * （见 `src/lib/rev.ts`：没有它就只能拿 `level` 当替身，而 `level` 既不是时钟
+   * 也不单调，会反复制造「复习完又被拽回到期」这一族 bug）。
+   *
+   * - 由 `MemorySession.writeProgress` 统一盖章（唯一收口）；
+   * - 从云端拉回来 / 合并出来的那份**原样保留**，绝不重盖，否则永不收敛；
+   * - 老数据没有这个字段 ⇒ 当作 `0`（早于任何带戳的改动）。
+   */
+  rev?: number;
 }
 
 /** 按题目 id 索引的记忆进度表。 */
