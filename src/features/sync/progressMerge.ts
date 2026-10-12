@@ -34,18 +34,6 @@ function stateOf(snapshot: unknown): Record<string, unknown> | undefined {
   return asRecord(asRecord(snapshot)?.state);
 }
 
-/**
- * 这份快照在**记忆模式**下是不是「一张卡都没做过」。
- *
- * 只看记忆模式：`state.memory` 存在才谈得上空不空。刷题模式没有这个字段，
- * 走不到这里（那边的进度是掌握集合，空集合会被下面的比较正确判成一样）。
- */
-function isProgressEmpty(snapshot: unknown): boolean {
-  const memory = asRecord(stateOf(snapshot)?.memory);
-  if (memory === undefined) return false;
-  const progress = asRecord(memory.progress);
-  return progress === undefined || Object.keys(progress).length === 0;
-}
 
 /** 合并一份题库快照（题目 + 可同步状态）。 */
 export function mergeBankSnapshots(params: {
@@ -76,17 +64,14 @@ export function planProgressMerge(params: {
   local: unknown;
   remote: unknown;
 }): ProgressMergePlan {
-  // 云端那份压根没有进度 → 这就是一次普通的「上传自己的进度」。
-  // **不要走合并**：合并会把缺失的字段补成默认值，于是「只是上传」也变成一次改写。
-  if (stateOf(params.remote) === undefined) {
-    return { kind: "push", snapshot: params.local };
-  }
-  // 云端有 `state`、但记忆模式的进度表是空的（题库刚同步过去、还没人做过题）：
-  // 同样是「上传自己的进度」。这一档不能省——空进度表算不出「合进了新东西」，
-  // 落到下面就会被判成 skip，于是本地那份进度永远推不上去。
-  if (isProgressEmpty(params.remote)) {
-    return { kind: "push", snapshot: params.local };
-  }
+  // 这里原来有两档**提前返回**：「云端压根没有 `state`」与「云端进度表是空的」
+  // → 直接 `push`。它们的前提是"只有卡片算进度"，而且当时 `skip` 那一档
+  // **不会上传**（`upload` 是从 `judged` 推出来的），所以必须靠 `push` 把本地推上去。
+  //
+  // 现在两个前提都不成立了：进度还包括 `currentRound` / `masteredIds` / 设置这些
+  // 非卡片字段（云端进度表空、但 `currentRound` 变过，正是"普通 pull"的形状，
+  // 被它拦成 push 就会跳过下载），而 `skip` 这一档现在**照样上传**
+  // （`decideBank` 末尾返回 `upload: true`）。所以交给下面的三方分类统一判。
 
   // 「要不要合」要**看整段可同步状态**，不能只看每张卡。
   //

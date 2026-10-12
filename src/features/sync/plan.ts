@@ -20,16 +20,12 @@
  */
 
 import { planProgressMerge } from "./progressMerge";
-import type { BankVerdict } from "./types";
+import type { BankActionKind, BankVerdict } from "./types";
+
+export type { BankActionKind };
 
 /** 本地这一轮要做什么。 */
-export type BankActionKind =
-  | "skip" // 本地不用改
-  | "download" // 用云端那份覆盖本地
-  | "merge" // 把合并结果写回本地
-  | "deleteLocal" // 本地删掉这个题库
-  | "deleteRemote" // 云端删掉这个题库
-  | "conflict"; // 等人裁决，谁都不动
+ // 等人裁决，谁都不动
 
 export interface BankDecision {
   /** 本地这一轮做什么。 */
@@ -106,9 +102,19 @@ export function decideBank(params: {
     return { action: "merge", upload: true, merged: plan.snapshot, progressMerged: true };
   }
 
-  // 云端那份已经够了 → 照常下载（`action` 就是 `actionOf("pull")`）
-  // `skip` = 云端没有本地没见过的卡 → **本地不用改写，但照样要上传**
-  //（上传的理由是"本地改过"，与"合并能不能带来新东西"是两件事）。
-  // `push` = 云端压根没有进度 / 进度表是空的 → 直接传本地那份。
-  return { action: "skip", upload, progressMerged: false };
+  // 云端那份已经够了 → **照常下载**（本地没有云端没有的东西）。
+  if (plan.kind === "pull") {
+    return { action: "download", upload: false, progressMerged: false };
+  }
+
+  // 剩下两种都是「本地这份已经够了」：
+  //   `skip` = 云端没有本地没见过的卡；`push` = 云端压根没有进度。
+  // 共同点是**本地不用改写，但必须上传**——上传的理由是"本地这份云端没有"，
+  // 与"合并能不能带来新东西"是两件事（混成一件就是线上「复习完又变回待复习」的根因）。
+  //
+  // 注意 `judged === "pull"` 也会走到这里：判定说"本地没动过"是**按 mtime 猜的**，
+  // 时钟回拨、或"同步进行中又答了一题"（`mtime == syncedAt`）都会猜错。
+  // 那时盲目按判定下载就会把真实的本地改动盖掉——判定的结论必须让位给
+  // 「本地这份到底有没有云端没有的东西」这个**事实**。
+  return { action: "skip", upload: true, progressMerged: false };
 }

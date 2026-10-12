@@ -465,6 +465,14 @@ export type BankVerdict =
   | "conflict";
 
 /** 一个题库的同步决定。 */
+export type BankActionKind =
+  | "skip" // 本地不用改
+  | "download" // 用云端那份覆盖本地
+  | "merge" // 把合并结果写回本地
+  | "deleteLocal" // 本地删掉这个题库
+  | "deleteRemote" // 云端删掉这个题库
+  | "conflict";
+
 export interface BankAction {
   hash: string;
   /** 给人看的题库名 */
@@ -476,6 +484,14 @@ export interface BankAction {
   remoteHash?: string;
   /** 本地最后改动时间（毫秒） */
   localAt: number;
+  /**
+   * **本地这一轮做什么。** 引擎按它分支，不按 `verdict`。
+   *
+   * `verdict` 只是 `judgeBank` 按 mtime 猜出来的"方向"；`kind` 是综合了
+   * "本地这份到底有没有云端没有的东西"之后的最终决定（例如判定是 pull、
+   * 但本地手里那份云端没有时，`kind` 是 `skip`——只上传，**不许下载覆盖**）。
+   */
+  kind: BankActionKind;
   /**
    * **要不要把这个题库传上去。**
    *

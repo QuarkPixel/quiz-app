@@ -401,9 +401,11 @@ describe("这一轮到底要做什么（planProgressMerge）", () => {
     },
   });
 
-  test("云端干脆没有进度 → 直接推本地那份（不算合并）", () => {
+  test("云端干脆没有进度 → 本地那份直接推上去（不算合并）", () => {
+    // 判成的标签是 `skip`（"本地这份已经够了"），但**照样会上传**——
+    // 上传与"要不要合并"是两件事，见 `plan.ts` 末尾那条注释。
     const plan = planProgressMerge({ local, remote: snap() });
-    expect(plan.kind).toBe("push");
+    expect(plan.kind).toBe("skip");
   });
 
   test("两边各答过一些卡 → 合并，两边都不丢", () => {
@@ -801,9 +803,20 @@ describe("设备本地的字段：不传出去，也不被擦掉", () => {
     const { gistId } = await twoDevices();
     h.engine("A");
     const raw = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+    // 云端这份必须**真的有进度**（只有设备本地字段 + 空进度时，"没什么可拉的"
+    // 判成 skip 才是对的——那样就测不到"拉下来但不带别人的界面状态"这件事）
     localStorage.setItem(
       `quiz_app_state_${HASH_A}`,
-      JSON.stringify({ ...raw, ...LOCAL_ONLY }),
+      JSON.stringify({
+        ...raw,
+        ...LOCAL_ONLY,
+        memory: {
+          progress: {
+            q1: { state: "reviewing", level: 2, streak: 0, nextDue: 0, lapses: 0, rev: 10 },
+          },
+          settings: { graduateLevel: 7, roundTarget: 5, lockRoundPool: false },
+        },
+      }),
     );
     h.tick();
     await h.on("A", (engine) => engine.sync());
@@ -812,7 +825,7 @@ describe("设备本地的字段：不传出去，也不被擦掉", () => {
     h.engine("B");
     localStorage.removeItem(`quiz_app_state_${HASH_A}`);
     h.tick();
-    await h.on("B", (engine) => engine.sync());
+    const outcome2 = await h.on("B", (engine) => engine.sync());
 
     h.engine("B");
     const pulled = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");

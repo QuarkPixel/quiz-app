@@ -12,6 +12,8 @@
 import { stableHash, type BankRecord, type CollectedState } from "./collect";
 import { mergeGeneral, sameSettings } from "./general";
 import { decideBank } from "./plan";
+import type { BankActionKind } from "./types";
+
 import { bankContentHashInRemoteFiles, remoteJunkFiles } from "./remote";
 import {
   bankRowKey,
@@ -200,6 +202,7 @@ export function forcePushPlan(
       hash: bank.hash,
       name: bank.snapshot.name,
       verdict: "push",
+      kind: "skip",
       upload: true,
       localHash: bank.contentHash,
       remoteHash: remote.banks.get(bank.hash)?.contentHash,
@@ -212,6 +215,7 @@ export function forcePushPlan(
       hash: bank.hash,
       name: bank.name,
       verdict: "deleteRemote",
+      kind: "deleteRemote",
       upload: true,
       remoteHash: bank.contentHash,
       localAt: 0,
@@ -248,6 +252,7 @@ export function forcePullPlan(
       hash: bank.hash,
       name: bank.name,
       verdict: "pull",
+      kind: "download",
       upload: false,
       localHash: local.banks.get(bank.hash)?.contentHash,
       remoteHash: bank.contentHash,
@@ -260,6 +265,7 @@ export function forcePullPlan(
       hash: bank.hash,
       name: bank.snapshot.name,
       verdict: "deleteLocal",
+      kind: "deleteLocal",
       upload: false,
       localHash: bank.contentHash,
       localAt: bank.localAt,
@@ -359,6 +365,7 @@ export function buildSyncPlan(params: {
       localAt: localBank?.localAt ?? 0,
       // `verdict` 保持 `judgeBank` 的原话（往哪个方向走），
       // 「要不要上传」与「合并出来的那份」由 `decideBank` 单独给出。
+      kind: decision.action,
       upload: decision.upload,
       ...(decision.merged === undefined ? {} : { merged: decision.merged }),
       ...(decision.progressMerged ? { progressMerged: true } : {}),
@@ -508,7 +515,9 @@ export function applyResolution(
     const resolution = resolutions.get(action.hash);
     if (resolution === undefined) return action;
     const wanted: BankVerdict = resolution === "keepLocal" ? "push" : "pull";
-    return { ...action, verdict: wanted, upload: wanted === "push" };
+    // 裁决之后不再合并：保留本地就是原样上传，保留云端就是原样下载
+    const kind: BankActionKind = wanted === "push" ? "skip" : "download";
+    return { ...action, verdict: wanted, kind, upload: wanted === "push", merged: undefined };
   });
 
   const shardBanks = new Map<number, string[]>();

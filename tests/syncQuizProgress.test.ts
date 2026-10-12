@@ -174,3 +174,83 @@ describe("刷题模式的进度分叉要合并，不能整份盖掉", () => {
     expect(outcome.pushed).toBe(1);
   });
 });
+
+/**
+ * **判定说"本地没动过"，不等于本地这份可以丢。**
+ *
+ * `judgeBank` 判断"本地改过没有"靠的是 `mtime > syncedAt`，而 mtime 是
+ * `Date.now()` 写在**那个被包装过的 `setItem`** 里的。两种常见情况下它会猜错
+ * （审计复现）：
+ *
+ *   - **时钟回拨**：`mtime < syncedAt` ⇒ 判成"本地没动过"；
+ *   - **同步进行中又答了一题**：写入的毫秒数正好等于这一轮基准线的 `syncedAt`。
+ *     生产上是 1ms 的窗口，但 Firefox 把 `Date.now()` 钳到 2ms、开启 RFP 后 100ms。
+ *
+ * 猜错的后果：判成 pull ⇒ 盲目用云端覆盖本地 ⇒ **刚做的那道题没了**，
+ * 而且指示点是绿的（协议自己认为已经同步好了）。
+ * 所以最终决定必须让位给**事实**——"本地这份到底有没有云端没有的东西"。
+ */
+describe("mtime 猜错方向时也不能丢本地改动", () => {
+  const mtimeKey = (hash: string) => `quiz_app_sync_mtime:quiz_app_state_${hash}`;
+
+  test("时钟回拨（mtime 比基准线还早）→ 刚答的那题不能被云端盖掉", async () => {
+    const gistId = await twoDevices();
+
+    // B 答了一题（round 9）
+    h.engine("B");
+    patchState(HASH_A, { currentRound: 9 });
+    // 把 mtime 伪造成"比上次同步还早"：时钟回拨 / 粗粒度时钟
+    localStorage.setItem(mtimeKey(HASH_A), "1");
+    h.tick();
+    h.save("B");
+
+    h.engine("B");
+    await h.on("B", (engine) => engine.sync());
+
+    h.engine("B");
+    expect(
+      localState(HASH_A).currentRound,
+      "本地刚答的那题被云端旧值盖掉了",
+    ).toBe(9);
+
+    // 而且应当**补传上去**（否则下一轮还会被盖）
+    const cloud = (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state as {
+      currentRound: number;
+    };
+    expect(cloud.currentRound, "本地那份没被补传上去").toBe(9);
+  });
+
+  test("同一毫秒（mtime == 基准线）→ 同样不能盖掉", async () => {
+    await twoDevices();
+
+    h.engine("B");
+    const syncedAt = JSON.parse(
+      localStorage.getItem("quiz_app_sync_meta") ?? "{}",
+    ).rows?.[`bank:${HASH_A}`]?.syncedAt as number;
+    patchState(HASH_A, { currentRound: 11 });
+    // 伪造"写入时刻正好等于基准线时刻"
+    localStorage.setItem(mtimeKey(HASH_A), String(syncedAt));
+    h.tick();
+    h.save("B");
+
+    h.engine("B");
+    await h.on("B", (engine) => engine.sync());
+    h.engine("B");
+    expect(localState(HASH_A).currentRound).toBe(11);
+  });
+
+  test("正常的下载仍然照常（别把这道闸做成谁都不拉）", async () => {
+    await twoDevices();
+
+    // A 改进度并同步上去；B 自己没动过 → B 应当照常拉下来
+    h.engine("A");
+    patchState(HASH_A, { currentRound: 21 });
+    h.save("A");
+    await h.on("A", (engine) => engine.sync());
+
+    h.engine("B");
+    await h.on("B", (engine) => engine.sync());
+    h.engine("B");
+    expect(localState(HASH_A).currentRound, "普通 pull 被这道闸挡掉了").toBe(21);
+  });
+});
