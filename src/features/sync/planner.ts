@@ -1,157 +1,33 @@
 /**
- * 合并：把「本地有什么 / 云端有什么 / 上次同步时是什么样」算成一份计划。
+ * 计划器：把「本地有什么 / 云端有什么 / 上次同步时是什么样」算成一份计划。
  *
- * 刻意做成纯函数（不碰网络、不碰 localStorage），因为这是整个同步里最需要被测试、
- * 也最容易出错的一段：搞错了就是静默覆盖用户数据。
+ * 从旧的 `merge.ts` 拆出来（那个文件 1000 多行，合并 / 计划 / general / 云端解析
+ * 全混在一起）。**纯函数**：不碰网络、不碰 localStorage——这是整个同步里最需要
+ * 被测试、也最容易出错的一段，搞错了就是静默覆盖用户数据。
  *
- * ── 同步单元是「题库」，不是「文件」─────────────────────────────────────────
- *
- * 分片文件（`banks-N.json`）只是绕开 Gitee「一条 Gist 最多 10 个文件」的容器。
- * 早期版本按**文件**做三方合并，于是同一片里改 A 题库、B 题库就会互相牵连，
- * 甚至把一个题库的冲突算到整片上。现在全部按题库逐条判定。
- *
- * ── 两个独立的信号 ──────────────────────────────────────────────────────────
- *
- *   localChanged  = 这个题库的本地修改时间 > 上次同步时间（`syncedAt`）
- *   remoteChanged = 这个题库的云端内容哈希 ≠ 上次同步时记下的哈希（`remoteHash`）
- *
- * 用哈希而不是云端时间戳判断「云端改过没有」，是因为 Gitee 的 `updated_at` 只在
- * Gist 级别：你改了题库 A，整个 Gist 的时间就变了，题库 B 的时间戳也跟着"变"。
- *
- *   localChanged | remoteChanged | 结果
- *   ────────────┼──────────────┼──────────────────
- *       否      |      否       | 跳过
- *       是      |      否       | 上传
- *       否      |      是       | 下载
- *       是      |      是       | 冲突（绝不自动选边）
- *
- * 只在一边存在的题库：
- *   - 没有元数据 = 这台设备/云端第一次见 → 那边有就传那边（新导入的上传、
- *     别的设备新增的下载）；
- *   - 有元数据 = 另一边把它删了 → 跟着删（本地删了回收云端，云端删了本地也删）。
+ * 判定结果**不再被调用方改写**：`judgeBank` 只回答「往哪个方向走」，完整决定由
+ * `plan.ts` 的 `decideBank` 一次给出（见那个文件的文件头）。
  */
 
-import {
-  bankContentHash,
-  bankProgressHash,
-  normalizeGeneral,
-  stableHash,
-  type BankRecord,
-  type CollectedState,
-} from "./collect";
-import { stripDeviceLocal } from "./model/policy";
+import { stableHash, type BankRecord, type CollectedState } from "./collect";
+import { mergeGeneral, sameSettings } from "./general";
 import { decideBank } from "./plan";
+import { bankContentHashInRemoteFiles, remoteJunkFiles } from "./remote";
 import {
-  GIST_GENERAL_FILE,
   bankRowKey,
-  isLegacyBankFileName,
   shardFileName,
   shardIndexFromFileName,
   shardIndexOf,
-  type BankSnapshot,
+  type BankAction,
+  type BankVerdict,
   type ConflictResolution,
   type GeneralSnapshot,
-  type LibraryEntry,
-  type RemoteFile,
+  type RemoteBank,
+  type RemoteState,
   type SyncMeta,
+  type SyncPlan,
   type SyncRowMeta,
-  type ShardSnapshot,
 } from "./types";
-
-// ── 两边的形状 ──────────────────────────────────────────────────────────────
-
-/** 云端的一个题库。 */
-export interface RemoteBank {
-  hash: string;
-  /** 它落在哪个分片 */
-  shard: number;
-  /** **内容**哈希（题目 + 模式，与 `BankRecord.contentHash` 同一套口径） */
-  contentHash: string;
-  /** **进度**哈希（`state` 整段）；与内容哈希分开，冲突判定只认内容 */
-  progressHash: string;
-  name: string;
-  snapshot: BankSnapshot;
-}
-
-/** 从 Gist 文件解出来的云端状态。 */
-export interface RemoteState {
-  /** 云端那份 `_general.json`；解不出来时是 null */
-  general: GeneralSnapshot | null;
-  generalHash: string;
-  files: RemoteFile[];
-  banks: Map<string, RemoteBank>;
-  /** 分片下标 → 该文件里的题库 hash */
-  shardBanks: Map<number, string[]>;
-  /** 认不出来 / 解不开的分片文件名，原样留着不动 */
-  unreadableShards: string[];
-}
-
-// ── 判定 ────────────────────────────────────────────────────────────────────
-
-export type BankVerdict =
-  | "skip"
-  | "push"
-  | "pull"
-  | "deleteLocal"
-  | "deleteRemote"
-  | "conflict";
-
-/** 一个题库的同步决定。 */
-export interface BankAction {
-  hash: string;
-  /** 给人看的题库名 */
-  name: string;
-  verdict: BankVerdict;
-  /** 本地内容的哈希；本地没有这个题库时 undefined */
-  localHash?: string;
-  /** 云端内容的哈希；云端没有这个题库时 undefined */
-  remoteHash?: string;
-  /** 本地最后改动时间（毫秒） */
-  localAt: number;
-  /**
-   * 两边都动过、但**题目一样**时合出来的那份快照（见 `mergeBankSnapshots`）。
-   *
-   * 有它就说明这一轮不需要人裁决：引擎会把它**同时**写到本地与云端，
-   * 两台设备的进度都保住。题目真的分叉了才会是 `conflict`，那时没有这个字段。
-   */
-  merged?: unknown;
-  /** 这次合并是不是只有进度不同（用于给用户报一句「已合并进度」） */
-  progressMerged?: boolean;
-}
-
-/** 云端某个分片文件里装了哪些题库（回收空文件时要重算）。 */
-export interface RemoteShardRef {
-  name: string;
-  banks: string[];
-}
-
-/** 一份待执行的同步计划。 */
-export interface SyncPlan {
-  actions: BankAction[];
-  /** 合并后的 `_general.json`（本地应该长成的样子） */
-  general: GeneralSnapshot;
-  /** 要不要把 general 推到云端 */
-  generalPush: boolean;
-  /** 本地的 general 需不需要改写 */
-  generalChangedLocal: boolean;
-  /**
-   * 列表 / 设置是不是真的变了（**不看题库的增删**）。
-   *
-   * 只用来给用户报一句「设置已更新」：题库的增删已经有「新增 / 删除」在报了，
-   * 再按 general 文件变没变来报，就会变成「导入了 1 个题库」也顺带说「设置已更新」。
-   */
-  settingsChanged: boolean;
-  /** 需要重建并上传的分片下标（重建后内容没变就不传） */
-  pushShards: number[];
-  /** 应当从云端删掉的文件（分片空了 / 旧格式残留） */
-  deleteRemoteFiles: string[];
-  /** 还没裁决的冲突 */
-  conflicts: BankAction[];
-  /** 云端分片现状（裁决冲突后重算回收列表用） */
-  remoteShards: RemoteShardRef[];
-  /** 云端那些旧格式残留 / 认不出来的文件 */
-  remoteJunkFiles: string[];
-}
 
 export function emptyPlan(general: GeneralSnapshot): SyncPlan {
   return {
@@ -166,10 +42,6 @@ export function emptyPlan(general: GeneralSnapshot): SyncPlan {
     remoteShards: [],
     remoteJunkFiles: [],
   };
-}
-
-function same(a: unknown, b: unknown): boolean {
-  return stableHash(a ?? null) === stableHash(b ?? null);
 }
 
 /**
@@ -197,6 +69,7 @@ function hasNoState(bank: { snapshot: { state?: unknown } }): boolean {
  * 老格式只有分片文件的元数据（`banks-3.json`）——升级上来的设备第一次同步
  * 还能拿它当兜底基准，不然后面那些判定全都没有参照物。
  */
+
 export function judgeBank(params: {
   local?: BankRecord;
   remote?: RemoteBank;
@@ -316,36 +189,6 @@ export function judgeBank(params: {
   return "skip";
 }
 
-/**
- * 在云端分片里按 hash 找这个题库、算出它的内容哈希。
- *
- * 用在「只有本地有」的删除判定上：`remote.banks` 是按**题目内容**归拢的，
- * 云端改过题目时匹配不上，但分片快照里的 `banks[<hash>]` 仍然在。
- * 找到就用 `bankContentHash` 算（与本地同一个口径），找不到返回 undefined
- * （= 云端确实没有这个题库 = 真删除）。
- */
-function bankContentHashInRemoteFiles(
-  remote: RemoteState,
-  hash: string,
-): string | undefined {
-  const index = shardIndexOf(hash);
-  const file = remote.files.find(
-    (candidate) => shardIndexFromFileName(candidate.name) === index,
-  );
-  if (file?.json == null) return undefined;
-  try {
-    const parsed = JSON.parse(file.json) as { banks?: Record<string, unknown> };
-    const bank = parsed?.banks?.[hash];
-    if (bank === null || typeof bank !== "object") return undefined;
-    const snapshot = bank as BankSnapshot;
-    if (!Array.isArray(snapshot.questions)) return undefined;
-    return bankContentHash(snapshot);
-  } catch {
-    return undefined;
-  }
-}
-
-/** 「用本地覆盖云端」：无条件把本地全部推上去，云端多出来的题库删掉。 */
 export function forcePushPlan(
   local: CollectedState,
   remote: RemoteState,
@@ -426,18 +269,7 @@ export function forcePullPlan(
 }
 
 /** 云端那些「不是我们的分片文件」：旧格式残留 + 认不出来的文件。 */
-function remoteJunkFiles(remote: RemoteState): string[] {
-  const junk: string[] = [];
-  for (const file of remote.files) {
-    if (file.name === GIST_GENERAL_FILE) continue;
-    if (shardIndexFromFileName(file.name) !== null) continue;
-    // 旧版「每个题库一个文件」的残留一律回收；别的陌生文件不动
-    if (isLegacyBankFileName(file.name)) junk.push(file.name);
-  }
-  return junk.sort();
-}
 
-/** 从本地 / 云端两边算出完整计划。 */
 export function buildSyncPlan(params: {
   local: CollectedState;
   remote: RemoteState;
@@ -636,248 +468,6 @@ function shardIndexOfHash(hash: string): number {
 
 // ── general 的逐字段合并 ────────────────────────────────────────────────────
 
-const EMPTY_GENERAL: GeneralSnapshot = {
-  activeBank: null,
-  defaultSettings: {},
-  library: [],
-  globalSettings: {},
-};
-
-/** 一个题库名 / 模式 / 数量，用来给题库列表补条目。 */
-interface BankSummaryInput {
-  name: string;
-  mode: "quiz" | "memory";
-  count: number;
-}
-
-function summarize(
-  actions: readonly BankAction[],
-  localBanks: ReadonlyMap<string, BankRecord>,
-  remoteBanks: ReadonlyMap<string, RemoteBank>,
-): Map<string, BankSummaryInput> {
-  const result = new Map<string, BankSummaryInput>();
-  for (const action of actions) {
-    if (action.verdict === "deleteLocal" || action.verdict === "deleteRemote") {
-      continue;
-    }
-    const local = localBanks.get(action.hash);
-    const remote = remoteBanks.get(action.hash);
-    const bank = local?.snapshot ?? remote?.snapshot;
-    if (bank === undefined) continue;
-    result.set(action.hash, {
-      name: bank.name,
-      mode: bank.mode,
-      count: Array.isArray(bank.questions) ? bank.questions.length : 0,
-    });
-  }
-  return result;
-}
-
-/**
- * 合并 `_general.json`。
- *
- * `library` **不是**简单选一边：它得如实反映合并之后的题库集合——两台设备
- * 各自导入的题库都要在列表里出现，被删掉的要消失。名字与顺序这类元数据
- * 才走「哪边改过听哪边」。
- */
-/**
- * 两份 general 的「设置部分」是不是一样——**不看题库的增删**。
- *
- * 比的是：当前题库 / 全局设置 / 默认设置，题库列表里**两边都有**的那些条目的
- * 字段（改名、换模式、题数都算），以及这些条目之间的**相对顺序**（拖一下顺序
- * 也是改动，而且是最容易同步不过去的那种）。
- *
- * 只在一边出现的题库条目**不比**：那是「新增 / 删除」，由题库那两项在报；
- * 掺进来就会变成「导入一个题库」也顺带说「设置已更新」。
- */
-export function sameSettings(a: GeneralSnapshot, b: GeneralSnapshot): boolean {
-  if (
-    stableHash([a.activeBank, a.defaultSettings, a.globalSettings]) !==
-    stableHash([b.activeBank, b.defaultSettings, b.globalSettings])
-  ) {
-    return false;
-  }
-
-  const fingerprint = (snapshot: GeneralSnapshot): Map<string, string> => {
-    const map = new Map<string, string>();
-    for (const entry of snapshot.library) {
-      const { hash, ...rest } = entry;
-      map.set(hash, stableHash(rest));
-    }
-    return map;
-  };
-
-  const aMap = fingerprint(a);
-  const bMap = fingerprint(b);
-  const shared = new Set([...aMap.keys()].filter((hash) => bMap.has(hash)));
-  for (const hash of shared) {
-    if (aMap.get(hash) !== bMap.get(hash)) return false;
-  }
-
-  const sequence = (snapshot: GeneralSnapshot): string[] =>
-    snapshot.library.map((entry) => entry.hash).filter((hash) => shared.has(hash));
-  return sameList(sequence(a), sequence(b));
-}
-
-export function mergeGeneral(params: {
-  local: GeneralSnapshot;
-  remote: GeneralSnapshot | null;
-  base: GeneralSnapshot | null;
-  actions: readonly BankAction[];
-  localBanks: ReadonlyMap<string, BankRecord>;
-  remoteBanks: ReadonlyMap<string, RemoteBank>;
-  localHasEdits: boolean;
-}): GeneralSnapshot {
-  const {
-    local,
-    remote,
-    base,
-    actions,
-    localBanks,
-    remoteBanks,
-    localHasEdits,
-  } = params;
-
-  const remoteGeneral = remote ?? EMPTY_GENERAL;
-  const alive = summarize(actions, localBanks, remoteBanks);
-
-  const pick = <K extends "activeBank" | "defaultSettings" | "globalSettings">(
-    key: K,
-  ): GeneralSnapshot[K] => {
-    if (base === null) {
-      // 没有基准：本地是个空壳就听云端的，否则以本地为准
-      // （换设备 / 清过缓存的新设备走这条，绝不能让空壳覆盖云端）
-      return (localHasEdits ? local[key] : remoteGeneral[key]) as GeneralSnapshot[K];
-    }
-    const localChanged = !same(local[key], base[key]);
-    const remoteChanged = !same(remoteGeneral[key], base[key]);
-    if (localChanged && !remoteChanged) return local[key] as GeneralSnapshot[K];
-    if (!localChanged && remoteChanged) return remoteGeneral[key] as GeneralSnapshot[K];
-    // 两边都改过 / 都没改：本地优先（都没改时两边本来就一样）
-    return local[key] as GeneralSnapshot[K];
-  };
-
-  const library = mergeLibrary({
-    local: local.library,
-    remote: remoteGeneral.library,
-    base: base?.library ?? null,
-    alive,
-    localHasEdits,
-  });
-
-  // 激活题库：本地那个还在就用本地的，否则退到云端那个，都没有就置空
-  const activeBank =
-    local.activeBank !== null && alive.has(local.activeBank)
-      ? local.activeBank
-      : remoteGeneral.activeBank !== null && alive.has(remoteGeneral.activeBank)
-        ? remoteGeneral.activeBank
-        : null;
-
-  return {
-    activeBank,
-    defaultSettings: pick("defaultSettings"),
-    library,
-    globalSettings: pick("globalSettings"),
-  };
-}
-
-function mergeLibrary(params: {
-  local: readonly LibraryEntry[];
-  remote: readonly LibraryEntry[];
-  base: readonly LibraryEntry[] | null;
-  alive: ReadonlyMap<string, BankSummaryInput>;
-  localHasEdits: boolean;
-}): LibraryEntry[] {
-  const { local, remote, base, alive, localHasEdits } = params;
-
-  const index = (entries: readonly LibraryEntry[]): Map<string, LibraryEntry> => {
-    const map = new Map<string, LibraryEntry>();
-    for (const entry of entries) map.set(entry.hash, entry);
-    return map;
-  };
-  const localMap = index(local);
-  const remoteMap = index(remote);
-  const baseMap = base === null ? null : index(base);
-
-  const chosen = new Map<string, LibraryEntry>();
-  for (const [hash, summary] of alive) {
-    const l = localMap.get(hash);
-    const r = remoteMap.get(hash);
-    if (l && r) {
-      if (baseMap === null) {
-        chosen.set(hash, l);
-      } else {
-        const b = baseMap.get(hash);
-        const localChanged = !same(l, b);
-        const remoteChanged = !same(r, b);
-        chosen.set(hash, !localChanged && remoteChanged ? r : l);
-      }
-    } else if (l) {
-      chosen.set(hash, l);
-    } else if (r) {
-      chosen.set(hash, r);
-    } else {
-      chosen.set(hash, {
-        hash,
-        name: summary.name,
-        mode: summary.mode,
-        count: summary.count,
-        addedAt: Date.now(),
-      });
-    }
-  }
-
-  // ── 顺序 ──
-  //
-  // 顺序也要三方合并，不能无脑用本地那份：否则「在 A 上把题库拖到最前面」
-  // 永远传不到 B（两边条目内容一模一样，只有数组顺序变了）。
-  // 判据是「谁动过顺序」——只按仍然存在的题库比较，删除题库不该被当成重排。
-  const localOrder = orderOf(local, alive);
-  const remoteOrder = orderOf(remote, alive);
-  const baseOrder = base === null ? null : orderOf(base, alive);
-
-  let order: string[];
-  if (baseOrder === null) {
-    // 没有基准：本地是个空壳（新设备）就听云端的顺序，否则以本地为准
-    order = [...(localHasEdits ? localOrder : remoteOrder)];
-  } else {
-    const localReordered = !sameList(localOrder, baseOrder);
-    const remoteReordered = !sameList(remoteOrder, baseOrder);
-    // 只有云端动过顺序就跟着云端；两边都动过 / 都没动 → 本地优先
-    order = [...(!localReordered && remoteReordered ? remoteOrder : localOrder)];
-  }
-
-  // 顺序里还没提到的（新合成的条目等）接在后面，按 hash 排
-  const seen = new Set(order);
-  for (const hash of [...alive.keys()].sort()) {
-    if (seen.has(hash)) continue;
-    seen.add(hash);
-    order.push(hash);
-  }
-
-  return order.map((hash) => chosen.get(hash) as LibraryEntry);
-}
-
-/** 题库列表里「还活着的那些」的顺序，用来判断谁动过排序。 */
-function orderOf(
-  entries: readonly LibraryEntry[],
-  alive: ReadonlyMap<string, BankSummaryInput>,
-): string[] {
-  const seen = new Set<string>();
-  const order: string[] = [];
-  for (const entry of entries) {
-    if (!alive.has(entry.hash) || seen.has(entry.hash)) continue;
-    seen.add(entry.hash);
-    order.push(entry.hash);
-  }
-  return order;
-}
-
-function sameList(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
-
-/** 计划里有没有任何要做的事。 */
 export function planIsEmpty(plan: SyncPlan): boolean {
   return (
     !plan.generalPush &&
@@ -945,85 +535,3 @@ export function applyResolution(
  *
  * 认不出来的文件（不是我们的格式）一律跳过，只留个名字——绝不按猜测去动它。
  */
-export function buildRemoteState(files: readonly RemoteFile[]): RemoteState {
-  const banks = new Map<string, RemoteBank>();
-  const shardBanks = new Map<number, string[]>();
-  const unreadableShards: string[] = [];
-
-  let general: GeneralSnapshot | null = null;
-  let generalHash = "";
-
-  for (const file of files) {
-    if (file.name === GIST_GENERAL_FILE) {
-      generalHash = file.hash;
-      general = parseGeneral(file.json);
-      continue;
-    }
-    const index = shardIndexFromFileName(file.name);
-    if (index === null) continue;
-    if (file.json === null) {
-      unreadableShards.push(file.name);
-      continue;
-    }
-    let snapshot: ShardSnapshot;
-    try {
-      snapshot = JSON.parse(file.json) as ShardSnapshot;
-    } catch {
-      unreadableShards.push(file.name);
-      continue;
-    }
-    const record = snapshot?.banks;
-    if (record === null || typeof record !== "object") {
-      unreadableShards.push(file.name);
-      continue;
-    }
-
-    const hashes: string[] = [];
-    for (const [hash, raw] of Object.entries(record)) {
-      if (raw === null || typeof raw !== "object") continue;
-      const bank = raw as BankSnapshot;
-      if (!Array.isArray(bank.questions)) continue;
-      const name =
-        typeof bank.name === "string" && bank.name.length > 0
-          ? bank.name
-          : "未命名题库";
-      const snapshot: BankSnapshot = {
-        mode: bank.mode === "memory" ? "memory" : "quiz",
-        name,
-        questions: bank.questions,
-        // `== null` 而不是 `=== undefined`：云端分片里写着 `"state": null` 时，
-        // `JSON.parse` 得到 `null`，它和「没有这个字段」是同一个意思（进度哈希
-        // 也把它们归一到同一个值）。原样留成 `null` 会让下游把「没进度」读成
-        // 「有进度」——本地快照那一侧（`collectLocalState`）同样这么归一。
-        //
-        // `stripDeviceLocal`：**云端那一侧也要剥**。本地收集时剥了、云端不剥的话，
-        // 两边结构天生不一样：进度哈希永远对不上（"永远待同步"），而且升级前推上去的
-        // 老快照会把 `activePool` / `ui` 这些又灌回本地。剥掉之后两边同一个口径，
-        // 老数据被安静忽略，下一次真正的上传顺手把云端也洗干净。
-        ...(bank.state == null ? {} : { state: stripDeviceLocal(bank.state) }),
-      };
-      hashes.push(hash);
-      banks.set(hash, {
-        hash,
-        shard: index,
-        // 哈希算在归一化后的快照上，和本地那份用同一套口径
-        contentHash: bankContentHash(snapshot),
-        progressHash: bankProgressHash(snapshot),
-        name,
-        snapshot,
-      });
-    }
-    shardBanks.set(index, hashes);
-  }
-
-  return { general, generalHash, files: [...files], banks, shardBanks, unreadableShards };
-}
-
-function parseGeneral(json: string | null): GeneralSnapshot | null {
-  if (json === null) return null;
-  try {
-    return normalizeGeneral(JSON.parse(json));
-  } catch {
-    return null;
-  }
-}

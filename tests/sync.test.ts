@@ -23,18 +23,17 @@ import {
   type BankRecord,
   type CollectedState,
 } from "@/features/sync/collect";
+import { mergeGeneral } from "@/features/sync/general";
+import { buildRemoteState } from "@/features/sync/remote";
 import {
   applyResolution,
-  buildRemoteState,
   buildSyncPlan,
   forcePullPlan,
   forcePushPlan,
   judgeBank,
-  mergeGeneral,
   planIsEmpty,
-  type RemoteBank,
-  type RemoteState,
-} from "@/features/sync/merge";
+} from "@/features/sync/planner";
+import type { RemoteBank, RemoteState } from "@/features/sync/types";
 import {
   applyRemoteValue,
   clearSyncMeta,

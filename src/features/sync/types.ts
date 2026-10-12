@@ -426,3 +426,97 @@ export function normalizeGeneralOrNull(value: unknown): GeneralSnapshot | null {
   }
   return normalizeGeneralSnapshot(value);
 }
+
+// ── 计划与云端形状（从旧 `merge.ts` 收拢进类型模块）────────────────────────
+
+export interface RemoteBank {
+  hash: string;
+  /** 它落在哪个分片 */
+  shard: number;
+  /** **内容**哈希（题目 + 模式，与 `BankRecord.contentHash` 同一套口径） */
+  contentHash: string;
+  /** **进度**哈希（`state` 整段）；与内容哈希分开，冲突判定只认内容 */
+  progressHash: string;
+  name: string;
+  snapshot: BankSnapshot;
+}
+
+/** 从 Gist 文件解出来的云端状态。 */
+export interface RemoteState {
+  /** 云端那份 `_general.json`；解不出来时是 null */
+  general: GeneralSnapshot | null;
+  generalHash: string;
+  files: RemoteFile[];
+  banks: Map<string, RemoteBank>;
+  /** 分片下标 → 该文件里的题库 hash */
+  shardBanks: Map<number, string[]>;
+  /** 认不出来 / 解不开的分片文件名，原样留着不动 */
+  unreadableShards: string[];
+}
+
+// ── 判定 ────────────────────────────────────────────────────────────────────
+
+export type BankVerdict =
+  | "skip"
+  | "push"
+  | "pull"
+  | "deleteLocal"
+  | "deleteRemote"
+  | "conflict";
+
+/** 一个题库的同步决定。 */
+export interface BankAction {
+  hash: string;
+  /** 给人看的题库名 */
+  name: string;
+  verdict: BankVerdict;
+  /** 本地内容的哈希；本地没有这个题库时 undefined */
+  localHash?: string;
+  /** 云端内容的哈希；云端没有这个题库时 undefined */
+  remoteHash?: string;
+  /** 本地最后改动时间（毫秒） */
+  localAt: number;
+  /**
+   * 两边都动过、但**题目一样**时合出来的那份快照（见 `mergeBankSnapshots`）。
+   *
+   * 有它就说明这一轮不需要人裁决：引擎会把它**同时**写到本地与云端，
+   * 两台设备的进度都保住。题目真的分叉了才会是 `conflict`，那时没有这个字段。
+   */
+  merged?: unknown;
+  /** 这次合并是不是只有进度不同（用于给用户报一句「已合并进度」） */
+  progressMerged?: boolean;
+}
+
+/** 云端某个分片文件里装了哪些题库（回收空文件时要重算）。 */
+export interface RemoteShardRef {
+  name: string;
+  banks: string[];
+}
+
+/** 一份待执行的同步计划。 */
+export interface SyncPlan {
+  actions: BankAction[];
+  /** 合并后的 `_general.json`（本地应该长成的样子） */
+  general: GeneralSnapshot;
+  /** 要不要把 general 推到云端 */
+  generalPush: boolean;
+  /** 本地的 general 需不需要改写 */
+  generalChangedLocal: boolean;
+  /**
+   * 列表 / 设置是不是真的变了（**不看题库的增删**）。
+   *
+   * 只用来给用户报一句「设置已更新」：题库的增删已经有「新增 / 删除」在报了，
+   * 再按 general 文件变没变来报，就会变成「导入了 1 个题库」也顺带说「设置已更新」。
+   */
+  settingsChanged: boolean;
+  /** 需要重建并上传的分片下标（重建后内容没变就不传） */
+  pushShards: number[];
+  /** 应当从云端删掉的文件（分片空了 / 旧格式残留） */
+  deleteRemoteFiles: string[];
+  /** 还没裁决的冲突 */
+  conflicts: BankAction[];
+  /** 云端分片现状（裁决冲突后重算回收列表用） */
+  remoteShards: RemoteShardRef[];
+  /** 云端那些旧格式残留 / 认不出来的文件 */
+  remoteJunkFiles: string[];
+}

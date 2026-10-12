@@ -20,7 +20,7 @@
  */
 
 import { planProgressMerge } from "./progressMerge";
-import type { BankVerdict } from "./merge";
+import type { BankVerdict } from "./types";
 
 /** 本地这一轮要做什么。 */
 export type BankActionKind =
