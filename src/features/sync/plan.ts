@@ -83,9 +83,9 @@ export function decideBank(params: {
   const upload = judged === "push" || judged === "deleteRemote";
 
   // 只有「本地改过」+「两边题目一样」才谈得上按卡合并进度。
-  // 题目分叉了是 conflict，早就由 `judgeBank` 定死了。
+  // 题目分叉了是 conflict，早就由 `judgeBank` 定死了；这里只处理"题目一样"。
   if (
-    judged !== "push" ||
+    (judged !== "push" && judged !== "pull") ||
     local === undefined ||
     remote === undefined ||
     local.contentHash !== remote.contentHash
@@ -94,9 +94,19 @@ export function decideBank(params: {
   }
 
   const plan = planProgressMerge({ base, local: local.snapshot, remote: remote.snapshot });
+
+  // 「两边各有一份对方没有的」→ 合并结果同时写本地与云端。
+  //
+  // `judged === "pull"` 也要走这条：判定说"本地没动过"，但**本地手里那份云端没有**
+  // ——这正是 blob 读-改-写竞态的后半段（`docs/sync-redesign.md` §4）：
+  //   A 读 v1 → B 读 v1 → A 写（v1+A）→ B 写（v1+B）⇒ A 的改动从云端消失
+  // A 自己那轮推成功过、基准线是"对齐"的，所以这次判成 pull；要是照旧盲目下载，
+  // A 本地仅存的那份也被盖掉，**改动就永久丢了**。所以必须合并并**推回去**。
   if (plan.kind === "merge") {
-    return { action: "merge", upload, merged: plan.snapshot, progressMerged: true };
+    return { action: "merge", upload: true, merged: plan.snapshot, progressMerged: true };
   }
+
+  // 云端那份已经够了 → 照常下载（`action` 就是 `actionOf("pull")`）
   // `skip` = 云端没有本地没见过的卡 → **本地不用改写，但照样要上传**
   //（上传的理由是"本地改过"，与"合并能不能带来新东西"是两件事）。
   // `push` = 云端压根没有进度 / 进度表是空的 → 直接传本地那份。

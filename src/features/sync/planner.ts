@@ -200,6 +200,7 @@ export function forcePushPlan(
       hash: bank.hash,
       name: bank.snapshot.name,
       verdict: "push",
+      upload: true,
       localHash: bank.contentHash,
       remoteHash: remote.banks.get(bank.hash)?.contentHash,
       localAt: bank.localAt,
@@ -211,6 +212,7 @@ export function forcePushPlan(
       hash: bank.hash,
       name: bank.name,
       verdict: "deleteRemote",
+      upload: true,
       remoteHash: bank.contentHash,
       localAt: 0,
     });
@@ -246,6 +248,7 @@ export function forcePullPlan(
       hash: bank.hash,
       name: bank.name,
       verdict: "pull",
+      upload: false,
       localHash: local.banks.get(bank.hash)?.contentHash,
       remoteHash: bank.contentHash,
       localAt: local.banks.get(bank.hash)?.localAt ?? 0,
@@ -257,6 +260,7 @@ export function forcePullPlan(
       hash: bank.hash,
       name: bank.snapshot.name,
       verdict: "deleteLocal",
+      upload: false,
       localHash: bank.contentHash,
       localAt: bank.localAt,
     });
@@ -353,8 +357,9 @@ export function buildSyncPlan(params: {
       localHash: localBank?.contentHash,
       remoteHash: remoteBank?.contentHash,
       localAt: localBank?.localAt ?? 0,
-      // `verdict` 保持 `judgeBank` 的原话（要不要上传由它决定），
-      // 合并出来的东西与"本地怎么改"单独记在下面两个字段里。
+      // `verdict` 保持 `judgeBank` 的原话（往哪个方向走），
+      // 「要不要上传」与「合并出来的那份」由 `decideBank` 单独给出。
+      upload: decision.upload,
       ...(decision.merged === undefined ? {} : { merged: decision.merged }),
       ...(decision.progressMerged ? { progressMerged: true } : {}),
     };
@@ -419,7 +424,8 @@ function shardsToPush(
   const blocked = new Set(conflicts.map((action) => action.hash));
   const indexes = new Set<number>();
   for (const action of actions) {
-    if (action.verdict !== "push" && action.verdict !== "deleteRemote") continue;
+    // 按 `upload` 而不是 `verdict`：判定 pull 但"本地手里那份云端没有"时同样要传
+    if (!action.upload) continue;
     if (blocked.has(action.hash)) continue;
     indexes.add(shardIndexOfHash(action.hash));
   }
@@ -502,7 +508,7 @@ export function applyResolution(
     const resolution = resolutions.get(action.hash);
     if (resolution === undefined) return action;
     const wanted: BankVerdict = resolution === "keepLocal" ? "push" : "pull";
-    return { ...action, verdict: wanted };
+    return { ...action, verdict: wanted, upload: wanted === "push" };
   });
 
   const shardBanks = new Map<number, string[]>();

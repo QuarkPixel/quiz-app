@@ -15,6 +15,8 @@ export { mergeProgressMap, sameProgress };
 export type ProgressMergePlan =
   | { kind: "skip" }
   | { kind: "push"; snapshot: unknown }
+  /** 云端那份**已经够了**（本地没有它没有的东西）→ 照常下载 */
+  | { kind: "pull" }
   | { kind: "merge"; snapshot: unknown };
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -93,25 +95,42 @@ export function planProgressMerge(params: {
   //     永远算不出"有新东西" ⇒ 永远 skip ⇒ 本地那份整份盖上去，云端的改动没了；
   //   - **记忆模式**只要分叉落在非卡片字段（`settings` / `retry` / `review` /
   //     `learnedDay`），同样 skip。
-  // （`model/merge.ts` 里刷题那一支的合并算子本身是对的，只是从来没人调用。）
   //
-  // 但也不能拿"合并结果 vs 本地那份"直接比：`mergeBankState` 会把缺省字段补齐
-  // （`settings: {}` 之类），那样比会把"其实没从云端取到东西"误判成一次合并。
-  // 所以拿**本地与自己合并**的结果当基线：补齐的默认值两边一样，只有云端真的带来
-  // 了不一样的东西才会不相等。
-  const mergedWithRemote = mergeBankState({
+  // 判据是**三方比较**：把「只有本地」「只有云端」各自跟自己合一遍当基线，
+  // 再看真合并的结果是不是两边都超不过 ——
+  //
+  //   合并结果 == 只有本地   → 云端没给出新东西 → 本地够用（skip：只上传）
+  //   合并结果 == 只有云端   → 本地没给出新东西 → 云端够用（pull：照常下载）
+  //   两边都不是             → **各有一份对方没有的** → merge（写回本地并上传）
+  //
+  // 拿"跟自己合"当基线是为了抵消 `mergeBankState` 补齐缺省字段的影响
+  // （`settings: {}` 之类），否则「其实没从云端取到东西」会被误判成一次合并，
+  // 用户只在一台设备上做过题却看到「合并进度 1」。
+  //
+  // 第三条正是 blob 竞态（`docs/sync-redesign.md` §4）的恢复路径：
+  // A 的改动被 B 基于旧副本的写入盖掉之后，A 本地那份就是"云端没有的东西"，
+  // 于是这里判成 merge 并把结果推回去，改动不会**本地与云端一起消失**。
+  const merged = mergeBankState({
     base: stateOf(params.base),
     local: stateOf(params.local),
     remote: stateOf(params.remote),
     mode: modeOf(params.local),
   });
-  const mergedAlone = mergeBankState({
+  const localOnly = mergeBankState({
     base: stateOf(params.base),
     local: stateOf(params.local),
     remote: stateOf(params.local),
     mode: modeOf(params.local),
   });
-  if (same(mergedWithRemote ?? null, mergedAlone ?? null)) return { kind: "skip" };
+  if (same(merged ?? null, localOnly ?? null)) return { kind: "skip" };
+
+  const remoteOnly = mergeBankState({
+    base: stateOf(params.base),
+    local: stateOf(params.remote),
+    remote: stateOf(params.remote),
+    mode: modeOf(params.local),
+  });
+  if (same(merged ?? null, remoteOnly ?? null)) return { kind: "pull" };
 
   return {
     kind: "merge",

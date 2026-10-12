@@ -37,6 +37,24 @@ beforeEach(() => {
 });
 
 /** 找几个落在同一个分片里的 hash（用来验证「同片互不牵连」）。 */
+/** 直接改某台设备的进度文件（模拟答题落盘）。 */
+function study(
+  hash: string,
+  patch: { currentRound?: number; progress?: Record<string, unknown> },
+): void {
+  const raw = JSON.parse(localStorage.getItem(`quiz_app_state_${hash}`) ?? "{}");
+  const memory = raw.memory ?? { progress: {}, settings: {} };
+  localStorage.setItem(
+    `quiz_app_state_${hash}`,
+    JSON.stringify({
+      ...raw,
+      ...(patch.currentRound === undefined ? {} : { currentRound: patch.currentRound }),
+      memory: { ...memory, ...(patch.progress === undefined ? {} : { progress: patch.progress }) },
+    }),
+  );
+  h.tick();
+}
+
 function hashesInSameShard(count: number): string[] {
   const byShard = new Map<number, string[]>();
   for (let i = 0; i < 20000; i += 1) {
@@ -590,4 +608,90 @@ describe("双设备同步", () => {
       "不该在盘上留下字符串 null",
     ).toBeNull();
   });
+});
+
+/**
+ * **并发写同一个分片**：blob 级的读-改-写竞态（设计说明 §4）。
+ *
+ * 远端是"一个哑 blob"，没有服务端合并、没有 per-file 版本号，于是：
+ *
+ *     A 读 v1 → B 读 v1 → A 写（v1 + A 的改动）→ B 写（v1 + B 的改动）
+ *     ⇒ A 的改动从云端消失（它从来没进过 B 那份副本）
+ *
+ * **任何合并算法都救不了这一步**——能救的只有"输家本地还留着改动 + 判定别盲目
+ * 拉取覆盖"。而 A 自己那轮推成功过、基准线是"对齐"的，所以它下次同步**判成 pull**
+ * ——照旧盲目下载的话，A 本地仅存的那份也被盖掉，**改动就永久丢了**（审计复现）。
+ *
+ * 这条用例钉的就是那条恢复路径：判定 pull 但"本地手里那份云端没有"时必须合并、
+ * 并且**推回云端**，否则下一轮又被拉取盖掉。
+ */
+test("并发写同一个分片：赢家覆盖了输家，输家下次同步要把两边的改动都补回来", async () => {
+  h.freshDevice("A");
+  h.seedBank(HASH_A, "题库一", "第一版");
+  h.setActive(HASH_A);
+  h.open("A");
+  await h.on("A", (engine) => engine.sync());
+  const gistId = h.store("A").value.gistId;
+  h.save("A");
+  h.freshDevice("B");
+  h.open("B", { gistId });
+  await h.on("B", (engine) => engine.sync());
+  h.save("B");
+
+  // 两台设备都基于 v1，各改**不同**的一张卡。
+  // 注意 `save(name)` 是「把**当前** localStorage 存回 name」——每台设备改完要
+  // 立刻 save，不能交叉着改（那样后一次改会落到前一台设备名下）。
+  h.engine("A");
+  study(HASH_A, {
+    currentRound: 5,
+    progress: { q1: { state: "reviewing", level: 3, streak: 0, nextDue: 111, lapses: 0, rev: 5000 } },
+  });
+  h.save("A");
+  h.engine("B");
+  study(HASH_A, {
+    currentRound: 6,
+    progress: { q2: { state: "reviewing", level: 4, streak: 0, nextDue: 222, lapses: 0, rev: 6000 } },
+  });
+  h.save("B");
+
+  // A 先上传（云端 = v1 + A）
+  h.engine("A");
+  await h.on("A", (engine) => engine.sync());
+
+  // 模拟 B 的写入把它盖掉：B 读的是 v1，写出去的自然是 v1 + B。
+  h.engine("B");
+  const bState = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+  const bQuestions = JSON.parse(localStorage.getItem(`quiz_app_questions_${HASH_A}`) ?? "[]");
+  h.fake.put(
+    gistId,
+    shardFileName(shardIndexOf(HASH_A)),
+    await encodePayload({
+      banks: {
+        [HASH_A]: { mode: "memory", name: "题库一", questions: bQuestions, state: bState },
+      },
+    }),
+  );
+
+  // A 再同步：本地那份就是"云端没有的东西" → 必须合并并推回去，不许盲目下载
+  h.engine("A");
+  const healed = await h.on("A", (engine) => engine.sync());
+  expect(healed.conflicts, "两边改的是不同的卡，不该报冲突").toEqual([]);
+
+  h.engine("A");
+  const aState = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+  expect(aState.memory?.progress?.q1, "A 自己的改动被静默丢了").toBeDefined();
+  expect(aState.memory?.progress?.q2, "B 的改动也该被合进来").toBeDefined();
+
+  // 云端也得是两边都有的那一份，否则下一轮又被拉取盖掉
+  const cloud = (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state as {
+    memory: { progress: Record<string, unknown> };
+  };
+  expect(Object.keys(cloud.memory.progress).sort(), "恢复结果没推回云端").toEqual(["q1", "q2"]);
+
+  // 再同步一次也不该被拽回去
+  h.engine("A");
+  await h.on("A", (engine) => engine.sync());
+  h.engine("A");
+  const again = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+  expect(again.memory?.progress?.q1, "再同步一次又被拽回去了").toBeDefined();
 });

@@ -965,16 +965,12 @@ export class SyncEngine {
     }
 
     for (const action of plan.actions) {
-      if (action.verdict === "pull") {
-        const bank = remote.banks.get(action.hash);
-        if (!bank) continue;
-        writeBankLocally(bank);
-        ensureLibraryEntry(action.hash, bank.snapshot.mode);
-        touched.add(action.hash);
-      } else if (action.verdict === "deleteLocal") {
-        removeBankLocally(action.hash);
-        touched.add(action.hash);
-      } else if (action.merged !== undefined) {
+      // **`merged` 必须排在 `pull` 前面。**
+      //
+      // 判定是 `pull` 不等于"本地那份可以丢"：blob 竞态恢复时（本地手里那份云端
+      // 没有）`decideBank` 会给出 `merged`，那时盲目下载会把本地仅存的那份盖掉。
+      // 以前这里先命中 `verdict === "pull"`，合并结果被整个丢掉（审计实测）。
+      if (action.merged !== undefined) {
         // 两边都做过这同一个题库、题目却一样：合并出来的那一份**先落到本地**，
         // 后面第 ③ 步再从本地重建分片推上去——于是两台设备的进度都在，
         // 不需要用户去「保留本地 / 保留云端」里二选一。
@@ -988,6 +984,15 @@ export class SyncEngine {
         clearMtime(`quiz_app_state_${hash}`);
         touched.add(hash);
         outcome.progressMerged += action.progressMerged === true ? 1 : 0;
+      } else if (action.verdict === "pull") {
+        const bank = remote.banks.get(action.hash);
+        if (!bank) continue;
+        writeBankLocally(bank);
+        ensureLibraryEntry(action.hash, bank.snapshot.mode);
+        touched.add(action.hash);
+      } else if (action.verdict === "deleteLocal") {
+        removeBankLocally(action.hash);
+        touched.add(action.hash);
       }
     }
 
