@@ -146,3 +146,40 @@ export function bankContentHashInRemoteFiles(
 }
 
 /** 「用本地覆盖云端」：无条件把本地全部推上去，云端多出来的题库删掉。 */
+
+/** 远端「读不出来」的东西（读不出来 ≠ 没有，见 `remoteReadDamage`）。 */
+export interface RemoteDamage {
+  /** 解不开的分片文件名 */
+  shards: string[];
+  /** `_general.json` 在，但解不开 */
+  general: boolean;
+}
+
+/**
+ * 远端有没有**读不出来**的文件。
+ *
+ * ── 为什么必须有这道闸 ──────────────────────────────────────────────────────
+ *
+ * 读不出来 ≠ 没有。云端某个分片解不开时，那个分片里的题库在 `remote.banks` 里
+ * **根本不存在**，于是判定把它们当成「云端删掉了」推出 `deleteLocal`，
+ * 引擎就把本地题库**连题目带还没同步的进度一起删掉**——而且提示写的是
+ * 「删除 1」，用户完全看不出这是数据损坏导致的。线上复现过：把云端分片改成垃圾，
+ * 同步一次本地正在做的那个题库就没了，云端那个坏文件还原样没动。
+ *
+ * `_general.json` 同理，但后果更大：它解不开会被当成「云端没有 general」，
+ * 于是用空壳合并并把空壳**推上云端**，`defaultSettings` / `globalSettings`
+ * 在本地和云端**一起变成 `{}`**。
+ *
+ * 哪些情况会「读不出来」：Gitee 把响应体截断（GitHub 会带 `truncated` 标志，
+ * Gitee 行为无文档）、payload 版本比本机新（`decodePayload` 是**故意**返回 null 的，
+ * 注释写着「调用方应当跳过它而不是当成损坏数据删掉」）、响应体被截断或写坏。
+ *
+ * 返回 `null` = 远端读全了，可以正常规划。
+ */
+export function remoteReadDamage(remote: RemoteState): RemoteDamage | null {
+  // `generalHash` 非空说明 `_general.json` **在**（只是解不开）；
+  // 它为空才是「云端压根没有这个文件」。
+  const general = remote.general === null && remote.generalHash !== "";
+  if (remote.unreadableShards.length === 0 && !general) return null;
+  return { shards: [...remote.unreadableShards].sort(), general };
+}

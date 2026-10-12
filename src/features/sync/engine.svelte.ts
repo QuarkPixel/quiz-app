@@ -47,7 +47,7 @@ import {
 } from "./collect";
 import { syncConfigStore, type SyncConfigStore } from "./config.svelte";
 import { GiteeClient, GiteeError, type GistSummary } from "./gitee";
-import { buildRemoteState } from "./remote";
+import { buildRemoteState, remoteReadDamage } from "./remote";
 import {
   applyResolution,
   buildSyncPlan,
@@ -843,6 +843,30 @@ export class SyncEngine {
 
       const remote = buildRemoteState(await this.readRemoteFiles(gist.files));
       const meta = loadSyncMeta();
+
+      // ── 远端有读不出来的文件 → **整轮停手**，一个字节都不动 ──
+      //
+      // 读不出来 ≠ 没有：某个分片解不开时，它里面的题库在 `remote.banks` 里根本
+      // 不存在，判定会当成「云端删掉了」推出 `deleteLocal`，于是本地题库连题目带
+      // 还没同步的进度一起被删掉（提示还写着「删除 1」，用户看不出是数据损坏）。
+      // `_general.json` 解不开更糟：会被当成「云端没有 general」，拿空壳合并之后
+      // 再把空壳推上去，两边的设置一起变成 `{}`。
+      //
+      // 三种模式都拦：`push` / `pull` 是用户显式要求覆盖，但"覆盖一个读不出来的
+      // 文件"同样是在销毁看不见的数据，宁可让他先看清楚。
+      const damage = remoteReadDamage(remote);
+      if (damage !== null) {
+        const what = [
+          damage.general ? GIST_GENERAL_FILE : null,
+          ...damage.shards,
+        ].filter((name): name is string => name !== null);
+        this.setStatus("error", "云端有文件读不出来，已停手");
+        this.emit({
+          kind: "error",
+          message: `云端有文件读不出来，已停手（${what.join("、")}）`,
+        });
+        return IDLE_OUTCOME;
+      }
 
       let plan =
         mode === "push"
