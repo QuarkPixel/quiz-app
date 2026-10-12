@@ -138,39 +138,40 @@ Yjs / Automerge / TinyBase 都一样：它们合并的是双方**都见过**的�
 - Gitee 的 `Access-Control-Expose-Headers` 只有 `Etag, total_count, total_page`，
   **浏览器读不到限流头**，只能从 403/429 反推。
 
-## 5. 模块划分（拆掉 1041 行的 `merge.ts` 和 1528 行的 engine）
+## 5. 模块划分（实际建成）
+
+阶段 1–3 已完成的部分：
 
 ```
+src/lib/rev.ts                修订戳原语（nextRev / revOf）——属于数据模型，两个 feature 共用
 src/features/sync/
+  hash.ts                     canonicalJson / stableHash（叶子；合并与卡片排序都要用）
   model/
-    clock.ts        修订戳：nextRev / observe
-    policy.ts       ★ §3.3 的声明表（唯一写规矩的地方）
-    merge.ts        ★ 纯函数：按 policy 做三方合并（替掉 progressMerge + mergeQuizState + mergeMemoryState）
-    policy.test.ts  覆盖性测试：可同步字段没登记就红
-  codec.ts          快照 ↔ 分片文件的装拆（从 collect/merge 拆出来）
-  remote.ts         云端文件 → RemoteState（从旧 merge.ts 拆出 buildRemoteState）
-  collect.ts        本地 → 快照（只收登记过的字段）
-  plan.ts           ★ 唯一决定 push / pull / merge / delete / conflict / skip
-  apply.ts          ★ 唯一把计划落到本地 / 云端的地方
-  storage.ts        mtime / 同步元数据 / localStorage 包装（保持）
-  engine.svelte.ts  只做编排：调度、状态机、错误处理、刷新让路
-  summary.ts        文案（保持）
+    card.ts                   ★ 卡片全序 + mergeCard（取整条赢家，lapses 取大）
+    policy.ts                 ★ 字段归属声明表 + 剥/贴设备本地字段 + **编译期穷尽护栏**
+    operators.ts              通用算子（max / pickScalar / 高水位集合 / 按天）
+    same.ts                   「一样吗」的唯一写法（键序无关）
+    merge.ts                  ★ 三方合并（按 policy 逐字段合）
+  progressMerge.ts            对外门面（保留旧名字给调用方与护栏用例）
+  plan.ts                     ★ 唯一决定处：BankDecision { action, upload, merged?, progressMerged }
+  collect.ts / merge.ts / engine.svelte.ts / storage.ts / gitee.ts / payload.ts / summary.ts
 ```
 
-关键结构改动：**判定不再被调用方改写**。
-旧代码里 `judgeBank` 给结论、`buildSyncPlan` 又用一句 `action.verdict = "skip"` 覆盖它——
-上一个线上 bug（本地改动传不上去）就长在那句改写里。新 `plan.ts` 里
-"要不要上传"和"要不要把合并结果写回本地"是**两个独立字段**，各有各的名字：
+两处**结构性**改动已经落地：
 
-```ts
-interface BankPlan {
-  action: "skip" | "upload" | "download" | "merge" | "deleteRemote" | "deleteLocal" | "conflict";
-  /** 要写回本地的合并结果（只有 action === "merge" 时有） */
-  merged?: BankSnapshot;
-  /** 这一轮要上传这个题库吗（与 merged 无关，可以同时为真） */
-  upload: boolean;
-}
-```
+- **判定不再被调用方改写**：`judgeBank` 只回答"往哪个方向走"，`decideBank`（`plan.ts`）
+  一次给出完整决定，其中「本地怎么改」(`action`) 与「要不要上传」(`upload`) 是
+  **两个独立字段**。以前是一个 `verdict` 被下游 `action.verdict = "skip"` 改掉，
+  那就是线上「复习完又变回待复习」的根因。
+- **设备本地字段两层都剥**：收集本地（`collectLocalState`）与解云端（`buildRemoteState`）
+  都走 `stripDeviceLocal`；写回本地统一走 `engine.applyRemoteState`（唯一落盘入口），
+  它用 `attachDeviceLocal` 贴回本机那份。只剥一边会让两边口径天生不同
+  ——进度哈希永远对不上（"永远待同步"），而且老快照会把别人的界面状态灌回本地。
+
+**还没做的**（属于可读性拆分，不影响正确性）：`merge.ts`（1029 行）里仍混着
+`judgeBank` / `buildSyncPlan` / `mergeGeneral` / `buildRemoteState` / 强制覆盖，
+`engine.svelte.ts`（1548 行）仍混着调度、状态机与落盘。下一步应按职责拆成
+`general.ts` / `remote.ts` / `apply.ts` / `planner.ts`。
 
 ## 6. 测试策略
 

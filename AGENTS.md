@@ -444,25 +444,21 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   从前 `state`（全部进度 + 设置）也算进内容哈希，于是「你在两台设备上先后做了同一份
   题库」和「两边把题目改得不一样了」在判定里长得一模一样：报冲突 → 用户在「保留本地 /
   保留云端」里二选一 → 怎么选都要丢掉另一边的进度（线上反馈「总是莫名其妙冲突」的根因）。
-  现在：题目一样就走合并，逐张卡取「更靠前」的那一份
-  （`mastered` > `reviewing` > `learning`，同档比 `level`；`lapses` 取大；
-  `mastered` 是终态、绝不被拖回去）。三方参照是 `SyncRowMeta.snapshot`
-  ——**写进基准线的完整快照**，没有它只能退化成「两边各取更靠前的」，同一张卡上
-  「一边推进、一边归零」就会合错。
-  只有题目真的分叉了才报冲突、才需要人裁决。
-  **「已掌握是终态」必须压过「谁改了听谁」**（`pickTerminal`）：`rank()` 里给 mastered
-  的 MAX_SAFE_INTEGER 如果只当同分时的 tie-break，就会漏掉「本地没动、云端动了」
-  那条分支——于是「A 上已掌握、B 上重新学」同步回来会把 A 的掌握状态拖回学习中
-  （踩过）。掌握是单向的（`advanceReview` 走完 M 才给），跨设备合并永远不该倒退。
-  所以终态判断要**单独提在三个分支之前**，不能塞进 `rank` 里当同分裁决。
-  **选择顺序不能写反**（`mergeProgressMap` 里那三个分支）：① 已掌握是终态；
-  ② 只有一边相对基准改过 → **听改了的那边，与档位高低无关**；③ 都改过 / 都没改过
-  → 才按 `rank` 取更靠前的那一档。第 ② 条踩过：三个分支一度都改成按 `rank` 挑，
-  而复习时答「模糊 / 忘记」正是**故意往下退**（退一级 / 归零），同时把 `nextDue`
-  推到将来——按档位挑就会让云端那份「还没动过的旧高档位」赢，**连同它旧的
-  `nextDue`（今天）一起拿回来**，刚复习完的卡立刻又变回「待复习」，每同步一次
-  复发一次。补测试时注意：只测「往上进」的话两种挑法答案相同，**测不出来**，
-  必须有一条「改过的那边档位更低」的用例。
+  现在：题目一样就走合并。**规矩的完整说明在 [`docs/sync-redesign.md`](./docs/sync-redesign.md)**，
+  代码在 `src/features/sync/model/`（`card.ts` 卡片全序、`policy.ts` 字段归属表、
+  `merge.ts` 三方合并）。要点：
+  - 每张卡带一个**修订戳** `MemoryProgress.rev`（`src/lib/rev.ts`），
+    合并时**取整条更"新"的那份**（全序：已掌握 → rev → nextDue → level → 档位 →
+    规范化 JSON）。**必须取整条**：`level` 与 `nextDue` 是耦合的，只取其中一个
+    就会让"档位来自云端、到期日却是云端那条过期的"错配。
+  - **不要用"档位高低"当"谁更晚"的替身**（踩过三次）：`level` 既不是时钟，
+    也不单调（答「忘记」会把它降下来），而复习时答「模糊 / 忘记」正是**故意往下退**。
+    按档位挑会让云端那份旧的高档位赢，**连同它旧的 `nextDue` 一起拿回来** →
+    刚复习完的卡立刻又变回「待复习」，每同步一次复发一次。
+  - `mergeCard` 必须满足**交换律 / 结合律 / 幂等**（`tests/syncMergeAlgebra.test.ts`
+    用随机卡片两两组合钉住）。违反它就会出现"A 算出 X、B 算出 Y"的隐形 bug。
+    注意排序兜底键**要排除 `lapses`**（它选完赢家再取大），否则结合律会破。
+  - 已掌握是**终态**（排在比较的第一位），`lapses` 取两边最大值。
   **「一样」的判据必须与键序无关**：`sameValue` 走 `stableHash`（`collect.ts`），
   不要用 `JSON.stringify` 比——本地那份是内存对象、云端那份是解码出来的 JSON 文本，
   键序天然可能不同（`stableHash` 就是为此递归排序键名）。用 stringify 比的话，
@@ -485,14 +481,27 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   `snapshot` = 进度合并的三方参照、`mode` = 拉取时保住题库模式
   （`collectLocalState` 是从库列表取 `mode` 的，库列表还没有这个题库时会按 `quiz`
   算内容哈希，同一份题库于是在两边算出两个哈希）。
-- **`push` 不能被 `planProgressMerge` 的 `skip` 降级成 `skip`**（`buildSyncPlan`）：
-  两个 `skip` 回答的是**不同的问题**——`merge.kind === "skip"` 是「云端有没有本地
-  没见过的卡」（决定要不要把合并结果写回本地），而 `push` 是「本地改过、要传上去」。
-  混成一件的后果是本地那次改动**永远传不上去**：这一轮什么都不做，基准线却照常
-  刷新，于是下一轮 `localAt <= syncedAt` 成立、判成 `pull`，云端那份旧进度反手
-  把本地这次改动覆盖掉。线上表现就是「复习完一道题 → 同步成功 → 刷新之后那道题
-  又变回待复习」。`merge.kind === "skip"` 时正确的做法是**只**不设 `action.merged`、
-  不报「合并进度」，verdict 保持 `push`。
+- **「本地怎么改」与「要不要上传」是两个独立的问题**（`plan.ts` 的 `decideBank`）：
+  `BankDecision { action, upload, merged?, progressMerged }`——`action` 说本地这一轮做什么
+  （`skip` / `download` / `merge` / `deleteLocal` / `deleteRemote` / `conflict`），
+  `upload` 说要不要把这个题库传上去。**`action === "skip"` 时 `upload` 照样可以是 `true`**
+  （本地改过、云端没有 → 只需要上传，本地不用改写）。
+  以前这两件事被塞进一个 `verdict`，然后 `buildSyncPlan` 用一句
+  `action.verdict = "skip"` **把它改掉**——那就是线上「复习完的卡又变回待复习」的根因：
+  本地改动永远传不上去，而基准线照常刷新，下一轮判成 pull、云端旧进度反手覆盖回来。
+  **判定结果不许再被调用方改写**，要加语义就加字段。
+- **设备本地的字段不参与同步，也不能被同步擦掉**（`model/policy.ts` 的
+  `DEVICE_LOCAL_BANK_FIELDS`）：`ui` / `filterType` / `activePool` / `roundMastered` /
+  `roundGoal` / `roundPoolIds` / `learningPool`。它们没有语义上说得通的合并方式
+  （原来那种 `local ?? remote` 谁在本地谁赢 ⇒ **违反交换律**）。两条边界都要顾：
+  **收集本地与解云端都要剥**（只剥一边会让进度哈希永远对不上 → "永远待同步"，
+  而且老快照会把别的设备的界面状态灌回本地），写回本地统一走引擎的
+  `applyRemoteState`（唯一落盘入口），它用 `attachDeviceLocal` 贴回**本机那份**。
+- **新增可同步字段必须登记**（`model/policy.ts`）：那里有**编译期穷尽护栏**，
+  给状态加字段忘了登记 → `pnpm check` 直接不过。四项（卡片 / `StoredState` 顶层 /
+  `MemoryStoredState` / `GeneralSnapshot`）都验证过会红。
+  **护栏必须放在 `src/` 里**：`tsconfig.json` 的 `include` 只有 `src/**`，
+  `tests/` 根本不参与类型检查（这是流水线里一个既有缺口，写在测试里等于没有护栏）。
 - **只在一侧存在的题库**（对称的两条，删除靠它们传播）：
   - 有题库行的基准、且**另一边相对基准没动** → 那边删过它 → 跟着删
     （`deleteRemote` / `deleteLocal`）
