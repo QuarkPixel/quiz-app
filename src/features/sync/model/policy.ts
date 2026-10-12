@@ -136,15 +136,15 @@ export function attachDeviceLocal(
       if (field in local) next[field] = local[field];
     }
   }
-  const localMemory = asRecord(local?.memory);
-  const nextMemory = asRecord(next.memory);
-  if (localMemory !== undefined) {
-    const memory: Json = { ...(nextMemory ?? {}) };
-    for (const field of DEVICE_LOCAL_BANK_FIELDS) {
-      if (field in localMemory) memory[field] = localMemory[field];
-    }
-    next.memory = memory;
-  }
+  // `memory` 段：**进来那份没有就保持没有**，不要凭空造一个 `{}`。
+  //
+  // 以前无条件写 `next.memory = {...}`，于是「syncable 里没有 memory」会被变成
+  // `memory: {}`——把本机的进度段换成一个空壳（审计复现）。而 `memory: {}` 与
+  // 「没有 memory 键」在下游不是一回事（`hasMemory` 之类的判断会因此翻面）。
+  //
+  // 注意：`DEVICE_LOCAL_BANK_FIELDS` 里目前**没有**任何字段住在 `memory` 段内
+  // （`retry` / `review` 都是要同步的），所以这里没有"贴回设备本地字段"的动作；
+  // 哪天有了，在这里按 `localMemory` 贴回去。
   return next;
 }
 

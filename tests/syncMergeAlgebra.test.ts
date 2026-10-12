@@ -133,3 +133,77 @@ describe("卡片合并：全序本身的性质", () => {
     }
   });
 });
+
+/**
+ * **状态级**合并的代数性质。
+ *
+ * 原来这一组只覆盖了单张卡（`mergeCard`），而"整段状态"的合并是另外一堆算子
+ * （集合 / 计数 / 按天 / 单值）。这层漏过一次真事：集合与 record 的输出顺序
+ * 随**参数顺序**变，于是两台设备算出**不同的哈希** → 互相认为对方"改过" →
+ * 来回推。顺序不是语义，但对哈希是——所以下面连"输出逐字节相同"一起钉。
+ */
+
+import { mergeBankState } from "@/features/sync/model/merge";
+
+function randomState(rnd: () => number): Record<string, unknown> {
+  const pick = <T,>(items: readonly T[]): T => items[Math.floor(rnd() * items.length)]!;
+  const day = 100 + Math.floor(rnd() * 2);
+  const state: Record<string, unknown> = {
+    masteredIds: ["q1", "q2", "q3"].filter(() => rnd() < 0.5),
+    masteredMistakes: Object.fromEntries(
+      ["q1", "q2"].filter(() => rnd() < 0.6).map((id) => [id, Math.floor(rnd() * 4)]),
+    ),
+    currentRound: Math.floor(rnd() * 10),
+    settings: { correctStreakToMaster: 1 + Math.floor(rnd() * 4) },
+  };
+  if (rnd() < 0.8) {
+    state.memory = {
+      progress: {
+        ...(rnd() < 0.7 ? { q1: randomCard(random) } : {}),
+        ...(rnd() < 0.7 ? { q2: randomCard(random) } : {}),
+      },
+      settings: { graduateLevel: 5 + Math.floor(rnd() * 4) },
+    };
+  }
+  if (rnd() < 0.6) {
+    state.memory = {
+      ...(state.memory as object),
+      retry: { day, targets: { q1: Math.floor(rnd() * 3), q2: Math.floor(rnd() * 3) } },
+      review: { day, reviewedIds: pick([[], ["q1"], ["q1", "q2"]]), total: 1 + Math.floor(rnd() * 5) },
+    };
+  }
+  return state;
+}
+
+const STATE_CORPUS = Array.from({ length: 40 }, () => randomState(random));
+
+describe("状态级合并：代数性质", () => {
+  it("交换律（逐字节，不只是 toEqual——顺序不同会让哈希不同）", () => {
+    for (const a of STATE_CORPUS) {
+      for (const b of STATE_CORPUS) {
+        const ab = JSON.stringify(mergeBankState({ local: a, remote: b, mode: "memory" }));
+        const ba = JSON.stringify(mergeBankState({ local: b, remote: a, mode: "memory" }));
+        expect(ab, `顺序变了就得到不同结果：\n a=${JSON.stringify(a)}\n b=${JSON.stringify(b)}`).toBe(ba);
+      }
+    }
+  });
+
+  it("幂等：merge(a, a) 与 a 的**可同步部分**一致", () => {
+    for (const a of STATE_CORPUS) {
+      const once = mergeBankState({ local: a, remote: a, mode: "memory" });
+      const twice = mergeBankState({ local: once, remote: once, mode: "memory" });
+      expect(JSON.stringify(twice), JSON.stringify(a)).toBe(JSON.stringify(once));
+    }
+  });
+
+  it("带基准时也不依赖参数顺序", () => {
+    for (let i = 0; i < STATE_CORPUS.length - 1; i += 3) {
+      const base = STATE_CORPUS[i]!;
+      const a = STATE_CORPUS[i + 1]!;
+      const b = STATE_CORPUS[(i + 7) % STATE_CORPUS.length]!;
+      const ab = JSON.stringify(mergeBankState({ base, local: a, remote: b, mode: "memory" }));
+      const ba = JSON.stringify(mergeBankState({ base, local: b, remote: a, mode: "memory" }));
+      expect(ab).toBe(ba);
+    }
+  });
+});
