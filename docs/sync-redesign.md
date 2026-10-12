@@ -140,38 +140,49 @@ Yjs / Automerge / TinyBase 都一样：它们合并的是双方**都见过**的�
 
 ## 5. 模块划分（实际建成）
 
-阶段 1–3 已完成的部分：
+阶段 1–4 全部落地后的结构：
 
 ```
 src/lib/rev.ts                修订戳原语（nextRev / revOf）——属于数据模型，两个 feature 共用
 src/features/sync/
   hash.ts                     canonicalJson / stableHash（叶子；合并与卡片排序都要用）
-  model/
-    card.ts                   ★ 卡片全序 + mergeCard（取整条赢家，lapses 取大）
-    policy.ts                 ★ 字段归属声明表 + 剥/贴设备本地字段 + **编译期穷尽护栏**
+  model/                      ★ 合并语义（纯函数，无 I/O）
+    card.ts                   卡片全序 + mergeCard（取整条赢家，lapses 取大）
+    policy.ts                 ★ 字段归属声明表 + 剥/贴设备本地字段 + 编译期穷尽护栏
     operators.ts              通用算子（max / pickScalar / 高水位集合 / 按天）
     same.ts                   「一样吗」的唯一写法（键序无关）
-    merge.ts                  ★ 三方合并（按 policy 逐字段合）
-  progressMerge.ts            对外门面（保留旧名字给调用方与护栏用例）
+    merge.ts                  三方合并（按 policy 逐字段合）
   plan.ts                     ★ 唯一决定处：BankDecision { action, upload, merged?, progressMerged }
-  collect.ts / merge.ts / engine.svelte.ts / storage.ts / gitee.ts / payload.ts / summary.ts
+  planner.ts                  计划器：judgeBank / buildSyncPlan / 强制覆盖 / 裁决 / 分片筛选（纯）
+  general.ts                  general 三方合并（题库列表 + 设置 + 顺序；含"新设备空壳"防线）
+  remote.ts                   云端 → RemoteState（分片解析 / 杂物 / 按 hash 回查）
+  localwrite.ts               落到本地 + 记账（唯一落盘入口 applyRemoteState；基准线 baselineMeta / nextMeta）
+  progressMerge.ts            对外门面（保留旧名字给调用方与护栏用例）
+  collect.ts                  本地 → 快照（只收登记过的字段）
+  engine.svelte.ts            只剩编排：调度 / 状态机 / 错误处理 / 刷新让路
+  storage.ts / gitee.ts / payload.ts / types.ts / summary.ts / target.ts / config.svelte.ts / shortcut.ts
 ```
 
-两处**结构性**改动已经落地：
+规模变化（重构前 → 现在）：
 
-- **判定不再被调用方改写**：`judgeBank` 只回答"往哪个方向走"，`decideBank`（`plan.ts`）
-  一次给出完整决定，其中「本地怎么改」(`action`) 与「要不要上传」(`upload`) 是
-  **两个独立字段**。以前是一个 `verdict` 被下游 `action.verdict = "skip"` 改掉，
-  那就是线上「复习完又变回待复习」的根因。
-- **设备本地字段两层都剥**：收集本地（`collectLocalState`）与解云端（`buildRemoteState`）
-  都走 `stripDeviceLocal`；写回本地统一走 `engine.applyRemoteState`（唯一落盘入口），
-  它用 `attachDeviceLocal` 贴回本机那份。只剥一边会让两边口径天生不同
-  ——进度哈希永远对不上（"永远待同步"），而且老快照会把别人的界面状态灌回本地。
+| 文件 | 前 | 后 |
+|---|---|---|
+| `merge.ts` | 1041 | **0**（拆成 `planner` 537 + `general` 261 + `remote` 148 + 类型进 `types`） |
+| `progressMerge.ts` | 442 | 117（规矩搬进 `model/`，只剩门面） |
+| `engine.svelte.ts` | 1528 | 1234（抽出 `localwrite` 359） |
 
-**还没做的**（属于可读性拆分，不影响正确性）：`merge.ts`（1029 行）里仍混着
-`judgeBank` / `buildSyncPlan` / `mergeGeneral` / `buildRemoteState` / 强制覆盖，
-`engine.svelte.ts`（1548 行）仍混着调度、状态机与落盘。下一步应按职责拆成
-`general.ts` / `remote.ts` / `apply.ts` / `planner.ts`。
+三处**结构性**改动：
+
+1. **判定不再被调用方改写**：`judgeBank` 只回答"往哪个方向走"，`decideBank`（`plan.ts`）
+   一次给出完整决定，其中「本地怎么改」(`action`) 与「要不要上传」(`upload`) 是
+   **两个独立字段**。以前是一个 `verdict` 被下游 `action.verdict = "skip"` 改掉，
+   那就是线上「复习完又变回待复习」的根因。
+2. **设备本地字段两层都剥**：收集本地与解云端都走 `stripDeviceLocal`；写回本地统一走
+   `localwrite.applyRemoteState`（唯一落盘入口），它用 `attachDeviceLocal` 贴回本机那份。
+   只剥一边会让两边口径天生不同——进度哈希永远对不上（"永远待同步"），
+   而且老快照会把别的设备的界面状态灌回本地。
+3. **合并语义与 I/O 彻底分开**：`model/` 全是纯函数（代数性质可被测试穷举），
+   `localwrite.ts` 是唯一碰 localStorage 的写侧，`engine.svelte.ts` 只剩编排。
 
 ## 6. 测试策略
 

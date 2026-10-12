@@ -406,6 +406,8 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 ### 云同步（Gitee Gist）
 
 详见 [`docs/cloud-sync-setup.md`](./docs/cloud-sync-setup.md)。
+**合并规矩的唯一真相是 [`docs/sync-redesign.md`](./docs/sync-redesign.md)**，
+重构的来龙去脉与验证情况见 [`docs/sync-refactor-report.md`](./docs/sync-refactor-report.md)。
 
 ```
 浏览器 ──► gitee.com/api/v5/gists
