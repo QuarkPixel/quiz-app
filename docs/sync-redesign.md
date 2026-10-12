@@ -201,3 +201,46 @@ interface BankPlan {
 | 4 | `deviceLocal` 剥离 + 拉取保留本机 | 新增迁移测试 |
 | 5 | engine 瘦身 + 基准线记账复核 | 全套 + build |
 | 6 | 文档汇总 + 变更报告 | — |
+
+---
+
+## 附录 A：为什么没有改用现成的同步库（调研结论）
+
+重构前先做了一轮候选库调研（Yjs / Automerge 3.x / Loro / TinyBase / RxDB / Signaldb /
+Fireproof / PouchDB / Replicache / ElectricSQL / Evolu / Liveblocks / Dexie Cloud /
+json-joy / cr-sqlite / PowerSync / Jazz / Triplit / InstantDB …）。结论：
+
+1. **没有任何库能做"对接一下就行"。** 唯一有"无服务端 + 哑 blob 存储"官方路径的是
+   TinyBase（`createCustomPersister`）、Yjs / Loro / Automerge（只给字节，传输自理），
+   其余全部需要我们自己跑一个服务端，直接出局。
+   **面向 Gitee Gist 的适配器一个都不存在**：`y-gist` / `y-github` /
+   `@automerge/automerge-repo-storage-github` 在 npm 上全是 404。
+   `gitee.ts` + `payload.ts` 这部分**永远得自己写**，换库只换合并负载。
+
+2. **库只覆盖"合并算谁赢"，覆盖不了我们在修的那一类。** 把同步层按职责拆开看：
+   最近七个同步修复里，**四个是记账/表示**（push 被降级、`null` 与缺字段、键序敏感的
+   相等判断、探针残留），**三个是语义**（三方比较、删除压过编辑、掌握是终态）。
+   库能消掉的是"合并算谁赢"这一类，记账、调度、基准线、限流**一个都少不了**。
+
+3. **blob 级的读-改-写竞态，任何合并算法都救不了。**
+   A 读 v1 → B 读 v1 → A 写 → B 写：A 的改动不见了，因为它**从来没进过 B 的那份副本**。
+   所有 CRDT 合并的都是"双方都见过的状态"。所以基准线账本必须留着
+   （这条写进了 §4）。
+
+4. **两条最难的领域规矩，没有库会替我们实现**，而且默认行为是错的：
+   - **「已掌握不许回退」**：Yjs 的 `Y.Map` 并发写按 client id 定胜负（不是时钟），
+     TinyBase 按 HLC，Automerge 按 op id——都**可能**让 `mastered` 回退；
+     Automerge 至少把落败值留在 `getConflicts()` 里可挽回，Yjs 直接丢。
+   - **「删除不能压过编辑」**：Yjs 删父节点会把子内容 GC 掉（文档明说不可恢复）；
+     Automerge 3.5.0 **实测**同样是父键消失、嵌套编辑在物化文档里取不回来
+     （两种合并顺序都确定性地丢掉）。我们"报冲突让人裁决"的策略没有对应物。
+
+5. **代价还不止于此**：Automerge 是 +1.1 MB gzip 的 wasm（且历史无法裁剪，
+   实测约 11.5 字节/次改动、同一文档重建后能小 16 倍）；Loro 是 +0.79 MB brotli
+   wasm，且它唯一的 GC（shallow snapshot）会**打断离线设备**的同步——正是我们的
+   主要使用场景；TinyBase 有一个"戳超前 5 分钟就静默丢弃"的时钟偏移保护，
+   对手机钟不准的用户是静默丢数据。
+
+**所以选择自己写合并，但把"缺的那个原语"补上**（修订戳 + 显式字段策略 + 格运算），
+而不是把状态搬进某个库的文档格式。如果以后仍想上 CRDT，本方案的第 1 条
+（每张卡带单调修订戳）**任何方案都需要**，不会白做。

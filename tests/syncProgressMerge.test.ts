@@ -131,25 +131,25 @@ describe("两台设备都做过同一份题库", () => {
     expect(Object.keys(localA.memory.progress).sort()).toEqual(["q1", "q2"]);
   });
 
-  test("同一张卡两边都答过 → 取更靠前的那一档", async () => {
+  test("同一张卡两边都答过 → 不冲突，取**改得更晚**的那一份", async () => {
     await twoDevices();
 
-    // A 把 q1 推到「复习中第 3 级」
+    // A 把 q1 推到「复习中第 3 级」（早一些改动）
     h.engine("A");
     study(HASH_A, {
       currentRound: 3,
       progress: {
-        q1: { state: "reviewing", level: 3, streak: 0, nextDue: 111, lapses: 0 },
+        q1: { state: "reviewing", level: 3, streak: 0, nextDue: 111, lapses: 0, rev: 1000 },
       },
     });
     await h.on("A", (engine) => engine.sync());
 
-    // B 把 q1 答「忘记」了（归零到第 1 级、lapses 涨到 2）
+    // B 把 q1 答「忘记」了（归零到第 1 级、lapses 涨到 2）——**更晚**的改动
     h.engine("B");
     study(HASH_A, {
       currentRound: 7,
       progress: {
-        q1: { state: "reviewing", level: 1, streak: 0, nextDue: 222, lapses: 2 },
+        q1: { state: "reviewing", level: 1, streak: 0, nextDue: 222, lapses: 2, rev: 2000 },
       },
     });
     const outcome = await h.on("B", (engine) => engine.sync());
@@ -159,9 +159,40 @@ describe("两台设备都做过同一份题库", () => {
     const merged = JSON.parse(
       localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}",
     ) as { memory: { progress: Record<string, { level: number; lapses: number }> } };
-    expect(merged.memory.progress.q1.level, "取更靠前的那一档").toBe(3);
+    // 判据是**修订戳**，不是档位高低：B 那次「忘记」是真实发生过的、也更晚，
+    // 取 A 的第 3 级等于把用户刚做的操作丢掉（老实现就是那样）。
+    expect(merged.memory.progress.q1.level, "听改得更晚的那一份").toBe(1);
     expect(Object.keys(merged.memory.progress), "同一张卡不会变成两条").toEqual(["q1"]);
     expect(merged.memory.progress.q1.lapses, "累计答错次数取大，不丢").toBe(2);
+  });
+
+  test("同一张卡两边都答过 → 反方向：A 更晚，就听 A 的（换设备也一样）", async () => {
+    await twoDevices();
+
+    h.engine("A");
+    study(HASH_A, {
+      currentRound: 3,
+      progress: {
+        q1: { state: "reviewing", level: 3, streak: 0, nextDue: 111, lapses: 0, rev: 5000 },
+      },
+    });
+    await h.on("A", (engine) => engine.sync());
+
+    h.engine("B");
+    study(HASH_A, {
+      currentRound: 7,
+      progress: {
+        q1: { state: "reviewing", level: 1, streak: 0, nextDue: 222, lapses: 2, rev: 4000 },
+      },
+    });
+    await h.on("B", (engine) => engine.sync());
+
+    h.engine("B");
+    const merged = JSON.parse(
+      localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}",
+    ) as { memory: { progress: Record<string, { level: number; lapses: number }> } };
+    expect(merged.memory.progress.q1.level, "A 的戳更新，听 A 的").toBe(3);
+    expect(merged.memory.progress.q1.lapses).toBe(2);
   });
 
   test("题目真的分叉了 → 照样报冲突，等用户裁决", async () => {
@@ -250,8 +281,10 @@ describe("按卡合并的规矩（纯函数）", () => {
    * 而复习时答「模糊 / 忘记」正是故意往下退的操作，咬人的就是这一格。
    */
   test("改过的那边档位更低 → 仍然听它的（不是挑高的）", () => {
-    const base = { q1: entry({ level: 5 }) };
-    const lowered = { q1: entry({ level: 4 }) };
+    // 「谁改过」现在由**修订戳**表达（以前靠与基准比对）：改过的那边戳更大。
+    // 复习时答「模糊 / 忘记」会故意把档位往下退，那是最需要被尊重的一类改动。
+    const base = { q1: entry({ level: 5, rev: 1000 }) };
+    const lowered = { q1: entry({ level: 4, rev: 2000 }) };
     expect(
       mergeProgressMap(base, lowered, base).q1.level,
       "只有本地改过，哪怕档位更低也听本地的",
@@ -260,6 +293,19 @@ describe("按卡合并的规矩（纯函数）", () => {
       mergeProgressMap(base, base, lowered).q1.level,
       "只有云端改过，哪怕档位更低也听云端的",
     ).toBe(4);
+  });
+
+  test("两边都没戳（老数据）→ 退回按 nextDue / 档位裁决，仍然是确定的", () => {
+    const older = { q1: entry({ level: 5, nextDue: 1000 }) };
+    const newer = { q1: entry({ level: 4, nextDue: 2000 }) };
+    // 没有戳时「复习过的不许被拽回到期」这条兜住：nextDue 大的赢
+    expect(mergeProgressMap(older, newer, older).q1.level).toBe(4);
+    expect(mergeProgressMap(older, older, newer).q1.level).toBe(4);
+    // 两边都看不出先后时退到档位（确定，且两边算出来一样）
+    const a = { q1: entry({ level: 5 }) };
+    const b = { q1: entry({ level: 2 }) };
+    expect(mergeProgressMap(a, a, b).q1.level).toBe(5);
+    expect(mergeProgressMap(a, b, a).q1.level).toBe(5);
   });
 
   test("两边都改了 → 取更靠前的档位（mastered > reviewing > learning）", () => {
@@ -482,10 +528,17 @@ describe("复习完的卡不能在同步后又变回待复习", () => {
     ...patch,
   });
 
-  /** 云端的基准：第 5 级、今天到期。 */
-  const before = at({ nextDue: studyDay(Date.now()) });
+  /**
+   * 云端的基准：第 5 级、今天到期。
+   *
+   * **必须在用例体内造**：`SyncHarness.start()` 把 `Date.now` 换成了它自己的钟
+   * （`tests/syncSupport.ts`），在 describe 作用域里算出来的是真实时间，
+   * 两边会差好几年，夹具自己就不自洽了。
+   */
+  const beforeToday = () => at({ nextDue: studyDay(Date.now()) });
 
   test("本地答「模糊」（退一级 + 推到将来）→ 合并后不该被云端退回今天", () => {
+    const before = beforeToday();
     const local = fuzzyReview(before, Date.now());
     expect(local.level, "模糊就是往下退一级").toBe(4);
     const merged = mergeProgressMap(
@@ -498,6 +551,7 @@ describe("复习完的卡不能在同步后又变回待复习", () => {
   });
 
   test("本地答「忘记」（归零 + 推到明天）→ 合并后不该被云端退回今天", () => {
+    const before = beforeToday();
     const local = resetReview(before, Date.now());
     expect(local.level, "忘记就是打回第 1 级").toBe(1);
     const merged = mergeProgressMap(
@@ -510,6 +564,7 @@ describe("复习完的卡不能在同步后又变回待复习", () => {
   });
 
   test("镜像：只有云端复习过（本地没动）→ 同样不该留着本地那份旧的到期时间", () => {
+    const before = beforeToday();
     const remote = fuzzyReview(before, Date.now());
     const merged = mergeProgressMap(
       { q1: before },
@@ -598,5 +653,92 @@ describe("复习完的卡不能在同步后又变回待复习", () => {
       memory: { progress: Record<string, { level: number }> };
     };
     expect(cloud.memory.progress.q1.level).toBe(4);
+  });
+});
+
+/**
+ * 端到端复现线上那个「换个设备就不能用」的场景。
+ *
+ * A 上次同步过（云端是 A 的一份，那两张卡在第 5 级、今天到期）；B 上次同步更早，
+ * 本地还是第 3 级。用户在 B 上把两张都复习了，然后同步 —— 结果又变回「2 道待复习」。
+ *
+ * 根因是合并按档位挑赢家：云端第 5 级更高，于是连它那条**过期的 `nextDue`（今天）**
+ * 一起被拿回来。现在按修订戳（B 那次复习更晚）取整条，`level` 与 `nextDue` 同源。
+ */
+describe("端到端：A 同步过之后，B 复习完再同步", () => {
+  const dueAt = (level: number, nextDue: number, rev: number) => ({
+    state: "reviewing",
+    level,
+    streak: 0,
+    nextDue,
+    lapses: 0,
+    rev,
+  });
+
+  test("B 的复习成果不该被云端那份「更高档位但今天到期」覆盖", async () => {
+    const now = Date.now();
+    const today = studyDay(now);
+    const aLevel3 = dueAt(3, today, 1000);
+    const aLevel5 = dueAt(5, today, 2000);
+    // B 复习过之后：升一级、推到 8 天后，而且**戳更新**
+    const bReviewed = (() => {
+      const next = advanceReview(aLevel3 as never, 7, now);
+      return dueAt(next.level, next.nextDue, 3000);
+    })();
+
+    // A 建库，两台设备都先看到「第 3 级、今天到期」
+    h.freshDevice("A");
+    const a = h.open("A");
+    h.seedBank(HASH_A, "题库一", "第一版");
+    h.setActive(HASH_A);
+    await a.sync();
+    const gistId = h.store("A").value.gistId;
+    h.save("A");
+
+    h.engine("A");
+    study(HASH_A, { currentRound: 1, progress: { q1: aLevel3, q2: aLevel3 } });
+    await h.on("A", (engine) => engine.sync());
+
+    h.freshDevice("B");
+    h.open("B", { gistId });
+    await h.on("B", (engine) => engine.sync());
+    h.save("B");
+
+    // A 后来把那两张推到第 5 级（还没到复习日 → 仍然「今天到期」）并同步
+    h.engine("A");
+    study(HASH_A, { currentRound: 2, progress: { q1: aLevel5, q2: aLevel5 } });
+    await h.on("A", (engine) => engine.sync());
+
+    // 轮到 B：它本地还是第 3 级，看到 2 道待复习；用户把两张都复习了
+    h.engine("B");
+    study(HASH_A, { currentRound: 3, progress: { q1: bReviewed, q2: bReviewed } });
+
+    // 同步（用户说自动 / 手动都一样）
+    const outcome = await h.on("B", (engine) => engine.sync());
+    expect(outcome.conflicts).toEqual([]);
+
+    h.engine("B");
+    const state = JSON.parse(
+      localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}",
+    ) as { memory: { progress: Record<string, { level: number; nextDue: number }> } };
+    const stillDue = Object.values(state.memory.progress).filter((item) =>
+      isDue(item as never, now),
+    );
+    expect(stillDue, "B 刚复习完，不该又变回待复习").toEqual([]);
+    expect(state.memory.progress.q1!.level, "听 B 那次更晚的改动").toBe(4);
+
+    // 再同步一次也不该被拽回去（老 bug 每同步一次复发一次）
+    await h.on("B", (engine) => engine.sync());
+    h.engine("B");
+    const again = JSON.parse(
+      localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}",
+    ) as { memory: { progress: Record<string, { level: number }> } };
+    expect(again.memory.progress.q1!.level).toBe(4);
+
+    // 云端也得是这一份，否则下次同步还会把它拽回来
+    const cloud = (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state as {
+      memory: { progress: Record<string, { level: number }> };
+    };
+    expect(cloud.memory.progress.q1!.level).toBe(4);
   });
 });

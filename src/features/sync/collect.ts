@@ -22,6 +22,11 @@ import {
   STORAGE_PREFIX_STATE,
 } from "@/config";
 import { readLocal } from "./storage";
+// 规范化与哈希是叶子工具（合并、卡片排序也要用），实现放在 `hash.ts`。
+// 这里 re-export 是为了不动老的调用点；新代码请直接 import "./hash"。
+import { canonicalJson, stableHash } from "./hash";
+
+export { canonicalJson, stableHash };
 import {
   GIST_GENERAL_FILE,
   SHARD_COUNT,
@@ -84,37 +89,6 @@ export interface CollectedState {
   /** general 里有没有真东西（有题库或有激活题库）；空壳不算「本地改过」 */
   generalHasEdits: boolean;
   banks: Map<string, BankRecord>;
-}
-
-/**
- * 稳定哈希：同样内容得同样结果，且不受对象键序影响。
- *
- * 不要求密码学强度（这里的用途只是「两边是不是同一份」），但必须**确定性**：
- * 云端那份是解码出来的 JSON 文本，本地这份是内存对象，两者键序天然不同，
- * 所以先递归排序键名再算。
- */
-export function stableHash(value: unknown): string {
-  const canonical = canonicalJson(value);
-  let h1 = 0x811c9dc5;
-  let h2 = 0x01000193;
-  for (let i = 0; i < canonical.length; i += 1) {
-    const c = canonical.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
-    h2 = Math.imul(h2 + c, 0x85ebca6b) >>> 0;
-  }
-  return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
-}
-
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-    .join(",")}}`;
 }
 
 interface BankSummaryLike {
