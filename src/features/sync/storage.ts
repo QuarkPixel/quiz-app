@@ -334,11 +334,21 @@ export function loadSyncMeta(): SyncMeta {
 }
 
 /** 写入同步元数据。 */
-export function saveSyncMeta(meta: SyncMeta): void {
+/**
+ * 写同步账本。**返回有没有写成功**——调用方必须看返回值。
+ *
+ * 账本写不进去（配额满 / 隐私模式）不是"小事"：`computePendingChanges` 会一直
+ * 读到旧行 ⇒ 指示灯**永远黄**、每轮都基于陈旧基准重新规划，而"内容没变就不传"的
+ * 短路又让这一轮什么都不做 ⇒ **静默空转**，用户只看到"同步了但一直是黄的"。
+ * 以前这里把异常 `console.warn` 吞掉、返回 void，谁都不知道。
+ */
+export function saveSyncMeta(meta: SyncMeta): boolean {
   try {
     writeLocal(STORAGE_KEY_SYNC_META, JSON.stringify(meta));
+    return true;
   } catch (e) {
     console.warn("Failed to save sync meta:", e);
+    return false;
   }
 }
 

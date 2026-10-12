@@ -236,7 +236,7 @@ export function baselineMeta(state: CollectedState, remoteUpdatedAt: number): Sy
       remoteUpdatedAt,
       shard: bank.shard,
       mode: bank.snapshot.mode,
-      snapshot: bank.snapshot,
+      snapshot: ledgerSnapshot(bank.snapshot),
     };
   }
   return {
@@ -247,6 +247,29 @@ export function baselineMeta(state: CollectedState, remoteUpdatedAt: number): Sy
     // 刚建出来的云端不可能有冲突记录，但整份重写时也得给全（旧记录用不上）
     conflicts: {},
   };
+}
+
+
+/**
+ * 记账里那份「上次同步成功时这个题库长什么样」——**只留三方合并真正要用的部分**。
+ *
+ * 以前这里是**整份快照**（含 `questions`），于是账本把每个题库的题目**又存了一遍**。
+ * 实测 200 题的题库：`quiz_app_questions_X` 37 071 B，而 `quiz_app_sync_meta`
+ * 37 532 B——本地占用直接翻倍，而它正是最容易先撞上 localStorage 配额的那个键。
+ *
+ * 真正读它的只有一处：`buildSyncPlan` 把它当**三方参照**交给 `decideBank`，
+ * 而 `mergeBankState` 只从里面读 `state`（`stateOf`）。所以 `mode` + `state` 就够，
+ * 题目数组是纯粹的冗余。
+ *
+ * 老账本里带 `questions` 也能照常读（多出来的字段没人看），下一轮同步顺手被这份瘦身版覆盖。
+ */
+function ledgerSnapshot(snapshot: {
+  mode: "quiz" | "memory";
+  state?: unknown;
+}): { mode: "quiz" | "memory"; state?: unknown } {
+  return snapshot.state == null
+    ? { mode: snapshot.mode }
+    : { mode: snapshot.mode, state: snapshot.state };
 }
 
 /**
@@ -286,7 +309,7 @@ export function nextMeta(params: {
           mode: bank.snapshot.mode,
           // 合并过的那一份，云端与本地都已经是它了（第 ③ 步从本地重建上传），
           // 所以基准记的就是 `bank.snapshot`——下一轮它就是三方合并的参照
-          snapshot: bank.snapshot,
+          snapshot: ledgerSnapshot(bank.snapshot),
         };
         break;
 
@@ -301,7 +324,7 @@ export function nextMeta(params: {
             remoteUpdatedAt,
             shard: bank.shard,
             mode: bank.snapshot.mode,
-            snapshot: bank.snapshot,
+            snapshot: ledgerSnapshot(bank.snapshot),
           };
         }
         break;
@@ -323,7 +346,7 @@ export function nextMeta(params: {
     if (hash === null) continue;
     const local = state.banks.get(hash);
     if (local === undefined) continue;
-    if (row.snapshot === undefined) row.snapshot = local.snapshot;
+    if (row.snapshot === undefined) row.snapshot = ledgerSnapshot(local.snapshot);
     row.mode ??= local.snapshot.mode;
   }
 

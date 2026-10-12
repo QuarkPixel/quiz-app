@@ -236,7 +236,10 @@ export interface SyncRowMeta {
    * 才知道每一处是谁改的（见 `progressMerge.ts`）。旧版记账里没有这段，
    * 读不到就退化成「两边各取更靠前的」，不影响正确性。
    *
-   * 它不进 `generalBaseline` 那种体积考量——一个题库只存一份，不随题目数量增长。
+   * **只存 `mode` + `state`**（见 `localwrite.ts` 的 `ledgerSnapshot`）：
+   * 唯一读它的地方（`buildSyncPlan` 的三方参照 → `mergeBankState`）只读 `state`。
+   * 以前存的是**整份快照**，于是账本把每个题库的题目又存了一遍——实测 200 题的
+   * 题库本地占用直接翻倍，而 `quiz_app_sync_meta` 正是最容易先撞上配额的那个键。
    */
   snapshot?: unknown;
 }

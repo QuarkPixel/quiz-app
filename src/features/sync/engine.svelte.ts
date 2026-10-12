@@ -812,14 +812,22 @@ export class SyncEngine {
         const gist = await client.createGist(await this.encodeAll(files));
         this.targetMissing = false;
         this.patchConfig({ gistId: gist.id, gistUrl: gist.htmlUrl });
-        saveSyncMeta(baselineMeta(local, gist.updatedAt));
+        // 基准线写失败要出声：云端已经建好了，但账本没记上，下一轮会以为
+        // "还是第一次同步"——轻则白建一条 Gist，重则两边的题库列表对不上。
+        const firstMetaSaved = saveSyncMeta(baselineMeta(local, gist.updatedAt));
         const outcome: SyncOutcome = {
           ...IDLE_OUTCOME,
           pushed: local.banks.size,
           // 云端刚建出来，这些题库对它来说全是「新增」
           newOnCloud: local.banks.size,
         };
-        this.finishStatus(outcome, gist.files.size, local.banks.size);
+        if (firstMetaSaved) {
+          this.finishStatus(outcome, gist.files.size, local.banks.size);
+        } else {
+          // 账本没记上就不能报「已同步」：下一轮会以为"还是第一次同步"，
+          // 轻则白建一条 Gist，重则两边的题库列表对不上。
+          this.setStatus("error", "本地存储写不进去，同步记账失败");
+        }
         this.emit({
           kind: "synced",
           message: "已备份到云端",
@@ -951,6 +959,8 @@ export class SyncEngine {
     // 走到这里说明**所有**冲突都已裁决（没裁决的在上一步就 return 了），
     // 所以不会出现「一边有冲突一边还在写数据」的情况。
     const outcome: SyncOutcome = { ...IDLE_OUTCOME };
+    /** 账本有没有记成功。失败时收尾**不能用成功状态盖掉那个错误**（见第 ④ 步）。 */
+    let metaWritten = true;
 
     // 刷新判定要的两份事实：动手之前「当前在看哪个题库」，以及这一轮写坏了哪些题库
     const activeBefore = readActiveBankHash();
@@ -1028,7 +1038,12 @@ export class SyncEngine {
     }
 
     // ── ④ 记基准线 ──
-    saveSyncMeta(
+    //
+    // 写不进去必须**说出来**：账本写失败 ⇒ `computePendingChanges` 一直读到旧行
+    // ⇒ 指示灯永远黄、每轮基于陈旧基准重规划，而"内容没变就不传"又让这一轮什么
+    // 都不做 ⇒ 静默空转。数据这一轮已经落好了，所以不是"失败"，但要明确告诉用户
+    // 本地存储有问题。
+    const metaSaved = saveSyncMeta(
       nextMeta({
         previous: meta,
         state: after,
@@ -1037,6 +1052,14 @@ export class SyncEngine {
         now,
       }),
     );
+    if (!metaSaved) {
+      metaWritten = false;
+      this.setStatus("error", "本地存储写不进去，同步记账失败");
+      this.emit({
+        kind: "error",
+        message: "本地存储写不进去，同步记账失败（可能是空间已满）",
+      });
+    }
 
     // 这一轮到底动了什么——四个数互斥：新题库只算「新增」，不算「上传 / 下载」。
     // 冲突冻住的分片不算（`settledThisRound`），和基准线的写法保持一致。
@@ -1076,7 +1099,9 @@ export class SyncEngine {
       (activeBefore !== null && touched.has(activeBefore)) ||
       (activeBefore === null && activeAfter !== null);
 
-    this.finishStatus(outcome, fileCount, remoteBankCount(plan));
+    // 数据这一轮已经落好了，但**账本没记上**——那就不能报「已同步」：
+    // 指示点会一直黄、下一轮还会基于陈旧基准重规划，得让用户看到"本地存储满了"。
+    if (metaWritten) this.finishStatus(outcome, fileCount, remoteBankCount(plan));
     if (outcome.changedLocal) this.reloadForAppliedChanges();
     return outcome;
   }
