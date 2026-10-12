@@ -124,6 +124,14 @@ describe("引擎遇到 iOS 那种「钩子不生效」", () => {
         engine as unknown as { pollLocalChanges: () => void }
       ).pollLocalChanges();
       expect(engine.pendingChanges, "定时比对应该看出本地脏了").toBe(true);
+
+      // **后半句也得真的发生**：光变黄没用，得把上传排上。
+      // 旧行为在这里被 mtime 那道门挡住（而 mtime 正是失效的那个机制）
+      // ⇒ 这个定时器永远不排 ⇒ 用户只看到"一直是黄的"，永远不会自动上传。
+      expect(
+        (engine as unknown as { pushTimer: unknown }).pushTimer,
+        "兜底轮询只把指示灯变黄，没排上传",
+      ).not.toBeNull();
     } finally {
       engine.dispose();
     }

@@ -356,10 +356,16 @@ export class SyncEngine {
    * 而拉取是清掉 mtime 的（见 `applyRemoteValue`），于是刚拉下来的题库不会被
    * 当成「本地改动」再传一遍。白跑一轮事小，把别的设备的改动捎带着推回去事大。
    */
-  schedulePush(): void {
+  schedulePush(options: { force?: boolean } = {}): void {
     if (!this.isOn()) return;
     if (!this.config.value.autoSync) return;
-    if (!this.hasLocalDirtyKeys()) return;
+    // `force`：调用方已经用**内容哈希**确认过"本地确实有没推上去的东西"了
+    // （只有兜底轮询那条路）。那时**不能再过 mtime 这道门**——因为那道门正是
+    // 失效的那个机制：iOS 上包装过的 `setItem` 没生效 ⇒ 一个 mtime 都没记下
+    // ⇒ 这里永远早退 ⇒ 兜底轮询**只能把指示灯变黄，永远排不上上传**
+    //（文档里写的"脏了就标黄并排队上传"，后半句是死的；审计复现：
+    // 5 秒后 pendingChanges=true 但同步次数 0，25 秒后仍是 0）。
+    if (!options.force && !this.hasLocalDirtyKeys()) return;
     if (this.pushTimer !== null) clearTimeout(this.pushTimer);
     this.pushTimer = setTimeout(() => {
       this.pushTimer = null;
@@ -722,7 +728,8 @@ export class SyncEngine {
     if (document.visibilityState !== "visible") return;
     if (!this.computePendingChanges()) return;
     this.pendingChanges = true;
-    this.schedulePush();
+    // 已经按内容哈希确认过脏了，绕开 mtime 那道门（见 `schedulePush`）
+    this.schedulePush({ force: true });
   }
 
   private maybeCheckOnFocus(): void {
