@@ -25,6 +25,7 @@ import { readLocal } from "./storage";
 // 规范化与哈希是叶子工具（合并、卡片排序也要用），实现放在 `hash.ts`。
 // 这里 re-export 是为了不动老的调用点；新代码请直接 import "./hash"。
 import { canonicalJson, stableHash } from "./hash";
+import { stripDeviceLocal } from "./model/policy";
 
 export { canonicalJson, stableHash };
 import {
@@ -225,9 +226,12 @@ export function collectLocalState(
       questions,
       // `== null` 而不是 `=== undefined`：盘上存着字符串 `"null"` 时
       // `JSON.parse` 得到 `null`，那和「没有进度键」是同一个意思。
-      // `writeBankLocally` 会把云端的 `null` 原样写回来，所以这种值真的会存在；
+      // 写回云端内容时会原样写 `null`，所以这种值真的会存在；
       // 留成 `null` 会被下游读成「有进度」（见 `merge.ts` 的 `hasNoState`）。
-      ...(state == null ? {} : { state }),
+      //
+      // `stripDeviceLocal`：**设备本地的字段不进快照**（UI 状态、会话池子）。
+      // 它们没有语义上说得通的合并方式，原来的 `local ?? remote` 又违反交换律。
+      ...(state == null ? {} : { state: stripDeviceLocal(state) }),
     };
 
     banks.set(hash, {

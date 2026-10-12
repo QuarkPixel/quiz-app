@@ -46,6 +46,7 @@ import {
   type LocalFile,
 } from "./collect";
 import { syncConfigStore, type SyncConfigStore } from "./config.svelte";
+import { attachDeviceLocal } from "./model/policy";
 import { GiteeClient, GiteeError, type GistSummary } from "./gitee";
 import {
   applyResolution,
@@ -953,9 +954,7 @@ export class SyncEngine {
           `quiz_app_questions_${hash}`,
           JSON.stringify((action.merged as { questions: unknown[] }).questions),
         );
-        const mergedState = (action.merged as { state?: unknown }).state;
-        if (mergedState === undefined) removeLocal(`quiz_app_state_${hash}`);
-        else applyRemoteValue(`quiz_app_state_${hash}`, JSON.stringify(mergedState));
+        applyRemoteState(hash, (action.merged as { state?: unknown }).state);
         clearMtime(`quiz_app_questions_${hash}`);
         clearMtime(`quiz_app_state_${hash}`);
         touched.add(hash);
@@ -1332,6 +1331,31 @@ function toConflict(
  * 拉取**不碰 mtime**（见 `applyRemoteValue`）：这份内容来自云端，
  * 不是这台设备改的，记成「本地改动」会让下一次同步白推一遍甚至撞成冲突。
  */
+/**
+ * 把「可同步的状态」写回某个题库，**同时保留本机的设备本地字段**。
+ *
+ * 云端 / 合并结果里没有 `ui` / `filterType` / `activePool` 这些字段
+ * （它们不参与同步，见 `model/policy.ts`）。直接覆盖会让本机的界面状态和
+ * 当前这一轮的池子凭空消失——所以写回前先把本机那份贴回去。
+ *
+ * 这里是**唯一**把状态落盘的入口（拉取与合并都走它），漏一处就会丢本机状态。
+ */
+function applyRemoteState(hash: string, syncable: unknown): void {
+  const stateKey = `quiz_app_state_${hash}`;
+  const existing = (() => {
+    const raw = readLocal(stateKey);
+    if (raw === null) return undefined;
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      return undefined;
+    }
+  })();
+  const next = attachDeviceLocal(syncable, existing);
+  if (next === undefined) removeLocal(stateKey);
+  else applyRemoteValue(stateKey, JSON.stringify(next));
+}
+
 function writeBankLocally(bank: {
   hash: string;
   snapshot: { questions: unknown[]; state?: unknown };
@@ -1340,14 +1364,10 @@ function writeBankLocally(bank: {
   const stateKey = `quiz_app_state_${bank.hash}`;
 
   applyRemoteValue(questionsKey, JSON.stringify(bank.snapshot.questions));
-  if (bank.snapshot.state == null) {
-    // 云端这份没有进度 = 就是没有进度（跟着云端走，别留一份孤儿进度）。
-    // `== null` 而不是 `=== undefined`：`null` 与缺字段是同一个意思，原样写下去
-    // 会在盘上留下字符串 `"null"`，然后被当成「有进度」一路传（见 `hasNoState`）。
-    removeLocal(stateKey);
-  } else {
-    applyRemoteValue(stateKey, JSON.stringify(bank.snapshot.state));
-  }
+  // `state == null` = 云端这份没有进度 = 就是没有进度（跟着云端走，别留一份孤儿进度）。
+  // `== null` 而不是 `=== undefined`：两者是同一个意思，原样写下去会在盘上留下
+  // 字符串 `"null"`，然后被当成「有进度」一路传（见 `merge.ts` 的 `hasNoState`）。
+  applyRemoteState(bank.hash, bank.snapshot.state);
   clearMtime(questionsKey);
   clearMtime(stateKey);
 }

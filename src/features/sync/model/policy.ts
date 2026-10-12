@@ -88,12 +88,13 @@ function asRecord(value: unknown): Json | undefined {
  * 新加字段时忘了登记，表现是"这个字段不参与同步"（可见、可查），
  * 而不是"它以一种没人想清楚的方式参与同步"（隐形、难查）。
  */
-export function stripDeviceLocal(state: Json | undefined): Json | undefined {
+export function stripDeviceLocal(state: unknown): Json | undefined {
   if (state === undefined) return undefined;
-  const rest = { ...state };
+  if (state === null || typeof state !== "object" || Array.isArray(state)) return undefined;
+  const rest = { ...(state as Json) };
   for (const field of DEVICE_LOCAL_BANK_FIELDS) delete rest[field];
 
-  const memory = asRecord(state.memory);
+  const memory = asRecord((state as Json).memory);
   if (memory !== undefined) {
     const kept: Json = {};
     for (const path of SYNCED_BANK_FIELDS) {
@@ -113,12 +114,14 @@ export function stripDeviceLocal(state: Json | undefined): Json | undefined {
  * UI 状态和当前这一轮的池子凭空消失。所以写回前先把本机那份贴回去。
  */
 export function attachDeviceLocal(
-  syncable: Json | undefined,
+  syncable: unknown,
   existingLocal: unknown,
 ): Json | undefined {
-  if (syncable === undefined) return undefined;
+  if (syncable === null || typeof syncable !== "object" || Array.isArray(syncable)) {
+    return undefined;
+  }
   const local = asRecord(existingLocal);
-  const next: Json = { ...syncable };
+  const next: Json = { ...(syncable as Json) };
   if (local !== undefined) {
     for (const field of DEVICE_LOCAL_BANK_FIELDS) {
       if (field in local) next[field] = local[field];

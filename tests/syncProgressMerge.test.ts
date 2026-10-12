@@ -742,3 +742,82 @@ describe("端到端：A 同步过之后，B 复习完再同步", () => {
     expect(cloud.memory.progress.q1!.level).toBe(4);
   });
 });
+
+/**
+ * **设备本地的字段（UI 状态 / 会话池子）不参与同步，也不能被同步擦掉。**
+ *
+ * `ui` / `filterType` / `activePool` 这些是设备自己的事：它们没有语义上说得通的
+ * 合并方式（原来的 `local ?? remote` 谁在本地谁赢 ⇒ 违反交换律），所以从快照里
+ * 剥掉了。剥掉之后有两个必须同时成立的后果：
+ *
+ *   1. 云端那份**不含**这些字段（否则会把 A 的界面状态带到 B 上）；
+ *   2. 拉取 / 合并写回本地时**必须保留本机那份**（漏了就是"同步一次，用户的
+ *      界面状态和当前这一轮的池子凭空消失"）。
+ */
+describe("设备本地的字段：不传出去，也不被擦掉", () => {
+  const LOCAL_ONLY = {
+    ui: { progressFocused: true, showPool: true },
+    filterType: "single",
+    activePool: [{ id: "q1", consecutiveCorrect: 2, hasBeenShown: true }],
+    roundMastered: 3,
+    roundGoal: 5,
+    roundPoolIds: ["q1", "q2"],
+    learningPool: ["q2"],
+  };
+
+  test("云端不含设备本地字段；本机那份在同步后原样还在", async () => {
+    const { gistId } = await twoDevices();
+
+    // A：给本机的设备本地字段设上可以辨认的值，同时改一点**会同步**的进度
+    h.engine("A");
+    const raw = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+    localStorage.setItem(
+      `quiz_app_state_${HASH_A}`,
+      JSON.stringify({ ...raw, ...LOCAL_ONLY, currentRound: 42 }),
+    );
+    h.tick();
+    await h.on("A", (engine) => engine.sync());
+
+    // ① 云端不该带上它们
+    const cloud = (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state as Record<
+      string,
+      unknown
+    >;
+    for (const field of Object.keys(LOCAL_ONLY)) {
+      expect(field in cloud, `${field} 不该被传到云端`).toBe(false);
+    }
+    expect(cloud.currentRound, "该同步的字段照常传").toBe(42);
+
+    // ② 本机那份原样还在
+    h.engine("A");
+    const after = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+    for (const [field, value] of Object.entries(LOCAL_ONLY)) {
+      expect(after[field], `${field} 被同步擦掉了`).toEqual(value);
+    }
+  });
+
+  test("拉取（新设备第一次拿到这个题库）同样不会留下别人的界面状态", async () => {
+    const { gistId } = await twoDevices();
+    h.engine("A");
+    const raw = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+    localStorage.setItem(
+      `quiz_app_state_${HASH_A}`,
+      JSON.stringify({ ...raw, ...LOCAL_ONLY }),
+    );
+    h.tick();
+    await h.on("A", (engine) => engine.sync());
+
+    // B 本地删掉这个题库的进度，重新从云端拉一次
+    h.engine("B");
+    localStorage.removeItem(`quiz_app_state_${HASH_A}`);
+    h.tick();
+    await h.on("B", (engine) => engine.sync());
+
+    h.engine("B");
+    const pulled = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+    for (const field of Object.keys(LOCAL_ONLY)) {
+      expect(field in pulled, `B 上不该出现 A 的 ${field}`).toBe(false);
+    }
+    expect(pulled.memory, "进度本身照常拉下来").toBeDefined();
+  });
+});

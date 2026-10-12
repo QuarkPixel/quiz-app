@@ -39,7 +39,7 @@ import {
   type BankRecord,
   type CollectedState,
 } from "./collect";
-import { planProgressMerge } from "./progressMerge";
+import { decideBank } from "./plan";
 import {
   GIST_GENERAL_FILE,
   bankRowKey,
@@ -116,14 +116,6 @@ export interface BankAction {
   merged?: unknown;
   /** 这次合并是不是只有进度不同（用于给用户报一句「已合并进度」） */
   progressMerged?: boolean;
-  /**
-   * 这个 push 是「按卡合并进度」来的（不是普通的内容上传）。
-   *
-   * 用途只有一个：合并出来的那一份**即使和本地逐字节一样也要真的推上去**——
-   * 云端那一份可能是空的（本地有进度、云端没有），照「没变化就不传」的规矩
-   * 跳过就等于把本地进度永远留在本地。
-   */
-  mergedFromProgress?: boolean;
 }
 
 /** 云端某个分片文件里装了哪些题库（回收空文件时要重算）。 */
@@ -502,6 +494,22 @@ export function buildSyncPlan(params: {
         remoteBank?.contentHash ?? bankContentHashInRemoteFiles(remote, hash),
     });
 
+    // 决定这一轮做什么。**「本地怎么改」与「要不要上传」是两个独立的问题**
+    // （见 `plan.ts` 的文件头：把它们混成一个 `verdict` 再让调用方改写，
+    // 就是上一个线上 bug 的根因），所以这里拿到的是一个完整的决定，不再事后修它。
+    const decision = decideBank({
+      judged,
+      local:
+        localBank === undefined
+          ? undefined
+          : { contentHash: localBank.contentHash, snapshot: localBank.snapshot },
+      remote:
+        remoteBank === undefined
+          ? undefined
+          : { contentHash: remoteBank.contentHash, snapshot: remoteBank.snapshot },
+      base: baseSnapshotOf(hash),
+    });
+
     const action: BankAction = {
       hash,
       name:
@@ -512,37 +520,11 @@ export function buildSyncPlan(params: {
       localHash: localBank?.contentHash,
       remoteHash: remoteBank?.contentHash,
       localAt: localBank?.localAt ?? 0,
+      // `verdict` 保持 `judgeBank` 的原话（要不要上传由它决定），
+      // 合并出来的东西与"本地怎么改"单独记在下面两个字段里。
+      ...(decision.merged === undefined ? {} : { merged: decision.merged }),
+      ...(decision.progressMerged ? { progressMerged: true } : {}),
     };
-
-    // 「题目一样、进度两边都动过」→ 这里把两份进度合起来交给引擎
-    // （同时写本地与云端）。判定本身只说 push，合并的活儿归这里，
-    // 免得 `judgeBank` 的返回值既可能是结论又可能带数据、调用方还要分辨。
-    //
-    // **`merge.kind === "skip"` 绝不能把 `push` 降成 `skip`**（踩过）：
-    // `merge.kind` 回答的是「**云端有没有本地没见过的卡**」，那是「要不要把合并
-    // 结果写回本地」的问题；`push` 回答的是「**本地改过、要传上去**」。混成一件
-    // 事时本地那次改动就**永远传不上去**——这一轮什么都不做，可基准线照常刷新，
-    // 于是下一轮 `localAt <= syncedAt` 成立、判成 `pull`，云端那份旧进度**反过来
-    // 把本地这次改动覆盖掉**。（线上表现：复习完一道题，同步「成功」，刷新之后
-    // 那道题又变回待复习，而且每同步一次复发一次。）
-    if (
-      judged === "push" &&
-      localBank !== undefined &&
-      remoteBank !== undefined &&
-      localBank.contentHash === remoteBank.contentHash
-    ) {
-      const merge = planProgressMerge({
-        base: baseSnapshotOf(hash),
-        local: localBank.snapshot,
-        remote: remoteBank.snapshot,
-      });
-      if (merge.kind === "merge") {
-        action.merged = merge.snapshot;
-        action.progressMerged = true;
-      }
-      // `skip` 时什么都不做：verdict 保持 `push`（照常把本地那份传上去），
-      // 只是没有 `merged`、也不报「合并进度」——云端本来就没给出新东西。
-    }
 
     actions.push(action);
   }
