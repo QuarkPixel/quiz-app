@@ -91,10 +91,19 @@ function asRecord(value: unknown): Json | undefined {
 export function stripDeviceLocal(state: unknown): Json | undefined {
   if (state === undefined) return undefined;
   if (state === null || typeof state !== "object" || Array.isArray(state)) return undefined;
-  const rest = { ...(state as Json) };
-  for (const field of DEVICE_LOCAL_BANK_FIELDS) delete rest[field];
+  const all = state as Json;
+  // **白名单，不是黑名单**：只放行登记过的字段。
+  //
+  // 以前是「拷一份、删掉设备本地的那几个」，于是**没登记**的字段（新加的、或者
+  // 属于设备本地的）会**原样被同步出去**，还会进 `bankProgressHash` / `bankFullHash`
+  // ——与这段代码上面的注释（"没登记的字段不会被同步出去"）正好相反，而且是隐形的。
+  const rest: Json = {};
+  for (const path of SYNCED_BANK_FIELDS) {
+    if (path.startsWith("memory.")) continue;
+    if (path in all) rest[path] = all[path];
+  }
 
-  const memory = asRecord((state as Json).memory);
+  const memory = asRecord(all.memory);
   if (memory !== undefined) {
     const kept: Json = {};
     for (const path of SYNCED_BANK_FIELDS) {

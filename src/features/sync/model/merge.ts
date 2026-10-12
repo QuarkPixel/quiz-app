@@ -10,11 +10,7 @@
 import type { MemoryProgress } from "@/types";
 import { mergeCard } from "./card";
 import { canonicalMax, mergeDayScoped, num, pickScalar, strArray } from "./operators";
-import {
-  DEVICE_LOCAL_BANK_FIELDS,
-  stripDeviceLocal,
-  SYNCED_BANK_FIELDS,
-} from "./policy";
+import { stripDeviceLocal, SYNCED_BANK_FIELDS } from "./policy";
 import { same } from "./same";
 
 type Json = Record<string, unknown>;
@@ -160,27 +156,30 @@ export function mergeBankState(params: {
   const remote = asRecord(params.remote);
   if (local === undefined && remote === undefined && base === undefined) return undefined;
 
-  const merged: Json = { ...(local ?? {}) };
-
+  // **按登记过的字段逐条构造**，不是"拷一份本地再改几个"。
+  //
+  // 以前是 `{...local}` 打底、只覆写 4 个硬编码字段，于是**没登记**的字段原样
+  // 来自本地 ⇒ 合并**不满足交换律**（`merge(l,r)` 与 `merge(r,l)` 得到不同的值，
+  // 也就是"A 算出 X、B 算出 Y"）。改成显式构造之后，没登记的字段既不会被同步，
+  // 也不会影响结果。
+  const hasMemory =
+    asRecord(local?.memory) !== undefined ||
+    asRecord(remote?.memory) !== undefined ||
+    asRecord(base?.memory) !== undefined;
   const mergedMemory = mergeMemorySection(
     asRecord(base?.memory),
     asRecord(local?.memory),
     asRecord(remote?.memory),
     params.mode,
   );
-  if (asRecord(local?.memory) !== undefined || asRecord(remote?.memory) !== undefined) {
-    merged.memory = mergedMemory;
-  }
 
-  if (params.mode === "memory") {
-    merged.masteredIds = (mergedMemory.masteredIds as string[] | undefined) ?? [];
-  } else {
-    merged.masteredIds = mergeHighWaterSet(
-      base?.masteredIds,
-      local?.masteredIds,
-      remote?.masteredIds,
-    );
-  }
+  const merged: Json = {};
+  merged.masteredIds =
+    params.mode === "memory" && hasMemory
+      ? ((mergedMemory.masteredIds as string[] | undefined) ?? [])
+      : // 记忆模式**但两边都没有 `memory` 段**时不能走上面那条：投影会得到 `[]`，
+        // 把掌握的题抹掉。这种形状只在"题库模式变了"之类的边界上出现，退回集合合并。
+        mergeHighWaterSet(base?.masteredIds, local?.masteredIds, remote?.masteredIds);
   merged.masteredMistakes = mergeNumberRecord(
     base?.masteredMistakes,
     local?.masteredMistakes,
@@ -195,9 +194,7 @@ export function mergeBankState(params: {
     local?.settings ??
     remote?.settings ??
     {};
-
-  // 设备本地字段不进合并结果（写回本地时由 `attachDeviceLocal` 贴回本机那份）
-  for (const field of DEVICE_LOCAL_BANK_FIELDS) delete merged[field];
+  if (hasMemory) merged.memory = mergedMemory;
 
   return merged;
 }
@@ -222,9 +219,18 @@ export function mergeBankSnapshot(params: {
   };
 }
 
-/** 两份快照的**可同步状态**一样吗（跳过写入 / 不报「合并进度」用）。 */
+/**
+ * 两份快照的**可同步状态**一样吗（跳过写入 / 不报「合并进度」用）。
+ *
+ * 比的是 `state` 那一层，不是整个快照：拿整份快照进来会把 `mode` / `name` /
+ * `questions` 也比进去（改个名就判成"进度变了"），而且 `state` 里的设备本地字段
+ * 也得按同一套口径剥掉。以前这里剥错了层，只是当时没有调用方才没炸。
+ */
 export function sameProgress(a: unknown, b: unknown): boolean {
-  return same(stripDeviceLocal(asRecord(a)) ?? null, stripDeviceLocal(asRecord(b)) ?? null);
+  return same(
+    stripDeviceLocal(asRecord(a)?.state) ?? null,
+    stripDeviceLocal(asRecord(b)?.state) ?? null,
+  );
 }
 
 export { SYNCED_BANK_FIELDS };

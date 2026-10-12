@@ -7,8 +7,7 @@
  * 就是三个线上 bug 的根因，见 `model/card.ts` 的文件头。
  */
 
-import type { MemoryProgress } from "@/types";
-import { mergeBankSnapshot, mergeProgressMap, sameProgress } from "./model/merge";
+import { mergeBankSnapshot, mergeBankState, mergeProgressMap, sameProgress } from "./model/merge";
 import { same } from "./model/same";
 
 export { mergeProgressMap, sameProgress };
@@ -22,10 +21,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function asCardMap(value: unknown): Record<string, MemoryProgress> | undefined {
-  return asRecord(value) as Record<string, MemoryProgress> | undefined;
 }
 
 function modeOf(snapshot: unknown): "quiz" | "memory" {
@@ -91,19 +86,32 @@ export function planProgressMerge(params: {
     return { kind: "push", snapshot: params.local };
   }
 
-  // 「要不要合」**只看每张卡**，不拿整段 `state` 去比。
+  // 「要不要合」要**看整段可同步状态**，不能只看每张卡。
   //
-  // `mergeBankState` 会顺手补齐几个缺省字段（`masteredIds` / `masteredMistakes` /
-  // `settings`…），拿整段 state 去比会把「其实一张卡都没从云端取到」误判成一次合并
-  // ——用户只在一台设备上做过题，却看到「合并进度 1」。这条边界以前是对的，
-  // 重写时一度丢掉过。
-  const localProgress = asRecord(asRecord(stateOf(params.local)?.memory)?.progress) ?? {};
-  const mergedProgress = mergeProgressMap(
-    asCardMap(asRecord(stateOf(params.base)?.memory)?.progress),
-    asCardMap(localProgress),
-    asCardMap(asRecord(stateOf(params.remote)?.memory)?.progress),
-  );
-  if (same(mergedProgress, localProgress)) return { kind: "skip" };
+  // 以前只看 `state.memory.progress`，于是两个方向都会静默丢数据（审计复现）：
+  //   - **刷题模式**的进度在 `masteredIds` / `masteredMistakes` / `currentRound` 里，
+  //     永远算不出"有新东西" ⇒ 永远 skip ⇒ 本地那份整份盖上去，云端的改动没了；
+  //   - **记忆模式**只要分叉落在非卡片字段（`settings` / `retry` / `review` /
+  //     `learnedDay`），同样 skip。
+  // （`model/merge.ts` 里刷题那一支的合并算子本身是对的，只是从来没人调用。）
+  //
+  // 但也不能拿"合并结果 vs 本地那份"直接比：`mergeBankState` 会把缺省字段补齐
+  // （`settings: {}` 之类），那样比会把"其实没从云端取到东西"误判成一次合并。
+  // 所以拿**本地与自己合并**的结果当基线：补齐的默认值两边一样，只有云端真的带来
+  // 了不一样的东西才会不相等。
+  const mergedWithRemote = mergeBankState({
+    base: stateOf(params.base),
+    local: stateOf(params.local),
+    remote: stateOf(params.remote),
+    mode: modeOf(params.local),
+  });
+  const mergedAlone = mergeBankState({
+    base: stateOf(params.base),
+    local: stateOf(params.local),
+    remote: stateOf(params.local),
+    mode: modeOf(params.local),
+  });
+  if (same(mergedWithRemote ?? null, mergedAlone ?? null)) return { kind: "skip" };
 
   return {
     kind: "merge",
