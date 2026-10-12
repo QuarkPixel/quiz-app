@@ -154,13 +154,17 @@
 | **顺序依赖**（我自己抓的） | 集合/record/progress 的**输出顺序随参数顺序变** ⇒ 两台设备算出**不同哈希** ⇒ 互相认为对方改过、来回推 | 全部排序 | 状态级交换律 2 条红 |
 | **F1** | blob 竞态没被探测到 ⇒ 输家下一轮判 pull ⇒ 改动**本地与云端一起消失** | `planProgressMerge` 改成**三方分类**（本地够用 / 云端够用 / 两边各有）；`upload` 成为独立字段；引擎 `merged` 分支提到 `pull` 之前 | 端到端 1 条红（"A 自己的改动被静默丢了"） |
 | **F3** | `localAt <= syncedAt` 猜错方向（时钟回拨 / 同步中又答一题）⇒ 判 pull ⇒ 刚做的那题被云端旧值盖掉，指示点还是绿的 | `BankActionKind` 贯通成引擎唯一分派依据：判定的结论**让位给事实**（本地这份到底有没有云端没有的东西） | 2 条红（`expected 1 to be 9`） |
+| **F5** | 账本把每个题库的**题目又存了一遍**（实测 1.01 倍，本地占用翻倍，正是最容易撞配额的那个键）；且 `saveSyncMeta` 写失败被 `console.warn` 吞掉 ⇒ 指示灯永远黄 + **静默空转** | 新增 `ledgerSnapshot()` 只留三方合并要用的 `mode` + `state`；`saveSyncMeta` 返回 `boolean`，两处调用点都检查，且**收尾不许用成功状态盖掉错误** | 2 条红（`题目 44341 B，账本 44892 B`；`expected 'idle' to be 'error'`） |
+| **F4** | iOS 钩子失灵时那条兜底轮询只能变黄，**永远排不上上传**（被它要绕过的那个机制挡住） | `schedulePush({ force })`：上游已按内容哈希确认过脏时，不再过 mtime 那道门 | 1 条红（`兜底轮询只把指示灯变黄，没排上传: expected null not to be null`） |
+| **M4d** | `store.ts` 的 `persistedState` 是**第二个白名单**，没有护栏：加字段忘了加进去 → 永远存不进 localStorage | 新增编译期护栏 `STORED_STATE_COVERAGE` | 塞假字段 → `Type 'true' is not assignable to type 'never'` |
+| **M4c** | 护栏的"安全感超过它实际提供的"：嵌套容器与路径深度都管不到 | 把**覆盖边界如实写在护栏旁边**；新增装载期检查（路径只能一层，`memory.review.total` 这种会过护栏却永远不同步） | 装载期检查在 DEV 抛出 |
 
 **F1 + F3 是同一个根因的两半**：`mtime` 一个人决定方向，不配。现在的分工是
 「`verdict` = 按 mtime 猜的方向（只用于汇总与记账）」+「`kind` = 综合了
 '两边各有什么'之后的最终决定」。审计反复指出的那个残留——"`decideBank` 的
 `action`/`upload` 两个字段**没有任何消费者**"——就是这里的隐患，现在都有消费者了。
 
-### 未修（低 / 中，非数据丢失）
+### 未修（都是低，且没有一条会丢数据）
 
 
 
@@ -168,25 +172,10 @@
 传输层那份复现了 4 个数据丢失级问题。下面是**已经复现、但这一轮没有动**的，
 连同最小修法与判据，供下一轮直接接手。
 
-- **F4（中低）** iOS「钩子失灵」那条兜底轮询只能变黄，永远排不上上传：它被
-  `hasLocalDirtyKeys()`（`mtime > 0`）挡掉，而 mtime 正是靠那个**没生效**的
-  `setItem` 包装写的。文档里写的"脏了就标黄并**排队上传**"——后半句是死的。
-  修法：让这条兜底路径绕过 mtime 门槛（或让探针/轮询自己盖 mtime）。
-- **F5（中）** 账本把每个题库的全文又存一份（实测 200 题：37 071 B → 37 532 B，
-  本地占用约 2 倍，也是最容易先撞上配额的那个键）；且 `saveSyncMeta` 写失败被
-  `console.warn` 吞掉 ⇒ `pendingChanges` 永远黄、每轮基于陈旧基准重规划、
-  又因为"内容没变就不传"的短路变成**静默空转**。修法：`snapshot` 只给有进度的
-  题库存 / 把写失败浮出来。
 - **F6（低）** `settledThisRound`（"冻结分片不给别的题库写新基准"）目前是**死代码**
   ——`execute` 只在没有未裁决冲突时才走到，它永远返回 true，那条规矩**没有测试覆盖**。
 - **F7（低）** 创建 Gist 的响应丢了 ⇒ 孤儿 Gist；下次同步再建一个，且每个孤儿都能
   通过 `looksLikeSyncGist` 出现在选择列表里。
-- **M4c（中，开发者面向）** 编译期护栏有盲区：`settings` / `memory.settings` /
-  `defaultSettings` / `globalSettings` / `library[*]` / `masteredMistakes[*]` 里
-  加字段**一声不响**；而登记更深的路径（如 `memory.review.total`）能过护栏却
-  **永远不同步**（`stripDeviceLocal` 只认一层）。
-- **M4d（中，开发者面向）** 还有**第二个白名单**没有护栏：`store.ts` 的 `saveState`
-  逐字段重建——登记成"可同步"但忘了加进它，就永远进不了 localStorage。
 - **M5（低，潜伏）** `compareCards` 的"同序"等价类：缺字段 vs 显式 `null` 比较为 0，
   但落盘 JSON 不同 ⇒ 哈希不同。只对手改/外来 JSON 可达（应用自己写的卡经
   `normalizeMemoryProgress` 永远是数字）。
