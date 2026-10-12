@@ -52,6 +52,28 @@ export const SYNCED_BANK_FIELDS = [
  * 排除它们之后，拉取 / 合并写回本地时**必须原样保留本机那份**（见 `attachDeviceLocal`），
  * 否则一次同步就会把本机的 UI 状态和会话池子清空。
  */
+/**
+ * 装载期检查：登记表里的路径**只能有一层**（`x` 或 `memory.x`）。
+ *
+ * `stripDeviceLocal` 剥 `memory` 段时是按 `path.slice("memory.".length)` 取**一层**
+ * 字段名的，所以登记成 `memory.review.total` 这种两层的路径会**过得了编译期护栏、
+ * 却永远匹配不上**——表现成"登记了却从来不同步"，而且没有任何报错。
+ *
+ * 只在开发/测试期抛（`import.meta.env.DEV`）：这纯粹是给改这张表的人当场一个耳光，
+ * 不该让生产环境的用户在启动时炸掉。
+ */
+if (import.meta.env.DEV) {
+  for (const path of SYNCED_BANK_FIELDS) {
+    const segments = path.split(".");
+    const ok = segments.length === 1 || (segments.length === 2 && segments[0] === "memory");
+    if (!ok) {
+      throw new Error(
+        `SYNCED_BANK_FIELDS 里的路径只能有一层（\`x\` 或 \`memory.x\`），收到：${path}`,
+      );
+    }
+  }
+}
+
 export const DEVICE_LOCAL_BANK_FIELDS = [
   "ui",
   "filterType",
@@ -155,6 +177,25 @@ export function attachDeviceLocal(
 //
 // 作用：给状态加字段却忘了在上面的表里登记，**类型检查直接不过**。
 // 这比运行时断言强，不依赖测试有没有跑到那一条。
+//
+// ── 覆盖边界（**别以为它管得比这更多**）────────────────────────────────────
+//
+// 它盯的是这四处的**顶层**字段名：
+//
+//   `StoredState` / `MemoryStoredState` / `MemoryProgress` / `GeneralSnapshot`
+//
+// **管不到**的地方（审计逐条验证过，此处如实记着，免得下次又以为有护栏）：
+//
+//   - `settings` / `memory.settings` / `defaultSettings` / `globalSettings` 里的
+//     新字段：这几个是**整块**同步的（走 `pickScalar`），所以新字段会自动跟着走
+//     ——"会不会同步"不需要护栏；但如果它是**设备本地**的（不该跨设备），它就
+//     悄悄跟着走了，这一层没人拦。
+//   - `library[*]`（`LibraryEntry`）里的新字段：同理，条目整体进比较与合并。
+//   - `masteredMistakes[*]`：值一律取大，加键没问题。
+//   - 落盘那一侧还有第二个白名单（`store.ts` 的 `persistedState`），
+//     它有自己的护栏 `STORED_STATE_COVERAGE`——**那和这张表是两回事**：
+//     登记成"可同步"却忘了进 `persistedState`，就是"登记了却永远存不进本地"。
+//   - 路径**深度**由装载期检查兜（只能 `x` 或 `memory.x`）。
 
 type SyncedField = (typeof SYNCED_BANK_FIELDS)[number];
 type DeviceLocalField = (typeof DEVICE_LOCAL_BANK_FIELDS)[number];

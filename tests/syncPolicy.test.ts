@@ -11,7 +11,7 @@
  *    `attachDeviceLocal` 写回时把本机那份贴回去（漏了会清空用户的 UI 状态和会话池子）。
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, test } from "vitest";
 import {
   DEVICE_LOCAL_BANK_FIELDS,
   DEVICE_LOCAL_GENERAL_FIELDS,
@@ -130,5 +130,17 @@ describe("写回本地时贴回本机的设备本地字段", () => {
     const merged = attachDeviceLocal({ currentRound: 1 }, { currentRound: 0 })!;
     expect("ui" in merged).toBe(false);
     expect("activePool" in merged).toBe(false);
+  });
+});
+
+/**
+ * 落盘那一侧的护栏（`store.ts` 的 `persistedState`）也要跟着钉住：
+ * 它是**第二个白名单**，与 `SYNCED_BANK_FIELDS` 是两回事——登记成"可同步"却
+ * 忘了进 `persistedState`，就是"登记了却永远存不进 localStorage"。
+ */
+describe("落盘白名单的编译期护栏", () => {
+  test("STORED_STATE_COVERAGE 成立（拿真值断言，被删要红）", async () => {
+    const { STORED_STATE_COVERAGE } = await import("@/store");
+    expect(STORED_STATE_COVERAGE).toBe(true);
   });
 });

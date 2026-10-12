@@ -244,12 +244,19 @@ export function loadStoredState(hash: string): StoredState {
  * 保存指定 bank 的状态到 localStorage。
  * 配额异常仅 warn 不抛错——做题流不应因此被打断。
  */
-export function saveState(
-  hash: string,
-  state: StoredState,
-  options: SaveStateOptions = {},
-): void {
-  const toStore: StoredState = {
+/**
+ * `saveState` 落盘的那一份（**逐字段**，不是整份 `state`）。
+ *
+ * 为什么不是整个对象丢进去：`StoredState` 里有些字段是**运行期才有的**、
+ * 不该进 localStorage（历史上 `pendingIds` 就吃过这个亏）。
+ *
+ * ⚠️ 加 `StoredState` 字段时**必须同时加到这里**，否则那个字段永远存不进去
+ * ——功能看起来好好的，刷新之后才没，而且不会有任何报错。
+ * 下面有一条**编译期护栏**（`STORED_STATE_COVERAGE`）替你盯着这件事。
+ */
+function persistedState(state: StoredState): StoredState {
+  return {
+
     masteredIds: state.masteredIds,
     masteredMistakes: state.masteredMistakes,
     activePool: state.activePool,
@@ -266,7 +273,27 @@ export function saveState(
     learningPool: state.learningPool,
     // 本轮固定下来的这一批：不带上就等于每次保存都把这一轮解封
     roundPoolIds: state.roundPoolIds,
+  
   };
+}
+
+/**
+ * 编译期护栏：`StoredState` 的每个字段都得被 `persistedState` 写出去。
+ * 漏一个 → 这里的类型不成立 → `pnpm check` 直接不过。
+ *
+ * **必须放在 `src/` 里**：`tsconfig.json` 的 `include` 只有 `src/**`，
+ * `tests/` 不参与类型检查（写在测试里等于没有护栏）。
+ */
+type Covered<T> = [T] extends [never] ? true : never;
+type MissingFromPersist = Exclude<keyof StoredState, keyof ReturnType<typeof persistedState>>;
+export const STORED_STATE_COVERAGE: Covered<MissingFromPersist> = true;
+
+export function saveState(
+  hash: string,
+  state: StoredState,
+  options: SaveStateOptions = {},
+): void {
+  const toStore: StoredState = persistedState(state);
   try {
     localStorage.setItem(stateKey(hash), JSON.stringify(toStore));
   } catch (e) {
