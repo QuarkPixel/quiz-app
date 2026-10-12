@@ -39,6 +39,7 @@ import {
   type BankRecord,
   type CollectedState,
 } from "./collect";
+import { stripDeviceLocal } from "./model/policy";
 import { decideBank } from "./plan";
 import {
   GIST_GENERAL_FILE,
@@ -994,7 +995,12 @@ export function buildRemoteState(files: readonly RemoteFile[]): RemoteState {
         // `JSON.parse` 得到 `null`，它和「没有这个字段」是同一个意思（进度哈希
         // 也把它们归一到同一个值）。原样留成 `null` 会让下游把「没进度」读成
         // 「有进度」——本地快照那一侧（`collectLocalState`）同样这么归一。
-        ...(bank.state == null ? {} : { state: bank.state }),
+        //
+        // `stripDeviceLocal`：**云端那一侧也要剥**。本地收集时剥了、云端不剥的话，
+        // 两边结构天生不一样：进度哈希永远对不上（"永远待同步"），而且升级前推上去的
+        // 老快照会把 `activePool` / `ui` 这些又灌回本地。剥掉之后两边同一个口径，
+        // 老数据被安静忽略，下一次真正的上传顺手把云端也洗干净。
+        ...(bank.state == null ? {} : { state: stripDeviceLocal(bank.state) }),
       };
       hashes.push(hash);
       banks.set(hash, {

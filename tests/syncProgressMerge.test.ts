@@ -15,7 +15,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 
 import { SyncHarness } from "./syncSupport";
 import { loadSyncMeta } from "@/features/sync/storage";
-import { bankRowKey } from "@/features/sync/types";
+import { bankRowKey, shardFileName, shardIndexOf } from "@/features/sync/types";
+import { decodePayload, encodePayload } from "@/features/sync/payload";
 import {
   mergeProgressMap,
   planProgressMerge,
@@ -819,5 +820,68 @@ describe("设备本地的字段：不传出去，也不被擦掉", () => {
       expect(field in pulled, `B 上不该出现 A 的 ${field}`).toBe(false);
     }
     expect(pulled.memory, "进度本身照常拉下来").toBeDefined();
+  });
+});
+
+/**
+ * **老数据的迁移边界**：这次改动之前推上去的云端快照里**带着**设备本地字段
+ * （`activePool` / `filterType` / `ui`…）。升级之后本地收集出来的那份是剥干净的，
+ * 于是「本地」与「云端」在结构上不一样了。
+ *
+ * 这里要钉住的是：这种不一致**能被自愈**，而且自愈过程不能制造假冲突、
+ * 也不能卡成"永远待同步"。
+ */
+describe("迁移：云端还带着老的设备本地字段", () => {
+  test("不报冲突、自愈成剥干净的形状，且不再反复上传", async () => {
+    const { gistId } = await twoDevices();
+
+    // 手工把云端那份改成「老格式」：带上设备本地字段
+    h.engine("A");
+    const shard = shardFileName(shardIndexOf(HASH_A));
+    const parsed = JSON.parse(
+      (await decodePayload(h.cloudFiles(gistId)[shard])) ?? "{}",
+    ) as { banks: Record<string, Record<string, unknown>> };
+    parsed.banks[HASH_A] = {
+      ...parsed.banks[HASH_A],
+      state: {
+        ...(parsed.banks[HASH_A]?.state as Record<string, unknown>),
+        activePool: [{ id: "q1", consecutiveCorrect: 1, hasBeenShown: true }],
+        filterType: "single",
+        ui: { progressFocused: true, showPool: true },
+      },
+    };
+    h.fake.put(gistId, shard, await encodePayload(parsed));
+    h.save("A");
+
+    // A 同步一次：不该报冲突，也不该把云端那些"别人的界面状态"灌进本地
+    h.engine("A");
+    const first = await h.on("A", (engine) => engine.sync());
+    expect(first.conflicts, "结构差异不该被当成内容冲突").toEqual([]);
+
+    const localState = JSON.parse(localStorage.getItem(`quiz_app_state_${HASH_A}`) ?? "{}");
+    expect(localState.activePool, "云端那份的会话池子不该被灌进本地").not.toEqual([
+      { id: "q1", consecutiveCorrect: 1, hasBeenShown: true },
+    ]);
+
+    // 再同步一次：不该卡成"永远待同步"（两边哈希现在是同一个口径）
+    h.engine("A");
+    const second = await h.on("A", (engine) => engine.sync());
+    expect(second.pushed, "两边口径一致之后不该反复上传").toBe(0);
+    expect(second.pulled).toBe(0);
+
+    // 下一次**真正的**改动会顺手把云端也洗干净（剥掉老字段）
+    h.engine("A");
+    study(HASH_A, {
+      currentRound: 5,
+      progress: { q1: { state: "reviewing", level: 2, streak: 0, nextDue: 0, lapses: 0 } },
+    });
+    await h.on("A", (engine) => engine.sync());
+    const healed = (await h.cloudShard(gistId, HASH_A))?.banks[HASH_A]?.state as Record<
+      string,
+      unknown
+    >;
+    expect("activePool" in healed, "上传一次之后云端就被洗干净了").toBe(false);
+    expect("filterType" in healed).toBe(false);
+    expect("ui" in healed).toBe(false);
   });
 });
