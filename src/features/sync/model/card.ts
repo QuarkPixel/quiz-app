@@ -98,5 +98,25 @@ export function compareCards(a: MemoryProgress, b: MemoryProgress): number {
  */
 export function mergeCard(a: MemoryProgress, b: MemoryProgress): MemoryProgress {
   const winner = compareCards(a, b) >= 0 ? a : b;
-  return { ...winner, lapses: Math.max(num(a.lapses), num(b.lapses)) };
+  const lapses = Math.max(num(a.lapses), num(b.lapses));
+  return canonicalCard({ ...winner, lapses });
+}
+
+/**
+ * 把整条卡里的 `null` / `undefined` 归一掉。
+ *
+ * `canonicalJson` 把 `undefined`、`null`、`NaN`、`±Infinity` **一视同仁**写成 `null`，
+ * 所以 `{level: null}` 与「没有 `level` 这个键」在排序里是**同序**的
+ * （`compareCards` 返回 0）。但它们的 JSON 不一样 ⇒ `stableHash` 不一样 ⇒
+ * **两台设备各挑一边就会算出不同的结果**（违反收敛）。
+ *
+ * 应用自己写的卡经过 `normalizeMemoryProgress` 永远是数字，所以这条只对手改 /
+ * 外来的 JSON 可达——但那时它就是个安静的持续分歧。正常化一下就没这回事了。
+ */
+function canonicalCard(card: MemoryProgress): MemoryProgress {
+  const next = { ...card } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(next)) {
+    if (value === null || value === undefined) delete next[key];
+  }
+  return next as unknown as MemoryProgress;
 }

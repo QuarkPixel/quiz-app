@@ -207,3 +207,29 @@ describe("状态级合并：代数性质", () => {
     }
   });
 });
+
+/**
+ * **同序但不同 JSON 的两张卡不能各挑一边。**
+ *
+ * `canonicalJson` 把 `undefined` / `null` / `NaN` / `±Infinity` 一视同仁写成 `null`，
+ * 所以 `{level: null}` 与「没有 `level` 这个键」在排序里**同序**（`compareCards` 返回 0）。
+ * 但它们的 JSON 不一样 ⇒ `stableHash` 不一样 ⇒ 两台设备各挑一边就**永远不会收敛**。
+ *
+ * 应用自己写的卡经过 `normalizeMemoryProgress` 永远是数字，所以这条只对手改 /
+ * 外来的 JSON 可达——但那时它就是个安静的持续分歧。审计把这一族穷举出来了
+ * （7 个字段 × 20 种取值，48 组，全部是 `undefined` vs `null|NaN|±Infinity`）。
+ */
+describe("同序卡片的输出必须一致", () => {
+  const messy: Array<[string, MemoryProgress, MemoryProgress]> = [
+    ["缺 level vs level:null", { state: "reviewing", rev: 5 } as MemoryProgress, { state: "reviewing", level: null, rev: 5 } as unknown as MemoryProgress],
+    ["缺 nextDue vs nextDue:null", { state: "reviewing", rev: 5 } as MemoryProgress, { state: "reviewing", nextDue: null, rev: 5 } as unknown as MemoryProgress],
+    ["NaN vs 缺", { state: "reviewing", level: Number.NaN, rev: 5 } as unknown as MemoryProgress, { state: "reviewing", rev: 5 } as MemoryProgress],
+    ["Infinity vs 缺", { state: "reviewing", streak: Number.POSITIVE_INFINITY, rev: 5 } as unknown as MemoryProgress, { state: "reviewing", rev: 5 } as MemoryProgress],
+  ];
+
+  it.each(messy)("%s：两个方向落盘的 JSON 逐字节相同", (_name, a, b) => {
+    const ab = JSON.stringify(mergeCard(a, b));
+    const ba = JSON.stringify(mergeCard(b, a));
+    expect(ab, "两台设备挑出不同的东西，永远不会收敛").toBe(ba);
+  });
+});
