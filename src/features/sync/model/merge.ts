@@ -9,7 +9,7 @@
 
 import type { MemoryProgress } from "@/types";
 import { mergeCard } from "./card";
-import { mergeDayScoped, num, pickScalar, strArray } from "./operators";
+import { num, pickScalar, strArray } from "./operators";
 import { stripDeviceLocal, SYNCED_BANK_FIELDS } from "./policy";
 import { same } from "./same";
 
@@ -101,64 +101,15 @@ function mergeHighWaterSet(base: unknown, local: unknown, remote: unknown): stri
     .sort();
 }
 
-/** 记忆模式的 `masteredIds` 是 `progress[].state === "mastered"` 的**投影**，别当第二份真相。 */
-function masteredFromProgress(progress: Record<string, MemoryProgress>): string[] {
-  return Object.keys(progress)
-    .filter((id) => progress[id]?.state === "mastered")
-    .sort();
-}
 
 
-/**
- * 同一天的「还要重新连对几次」：**逐题取大**（要求只会更严，不会更松）。
- *
- * 整条取一份是不行的：两台设备各答错不同的题时，取哪一份都会把另一边的待办
- * 丢掉，而且两边**收敛到同一个错值**，所以特别难发现。
- */
-function mergeRetrySameDay(a: unknown, b: unknown): unknown {
-  const left = asRecord(a);
-  const right = asRecord(b);
-  if (left === undefined) return b;
-  if (right === undefined) return a;
-  const targets: Json = {};
-  const ids = new Set([
-    ...Object.keys(asRecord(left.targets) ?? {}),
-    ...Object.keys(asRecord(right.targets) ?? {}),
-  ]);
-  for (const id of [...ids].sort()) {
-    targets[id] = Math.max(
-      num(asRecord(left.targets)?.[id]),
-      num(asRecord(right.targets)?.[id]),
-    );
-  }
-  return { ...left, targets };
-}
 
-/**
- * 同一天的复习进度：`reviewedIds` **取并集**、`total` **取大**。
- *
- * 整条取一份会让进度条的分子凭空中掉一道（"今天复习了 3 道"变成 2 道）。
- */
-function mergeReviewSameDay(a: unknown, b: unknown): unknown {
-  const left = asRecord(a);
-  const right = asRecord(b);
-  if (left === undefined) return b;
-  if (right === undefined) return a;
-  return {
-    ...left,
-    reviewedIds: [
-      ...new Set([...strArray(left.reviewedIds), ...strArray(right.reviewedIds)]),
-    ].sort(),
-    total: Math.max(num(left.total), num(right.total)),
-  };
-}
 
 /** 记忆模式那一小段。 */
 function mergeMemorySection(
   base: Json | undefined,
   local: Json | undefined,
   remote: Json | undefined,
-  mode: "quiz" | "memory",
 ): Json {
   const progress = mergeProgressMap(
     asCardMap(base?.progress),
@@ -178,17 +129,13 @@ function mergeMemorySection(
   const learnedDay = Math.max(num(base?.learnedDay), num(local?.learnedDay), num(remote?.learnedDay));
   if (learnedDay > 0) merged.learnedDay = learnedDay;
 
-  // retry / review 是**当天**状态：跨天不合（合了会把昨天的待办搬到今天）；
-  // 同一天则**逐项**合，不能整条取一份——那会把另一边整个丢掉（审计复现：
-  // 「还要重新连对 2 次」和「今天已复习的那道」都能凭空消失，而且两台设备
-  // 会收敛到同一个错值，特别安静）。
-  const retry = mergeDayScoped(local?.retry, remote?.retry, mergeRetrySameDay);
-  if (retry !== undefined) merged.retry = retry;
-  const review = mergeDayScoped(local?.review, remote?.review, mergeReviewSameDay);
-  if (review !== undefined) merged.review = review;
-
-  // `masteredIds` 在记忆模式下由 progress 推导，避免两份真相打架
-  if (mode === "memory") merged.masteredIds = masteredFromProgress(progress);
+  // `retry` / `review` **不在这里合**：它们是"今天 / 本轮"的会话状态，
+  // 属于设备本地字段（见 `policy.ts` 的 `DEVICE_LOCAL_BANK_FIELDS`），
+  // 跨设备同步它们只会互相干扰。写回本地时由 `attachDeviceLocal` 贴回本机那份。
+  //
+  // 这里也**不保留**从输入带过来的 `retry` / `review`：老的云端快照里还带着它们，
+  // 照抄过来的话就等于让云端那份把本机刚补完的待办**复活**（真踩过：复习完 14 道、
+  // 同步之后首页又冒出"今天有一道待复习"，而那道卡的 `nextDue` 明明在将来）。
 
   return merged;
 }
@@ -222,7 +169,6 @@ export function mergeBankState(params: {
     asRecord(base?.memory),
     asRecord(local?.memory),
     asRecord(remote?.memory),
-    params.mode,
   );
 
   const merged: Json = {};

@@ -33,8 +33,6 @@ export const SYNCED_BANK_FIELDS = [
   "settings", // scalar（按库设置）
   "memory.progress", // cardMap
   "memory.settings", // scalar（记忆模式的按库设置）
-  "memory.retry", // dayScoped（跨天不合）
-  "memory.review", // dayScoped（跨天不合）
   "memory.learnedDay", // max（「最近一次学完一轮」只前进）
 ] as const;
 
@@ -75,6 +73,16 @@ if (import.meta.env.DEV) {
 }
 
 export const DEVICE_LOCAL_BANK_FIELDS = [
+  // ── 记忆模式的「今天 / 本轮」状态：**不跨设备**（见文件头那段说明）──
+  //
+  // `memory.retry`（答错后还要重新连对几次）与 `memory.review`（今天复习到哪了）
+  // 都是**当天、本轮**的会话状态，本来就"跨过凌晨 5 点自动作废"，
+  // 而且**不进进度备份**（见 AGENTS.md）。它们被同步进云端的后果是：
+  // 你在 A 上把待办补完了、云端还留着一条旧的 ⇒ 合并（取并集）把那条**复活**
+  // ⇒ 那道卡因为"待重新连对"重新进入今天的复习队列 ⇒
+  // 首页显示「今天有一道待复习」，而它的 `nextDue` 明明在将来。
+  "memory.retry",
+  "memory.review",
   "ui",
   "filterType",
   "activePool",
@@ -164,9 +172,28 @@ export function attachDeviceLocal(
   // `memory: {}`——把本机的进度段换成一个空壳（审计复现）。而 `memory: {}` 与
   // 「没有 memory 键」在下游不是一回事（`hasMemory` 之类的判断会因此翻面）。
   //
-  // 注意：`DEVICE_LOCAL_BANK_FIELDS` 里目前**没有**任何字段住在 `memory` 段内
-  // （`retry` / `review` 都是要同步的），所以这里没有"贴回设备本地字段"的动作；
-  // 哪天有了，在这里按 `localMemory` 贴回去。
+  // `memory` 段里的设备本地字段（`retry` / `review`）：贴回**本机**那份。
+  //
+  // 注意是"贴回"而不是"补上"：本机**没有**这个键时也要**删掉**进来那份。
+  // 否则老的云端快照（带着 `retry`）会把本机刚补完的待办复活——
+  // 而"复活一条待办"的表现就是首页多出一道"今天待复习"。
+  const memoryLocal = DEVICE_LOCAL_BANK_FIELDS.filter((field) =>
+    field.startsWith("memory."),
+  ).map((field) => field.slice("memory.".length));
+  if (memoryLocal.length > 0) {
+    const nextMemory = asRecord(next.memory);
+    const localMemory = asRecord(local?.memory);
+    if (nextMemory !== undefined || localMemory !== undefined) {
+      const memory: Json = { ...(nextMemory ?? {}) };
+      for (const key of memoryLocal) {
+        if (localMemory !== undefined && key in localMemory) memory[key] = localMemory[key];
+        else delete memory[key];
+      }
+      // 一个键都不剩时不留空壳（`memory: {}` 与"没有 memory 段"在下游不是一回事）
+      if (Object.keys(memory).length > 0) next.memory = memory;
+      else delete next.memory;
+    }
+  }
   return next;
 }
 
@@ -203,13 +230,12 @@ type DeviceLocalField = (typeof DEVICE_LOCAL_BANK_FIELDS)[number];
 /** `memory.progress` → `progress`；顶层字段原样。 */
 type StripMemoryPrefix<T> = T extends `memory.${infer Rest}` ? Rest : T;
 
+/** 两个白名单都可能带 `memory.` 前缀，先合起来再按层拆。 */
+type AnyField = SyncedField | DeviceLocalField;
 /** 顶层字段：`memory` 是容器，单独放行。 */
-type CoveredTopLevel =
-  | Exclude<SyncedField, `memory.${string}`>
-  | DeviceLocalField
-  | "memory";
+type CoveredTopLevel = Exclude<AnyField, `memory.${string}`> | "memory";
 /** `memory` 段里的字段。 */
-type CoveredMemory = StripMemoryPrefix<SyncedField> | DeviceLocalField;
+type CoveredMemory = StripMemoryPrefix<AnyField>;
 
 /**
  * 卡片字段：`mergeCard` 是**整条取赢家**，所以每个字段都要明确

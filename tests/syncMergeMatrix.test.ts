@@ -150,38 +150,46 @@ describe("形状矩阵：计数与集合（I3）", () => {
 });
 
 /**
- * **同一天的当天状态要逐项合，不能整条取一份。**
+ * **"今天 / 本轮"的会话状态根本不参与同步。**
  *
- * `retry`（还要重新连对几次）与 `review`（今天复习了哪些）都带 `day`：
- * 跨天不合是对的（合了会把昨天的待办搬到今天），但**同一天**必须逐项合——
- * 整条取一份会把另一边整个丢掉，而且两台设备会**收敛到同一个错值**，
- * 所以特别安静（审计复现）。旧实现的注释写着「并集 / 取大」，代码却是 canonicalMax。
+ * `memory.retry`（答错后还要重新连对几次）与 `memory.review`（今天复习到哪了）
+ * 都是**当天、本轮**的状态：本来就"跨过凌晨 5 点自动作废"，也**不进进度备份**。
+ * 它们却曾经在同步白名单里——于是这条路径会真的丢东西：
+ *
+ *   在 A 上把待办补完（`retry.targets` 清空）→ 同步 → 云端那份旧记录还在
+ *   → 合并（取并集）把它**复活** → 那道卡因为"待重新连对"重新进入今天的复习队列
+ *   → 首页显示「今天有一道待复习」，而它的 `nextDue` 明明在将来。
+ *
+ * 所以它们现在是**设备本地字段**（`policy.ts` 的 `DEVICE_LOCAL_BANK_FIELDS`）：
+ * 不剥出去、不合并、写回时贴回本机那份。
  */
-describe("同一天的 retry / review：逐项合", () => {
+describe("会话状态（retry / review）不参与同步", () => {
   const memorySection = (patch: Record<string, unknown>) => ({ memory: patch });
 
   const mergeMemory = (local: unknown, remote: unknown) =>
-    mergeBankState({ local, remote, mode: "memory" }) as {
-      memory: { retry?: unknown; review?: unknown };
-    };
+    (mergeBankState({ local, remote, mode: "memory" }) as { memory?: Record<string, unknown> })
+      .memory ?? {};
 
-  it("retry：两边的待办都留着，同一道题取更大的要求", () => {
-    const local = memorySection({
-      progress: {},
-      retry: { day: 100, targets: { q1: 2 } },
-    });
+  it("本机已经补完的待办，不会被云端那份旧的复活", () => {
+    const local = memorySection({ progress: {}, retry: { day: 100, targets: {} } });
     const remote = memorySection({
       progress: {},
-      retry: { day: 100, targets: { q9: 3, q1: 1 } },
+      retry: { day: 100, targets: { q7: 2 } },
     });
     const merged = mergeMemory(local, remote);
-    expect(merged.memory.retry, "另一边的待办被整条丢掉了").toEqual({
-      day: 100,
-      targets: { q1: 2, q9: 3 },
-    });
+    expect(
+      merged.retry,
+      "云端那条旧待办被合并结果带回来了——那道卡会重新冒出来「待复习」",
+    ).toBeUndefined();
   });
 
-  it("review：已复习的题取并集、总数取大", () => {
+  it("反过来也一样（云端补完了、本机还留着也不许带出来）", () => {
+    const local = memorySection({ progress: {}, retry: { day: 100, targets: { q7: 2 } } });
+    const remote = memorySection({ progress: {}, retry: { day: 100, targets: {} } });
+    expect(mergeMemory(local, remote).retry).toBeUndefined();
+  });
+
+  it("今天复习到哪了（review）同样不进合并结果", () => {
     const local = memorySection({
       progress: {},
       review: { day: 100, reviewedIds: ["q1"], total: 5 },
@@ -191,31 +199,15 @@ describe("同一天的 retry / review：逐项合", () => {
       review: { day: 100, reviewedIds: ["q2", "q3"], total: 6 },
     });
     const merged = mergeMemory(local, remote);
-    expect(merged.memory.review).toEqual({
-      day: 100,
-      reviewedIds: ["q1", "q2", "q3"],
-      total: 6,
-    });
+    expect(merged.review).toBeUndefined();
   });
 
-  it("跨天仍然不合（免得把昨天的待办搬到今天）", () => {
-    const local = memorySection({
-      progress: {},
-      retry: { day: 100, targets: { q1: 2 } },
-    });
-    const remote = memorySection({
-      progress: {},
-      retry: { day: 101, targets: { q9: 3 } },
-    });
-    expect(mergeMemory(local, remote).memory.retry, "day 大的整条赢").toEqual({
-      day: 101,
-      targets: { q9: 3 },
-    });
-  });
-
-  it("交换律：两边顺序无关", () => {
-    const a = memorySection({ progress: {}, review: { day: 5, reviewedIds: ["x"], total: 2 } });
-    const b = memorySection({ progress: {}, review: { day: 5, reviewedIds: ["y"], total: 9 } });
-    expect(mergeMemory(a, b)).toEqual(mergeMemory(b, a));
+  it("但**进度本身**照常合并（别把孩子跟洗澡水一起倒了）", () => {
+    const card = { state: "reviewing", level: 3, streak: 0, nextDue: 111, lapses: 0, rev: 5000 };
+    const local = memorySection({ progress: { q1: card }, retry: { day: 100, targets: {} } });
+    const remote = memorySection({ progress: { q2: card }, retry: { day: 100, targets: { q7: 2 } } });
+    const merged = mergeMemory(local, remote);
+    expect(Object.keys(merged.progress as object).sort()).toEqual(["q1", "q2"]);
+    expect(merged.retry).toBeUndefined();
   });
 });
