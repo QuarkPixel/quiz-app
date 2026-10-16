@@ -32,10 +32,6 @@ export const OVERLAY_KEYS = {
 /** 挂起的那次刷新是「因为什么」：只用来决定要不要弹一条提示。 */
 export type ReloadReason = "synced";
 
-/** 提示文案只写这一处（挂起时不弹，真要刷新的那一刻才弹）。 */
-const RELOAD_TOAST_TITLE = "已拉取云端更新";
-const RELOAD_TOAST_DESCRIPTION = "页面将在停手后自动刷新，进度不会丢失。";
-
 export class UserActivityStore {
   /** 正在答题（会话持有） */
   answering: boolean = $state(false);
@@ -184,8 +180,6 @@ export function attachReloadGuard(
       void activity.hidden;
       if (!activity.canReload) return;
       if (activity.takeDeferredReload() === null) return;
-      // 挂起的这笔是「稍后再刷」，所以刷新前补一句说明，否则用户只看到页面自己跳了
-      toastStore.show(RELOAD_TOAST_TITLE, RELOAD_TOAST_DESCRIPTION);
       reload();
     });
   });
