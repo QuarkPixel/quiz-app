@@ -184,17 +184,28 @@ export function pruneMemoryRound(
  * ——所以只能近似：把池子里还没学完的卡当作这一批，已掌握数丢弃（进度条从
  * 0 重新数）。宁可少算，也不要凭空造出「已掌握」的卡。
  *
+ * 候选按「离这一轮有多近」排：复习期间暂存的 `learningPool`（那时 `activePool`
+ * 是到期队列）> 锁定模式记下的 `roundPoolIds` > 当前的 `activePool`。
+ *
  * 目标同样收敛到 `cardIds.length`：迁移完的一轮必须学得完。
  */
 export function migrateLegacyMemoryRound(input: {
   roundGoal?: unknown;
   roundPoolIds?: unknown;
+  learningPoolIds?: readonly string[];
   activePoolIds: readonly string[];
   validIds?: ReadonlySet<string>;
 }): MemoryRoundState | undefined {
-  const rawIds = Array.isArray(input.roundPoolIds) && input.roundPoolIds.length > 0
-    ? input.roundPoolIds
-    : input.activePoolIds;
+  const firstNonEmpty = (...candidates: readonly unknown[]): readonly unknown[] =>
+    candidates.find(
+      (ids): ids is readonly unknown[] => Array.isArray(ids) && ids.length > 0,
+    ) ?? [];
+
+  const rawIds = firstNonEmpty(
+    input.learningPoolIds ?? [],
+    input.roundPoolIds,
+    input.activePoolIds,
+  );
   const cardIds = uniqueIds(rawIds).filter(
     (id) => input.validIds === undefined || input.validIds.has(id),
   );

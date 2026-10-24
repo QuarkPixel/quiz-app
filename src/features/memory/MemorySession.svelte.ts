@@ -1473,9 +1473,17 @@ export class MemorySession {
       }
       // 队列空了但池子里还有卡：这一轮还没学完，别判成结束。
       // 把池子重新排一遍（自愈），否则会停在「首页说有半轮、点进来没题」。
-      this.queue = shuffleArray(
-        this.appState.activePool.map((item) => ({ id: item.id })),
-      );
+      //
+      // 只重排**题库里真的存在**的卡：`selectNext` 会跳过找不到的 id，跳过之后
+      // 队列又空 → 再回到这里重排 → 一张都排不出来时就成了死循环。所以先筛一遍，
+      // 一张都不剩说明池子是脏的（题被删 / id 变了），按题库耗尽收尾。
+      const known = new Set(this.questions.map((q) => q.id));
+      const alive = this.appState.activePool.filter((item) => known.has(item.id));
+      if (alive.length === 0) {
+        this.finishLearningRound("bank");
+        return;
+      }
+      this.queue = shuffleArray(alive.map((item) => ({ id: item.id })));
       this.selectNext();
       return;
     }

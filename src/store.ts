@@ -116,30 +116,60 @@ function createDefaultStoredState(): StoredState {
 }
 
 /**
+ * 从落盘的旧字段里取 id 列表。
+ *
+ * 旧版有两种形状：`roundPoolIds` 是 `string[]`，`activePool` / `learningPool` 是
+ * `{ id, ... }[]`。两种都认，省得判据里漏掉一种（漏了就等于「这一批是谁」没读到）。
+ */
+function poolIdsOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string") return item;
+      return isRecord(item) && typeof item.id === "string" ? item.id : null;
+    })
+    .filter((id): id is string => id !== null);
+}
+
+/**
  * 读盘时把「学习轮」收成一份（`MemoryRoundState`）。
  *
  * 新数据直接读 `round`；旧版本把这一轮拆成 `roundMastered` / `roundGoal` /
- * `roundPoolIds` 三份，走 `migrateLegacyMemoryRound` 拼回来（近似：旧数据没记
- * 哪几道已掌握，进度从 0 重新数，但**目标会收敛到这一批的数量**，
- * 所以不会出现「目标 5、池子 3、学到 3 就收尾」）。
+ * `roundPoolIds`（复习期间还多一个 `learningPool`），走 `migrateLegacyMemoryRound`
+ * 拼回来（近似：旧数据没记哪几道已掌握，进度从 0 重新数，但**目标会收敛到这一批
+ * 的数量**，所以不会出现「目标 5、池子 3、学到 3 就收尾」）。
+ *
+ * **先判断旧数据里到底有没有一轮**：只有记忆模式会写 `roundGoal` / `roundPoolIds` /
+ * `learningPool`，而 `activePool` 刷题模式也有——拿它当判据的话，任何一个刷题题库
+ * 都会凭空多出一个 `round` 字段（`StoredState.round` 的文档明说只有记忆模式才有）。
  */
 function normalizeStoredRound(parsed: Record<string, unknown>): MemoryRoundState | undefined {
   const current = normalizeMemoryRound(parsed.round);
   if (current) return current;
   if (parsed.round !== undefined) return undefined;
 
-  const activePoolIds = Array.isArray(parsed.activePool)
-    ? parsed.activePool
-        .map((item) =>
-          isRecord(item) && typeof item.id === "string" ? item.id : null,
-        )
-        .filter((id): id is string => id !== null)
-    : [];
+  const legacyGoal =
+    typeof parsed.roundGoal === "number" && Number.isFinite(parsed.roundGoal)
+      ? parsed.roundGoal
+      : 0;
+  const legacyPoolIds = poolIdsOf(parsed.roundPoolIds);
+  const legacyLearningPoolIds = poolIdsOf(parsed.learningPool);
+  // `roundGoal` 为 0 是「上一轮已经收尾」，不算进行中的一轮
+  if (
+    legacyGoal <= 0 &&
+    legacyPoolIds.length === 0 &&
+    legacyLearningPoolIds.length === 0
+  ) {
+    return undefined;
+  }
 
   return migrateLegacyMemoryRound({
     roundGoal: parsed.roundGoal,
     roundPoolIds: parsed.roundPoolIds,
-    activePoolIds,
+    // 复习期间池子暂存在 `learningPool` 里（`activePool` 那时是到期队列），
+    // 它是旧版里最接近「这一轮这一批」的那一份，优先级最高
+    learningPoolIds: legacyLearningPoolIds,
+    activePoolIds: poolIdsOf(parsed.activePool),
   });
 }
 
