@@ -424,11 +424,7 @@ describe("记忆模式：每轮限定题数", () => {
     // 顺序模式：这一批 = 题库最前面的 3 道
     const starters = session.appState.activePool.map((i) => i.id).sort();
     expect(starters).toEqual(["a", "b", "c"]);
-    expect([...session.appState.roundPoolIds!].sort()).toEqual([
-      "a",
-      "b",
-      "c",
-    ]);
+    expect([...session.round!.cardIds].sort()).toEqual(["a", "b", "c"]);
 
     // 每道卡要连对 3 次才毕业；学会一道池子就少一道，绝不补新的进来
     const everInPool = new Set(starters);
@@ -447,7 +443,8 @@ describe("记忆模式：每轮限定题数", () => {
     // 全程只有这一批里那 3 道进过池子——没有 d / e / f 混进来
     expect([...everInPool].sort()).toEqual(["a", "b", "c"]);
     expect(session.appState.activePool).toEqual([]);
-    expect(session.appState.roundPoolIds).toEqual([]);
+    // 一轮收尾后轮模型也清掉（下一轮重新挑）
+    expect(session.round).toBeNull();
     // 学满目标：正常收尾（不是「没有更多新卡片了」）
     expect(session.newCount).toBeGreaterThan(0);
   });
@@ -515,7 +512,7 @@ describe("记忆模式：每轮限定题数", () => {
     session.endRound();
     expect(session.run).toBe("idle");
     expect(session.roundMastered).toBe(0);
-    expect(session.appState.roundPoolIds).toEqual([]);
+    expect(session.round).toBeNull();
     // 没学满就结束，不该报成功
     expect(toasts.some((t) => t.title === "本轮学习完成")).toBe(false);
 
@@ -523,7 +520,7 @@ describe("记忆模式：每轮限定题数", () => {
     session.startLearning();
     expect(session.run).toBe("learning");
     expect(session.appState.activePool.length).toBe(3);
-    expect(session.appState.roundPoolIds?.length).toBe(3);
+    expect(session.round?.cardIds.length).toBe(3);
   });
 
   it("学到一半退出再进来：池子不重新灌满（这道卡不会被顶掉）", () => {
@@ -547,30 +544,18 @@ describe("记忆模式：每轮限定题数", () => {
     expect(reloaded.run).toBe("learning");
     expect(reloaded.appState.activePool.length).toBe(2);
     expect(reloaded.roundMastered).toBe(1);
-    expect([...reloaded.appState.roundPoolIds!].sort()).toEqual([
-      "a",
-      "b",
-      "c",
-    ]);
+    expect([...reloaded.round!.cardIds].sort()).toEqual(["a", "b", "c"]);
   });
 
   it("这一批落盘：保存后读得回来，关掉开关也不动已经开着的那一轮", () => {
     const hash = "memory_locked_persist_hash";
     const session = startLocked(["a", "b", "c", "d", "e", "f"], 3, { hash });
-    expect([...loadStoredState(hash).roundPoolIds!].sort()).toEqual([
-      "a",
-      "b",
-      "c",
-    ]);
+    expect([...loadStoredState(hash).round!.cardIds].sort()).toEqual(["a", "b", "c"]);
 
     // 中途关掉开关：设置落盘，但这一轮这一批还在（这一轮照旧按这一批走）
     session.updateMemorySettings({ lockRoundPool: false });
     expect(loadStoredState(hash).memory?.settings.lockRoundPool).toBe(false);
-    expect([...loadStoredState(hash).roundPoolIds!].sort()).toEqual([
-      "a",
-      "b",
-      "c",
-    ]);
+    expect([...loadStoredState(hash).round!.cardIds].sort()).toEqual(["a", "b", "c"]);
   });
 
   it("旧进度净化：没写过这个字段就是关，只认真正的 true", () => {
@@ -590,7 +575,7 @@ describe("记忆模式：每轮限定题数", () => {
   it("导入进度后本轮计数与这一批一起归零（备份里不带「本轮」状态）", async () => {
     const hash = "memory_locked_import_hash";
     const session = startLocked(["a", "b", "c", "d", "e", "f"], 3, { hash });
-    expect(session.appState.roundPoolIds?.length).toBe(3);
+    expect(session.round?.cardIds.length).toBe(3);
 
     // 走真实路径：导出写进假剪贴板（mock 的 writeText 会存下来），再导入回来
     const ids = ["a", "b", "c", "d", "e", "f"];
@@ -601,7 +586,8 @@ describe("记忆模式：每轮限定题数", () => {
     expect(session.roundMastered).toBe(0);
     expect(session.roundGoal).toBe(0);
     // 下一轮开轮时才重新挑，导入后不该留着上一轮那份
-    expect(session.appState.roundPoolIds).toBeUndefined();
+    expect(session.round).toBeNull();
+    expect(loadStoredState(hash).round).toBeUndefined();
   });
 });
 
@@ -882,6 +868,27 @@ describe("记忆模式：持久化", () => {
     expect(session.now - before).toBeLessThan(1000);
   });
 
+  it("刷题题库的池子不会被当成「学习轮」（`round` 只在记忆模式里存在）", () => {
+    const hash = "quiz_pool_not_a_round_hash";
+    // 刷题模式落盘的样子：有活动池，但没有记忆模式的任何字段
+    saveState(hash, {
+      ...emptyState(),
+      activePool: [
+        {
+          id: "a",
+          consecutiveCorrect: 1,
+          hasEverMistaken: false,
+          hasBeenShown: true,
+          lastSelectedRound: 0,
+        },
+      ],
+    });
+
+    // 旧版迁移的判据是 `roundGoal` / `roundPoolIds` / `learningPool`（只有记忆模式会写），
+    // 不能拿 `activePool` 当判据——刷题题库也有池子，否则每个刷题题库都会凭空多一个字段
+    expect(loadStoredState(hash).round).toBeUndefined();
+  });
+
   it("学到一半退出：本轮进度与活动池都能续上", () => {
     const hash = "memory_resume_hash";
     const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
@@ -966,8 +973,6 @@ describe("记忆模式：持久化", () => {
     saveState(hash, {
       ...emptyState(),
       activePool: [],
-      roundMastered: 0,
-      roundGoal: 0,
       memory: {
         progress: { a: createLearningProgress(2) },
         settings: createDefaultMemorySettings(),
@@ -1000,12 +1005,12 @@ describe("记忆模式：持久化", () => {
     expect(session.progress.a.state).toBe("reviewing");
   });
 
-  it("复习留下的到期队列不会被当成学习池", () => {
+  it("复习留下的到期队列不会被当成学习池（旧版落盘的半轮按「还能学的卡」重开）", () => {
     const hash = "memory_review_queue_hash";
     const ids = ["a", "b", "c", "d", "e"];
     saveState(hash, {
       ...emptyState(),
-      // 上一轮学到一半（已掌握 2 道），中途去复习了一趟：
+      // 上一轮学到一半，中途去复习了一趟：
       // activePool 里现在是到期队列，不是学习池
       activePool: [
         {
@@ -1023,6 +1028,7 @@ describe("记忆模式：持久化", () => {
           lastSelectedRound: 0,
         },
       ],
+      // 旧版落盘的那两份计数（迁移时只用来推目标，推不出「哪几道已掌握」）
       roundMastered: 2,
       roundGoal: 5,
       memory: {
@@ -1035,6 +1041,7 @@ describe("记忆模式：持久化", () => {
     });
 
     const session = makeSession(ids, { hash });
+    // 池子里那两道已经进入复习中，不属于「还能学」的卡 → 没有可续的一轮
     expect(session.hasOngoingRound).toBe(false);
 
     session.startLearning();
@@ -1042,12 +1049,12 @@ describe("记忆模式：持久化", () => {
     // 到期队列里的卡不进这一轮
     expect(session.appState.activePool.some((i) => i.id === "a")).toBe(false);
     expect(session.appState.activePool.some((i) => i.id === "b")).toBe(false);
-    // 池子虽然被复习顶掉过，但这一轮的计数还在，接着数
-    expect(session.roundMastered).toBe(2);
-    expect(session.roundGoal).toBe(5);
+    // 新的一轮：目标收敛到「还能学的卡」的数量（c / d / e 三道）
+    expect(session.roundGoal).toBe(3);
+    expect(session.roundMastered).toBe(0);
   });
 
-  it("学到一半去复习：学习池的成员与顺序都原样保住（含中途刷新）", () => {
+  it("学到一半去复习：这一轮原样保住，回来时池子按它重建（含中途刷新）", () => {
     const hash = "memory_pool_stash_hash";
     const ids = ["z", "a", "b", "c", "d", "e", "f", "g", "h"];
     saveState(hash, {
@@ -1076,20 +1083,19 @@ describe("记忆模式：持久化", () => {
     session.exitSession();
     expect(session.appState.activePool.map((i) => i.id)).toEqual(poolBefore);
 
-    // 去复习：activePool 被换成到期队列，学习池原样挪进 learningPool
+    // 去复习：activePool 被换成到期队列；学习轮本身（`round`）原样留着
     session.startReview();
     expect(session.appState.activePool.map((i) => i.id)).toEqual(["z"]);
-    expect(session.appState.learningPool?.map((i) => i.id)).toEqual(poolBefore);
+    expect(session.round?.cardIds).toEqual(poolBefore);
 
-    // 复习到一半刷新页面：复习队列和学习池都在盘上
+    // 复习到一半刷新页面：这一轮还在盘上
     const resumed = makeSession(ids, { hash });
-    expect(resumed.appState.learningPool?.map((i) => i.id)).toEqual(poolBefore);
+    expect(resumed.round?.cardIds).toEqual(poolBefore);
 
-    // 回来学习 → 池子与去复习之前一模一样，顺序也没变
+    // 回来学习 → 池子按 `round` 重建，成员与顺序都和去复习之前一模一样
     resumed.startLearning();
     expect(resumed.run).toBe("learning");
     expect(resumed.appState.activePool.map((i) => i.id)).toEqual(poolBefore);
-    expect(resumed.appState.learningPool).toBeUndefined();
   });
 
   it("复习到一半退出：已复习的题当天不再出现，进度条的计数也接着数", () => {
@@ -1175,15 +1181,15 @@ describe("记忆模式：本轮计数与重置 / 导入", () => {
     }
     expect(session.roundMastered).toBe(1);
     expect(session.roundGoal).toBe(5);
-    expect(loadStoredState(hash).roundMastered).toBe(1);
+    expect(loadStoredState(hash).round?.masteredIds.length).toBe(1);
 
     session.reset();
 
     // 内存与盘上的本轮计数都要归零
     expect(session.roundMastered).toBe(0);
     expect(session.roundGoal).toBe(0);
-    expect(loadStoredState(hash).roundMastered).toBe(0);
-    expect(loadStoredState(hash).roundGoal).toBe(0);
+    expect(loadStoredState(hash).round).toBeUndefined();
+    expect(loadStoredState(hash).round?.goal ?? 0).toBe(0);
 
     // 新的一轮从 0 开始，进度条不会显示上一次的 1/5
     session.startLearning();
@@ -1233,8 +1239,8 @@ describe("记忆模式：本轮计数与重置 / 导入", () => {
     expect(session.progress.a?.state).toBe("reviewing");
     expect(session.roundMastered).toBe(0);
     expect(session.roundGoal).toBe(0);
-    expect(loadStoredState(hash).roundMastered).toBe(0);
-    expect(loadStoredState(hash).roundGoal).toBe(0);
+    expect(loadStoredState(hash).round).toBeUndefined();
+    expect(loadStoredState(hash).round?.goal ?? 0).toBe(0);
 
     // 再开一轮也是从 0 开始
     session.startLearning();
@@ -1577,7 +1583,7 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
 });
 
 describe("记忆模式：本轮收尾", () => {
-  it("题库比本轮目标少：不谎报成功，并记下「今天已经学习完」", () => {
+  it("题库比本轮目标少：目标收敛到实际可学数，学完就是学完（不再 2 / 5 提前收尾）", () => {
     const hash = "memory_exhausted_round_hash";
     const toasts: { title: string; variant?: string }[] = [];
     const session = makeSession(["a", "b"], {
@@ -1586,6 +1592,10 @@ describe("记忆模式：本轮收尾", () => {
     });
     session.updateMemorySettings({ roundTarget: 5 });
     session.startLearning();
+
+    // 开轮时目标就收敛了：这一批只有 2 道，进度条是 0 / 2，不是 0 / 5
+    expect(session.roundGoal).toBe(2);
+    expect(session.roundCompletedCount).toBe(0);
 
     let guard = 0;
     while (
@@ -1596,19 +1606,17 @@ describe("记忆模式：本轮收尾", () => {
       answer(session, true);
     }
 
-    // 两道都学会了，但离目标 5 道还差得远
+    // 两道都学会了 = 这一轮真的学完了（以前会顶着 5 的目标报「2 / 5」）
     expect(session.run).toBe("idle");
-    expect(session.roundMastered).toBe(0);
-    expect(session.roundGoal).toBe(0);
+    expect(session.round).toBeNull();
     expect(session.newCount).toBe(0);
     // 首页靠它把「学习」按钮降一档颜色（今天学过一轮了），并且要落盘
     expect(session.learnedToday).toBe(true);
     expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
 
-    const finish = toasts.find((t) => t.title === "这一轮学完了");
-    expect(finish).toBeTruthy();
-    expect(finish?.variant).toBeUndefined();
-    expect(toasts.some((t) => t.title === "本轮学习完成")).toBe(false);
+    const finish = toasts.find((t) => t.title === "本轮学习完成");
+    expect(finish?.variant).toBe("success");
+    expect(toasts.some((t) => t.title === "这一轮学完了")).toBe(false);
   });
 
   it("学满本轮目标：仍然是成功提示", () => {
@@ -1784,7 +1792,7 @@ describe("记忆模式：进度变更的落盘时机", () => {
     }
 
     expect(session.roundMastered).toBe(1);
-    expect(loadStoredState(hash).roundMastered).toBe(1);
+    expect(loadStoredState(hash).round?.masteredIds.length).toBe(1);
     expect(loadStoredState(hash).activePool.length).toBe(5);
   });
 });
@@ -2342,7 +2350,7 @@ describe("记忆模式：结束本轮（本轮作废并退出到首页）", () =
     // 没学完的一轮不算「今天学过一轮」，首页学习入口该保持高亮
     expect(session.learnedToday).toBe(false);
     // 落盘
-    expect(loadStoredState(hash).roundMastered).toBe(0);
+    expect(loadStoredState(hash).round).toBeUndefined();
     expect(loadStoredState(hash).activePool).toEqual([]);
   });
 
@@ -2370,6 +2378,59 @@ describe("记忆模式：结束本轮（本轮作废并退出到首页）", () =
         (item) => item.consecutiveCorrect === 0,
       ),
     ).toBe(true);
+  });
+
+  /**
+   * 用户报的那条（「设 5 题，学两题后结束本轮，下次学到第三题就突然结束」）：
+   *
+   * 根因是「本轮目标」与「这一轮实际能学几道」是两个数，没人对账——目标还是
+   * 设置里的 5，而题库只剩 4 道可学，池子一空本轮就收尾，进度条停在 4 / 5。
+   *
+   * 现在目标在开轮时收敛（`createMemoryRound`），这一条钉住两件事：
+   *   1. 新一轮的目标 = 还能学几道（4），不是设置里的 5；
+   *   2. 学到第 3 道时**仍然在学**（不会提前收尾），一路学到目标为止。
+   */
+  it("结束本轮之后开新一轮：目标跟着「还能学几道」收敛，不会学到一半突然结束", () => {
+    const hash = "memory_end_round_goal_hash";
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const session = makeSession(ids, { hash });
+    session.updateBankSettings({ selectionMode: "sequential" });
+    session.updateMemorySettings({ roundTarget: 5 });
+    session.startLearning();
+
+    // 学满 2 道（每道要连对 3 次）→ 题库只剩 4 道还能学
+    let guard = 0;
+    while (session.roundMastered < 2 && session.run === "learning") {
+      expect(guard++).toBeLessThan(60);
+      answer(session, true);
+    }
+    expect(session.roundMastered).toBe(2);
+
+    session.endRound();
+    session.startLearning();
+
+    // 目标收敛到 4（不是 5）：这一轮真的能做到的只有 4 道
+    expect(session.learnableCount).toBe(4);
+    expect(session.roundGoal).toBe(4);
+    expect(session.appState.activePool).toHaveLength(4);
+
+    // 学到第 3 道时还在学 —— 这是用户看到「突然结束」的那一刻
+    guard = 0;
+    while (session.roundMastered < 3 && session.run === "learning") {
+      expect(guard++).toBeLessThan(60);
+      answer(session, true);
+    }
+    expect(session.roundMastered).toBe(3);
+    expect(session.run, "学到第 3 道不该收尾").toBe("learning");
+
+    // 一路学到目标：4 / 4 正常收尾（不是 3 / 5 那种半截）
+    guard = 0;
+    while (session.run === "learning") {
+      expect(guard++).toBeLessThan(60);
+      answer(session, true);
+    }
+    expect(session.run).toBe("idle");
+    expect(session.round).toBeNull();
   });
 
   it("「退出本轮」与「结束本轮」都回首页，区别只在轮次留不留", () => {

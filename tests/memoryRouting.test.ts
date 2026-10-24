@@ -57,8 +57,11 @@ function memoryState(pool: string[] = []): StoredState {
     filterType: "all",
     settings: { ...createDefaultSettings(), selectionMode: "sequential" },
     ui: createDefaultUiPreferences(),
-    roundGoal: 5,
-    roundMastered: 0,
+    // 学到一半的一轮：这一批就是池子里那几道（轮模型的规矩见 `@/features/memory/round`）
+    round:
+      pool.length > 0
+        ? { goal: Math.min(5, pool.length), cardIds: [...pool], masteredIds: [] }
+        : undefined,
     memory: {
       progress: Object.fromEntries(
         pool.map((id) => [

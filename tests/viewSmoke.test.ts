@@ -442,7 +442,9 @@ describe("答题主路径", () => {
         // 记忆模式的进度条是 ProgressBar 的适配器：非交互形态（不是按钮）
         const bar = document.querySelector<HTMLElement>('[role="progressbar"]');
         expect(bar, "本轮进度条没渲染出来").not.toBeNull();
-        expect(bar!.getAttribute("aria-valuemax")).toBe("5");
+        // 这份题库只有 1 道卡，所以本轮目标收敛成 1（不是设置里的 5）：
+        // 「目标 ≤ 这一批能学出来的数量」是轮模型的不变式，见 `@/features/memory/round`
+        expect(bar!.getAttribute("aria-valuemax")).toBe("1");
 
         window.dispatchEvent(
             new KeyboardEvent("keydown", {
@@ -513,10 +515,10 @@ describe("记忆模式：退出本轮 / 结束本轮", () => {
             "结束本轮之后应当回到首页",
         ).not.toThrow();
         expect(document.querySelector('[role="progressbar"]')).toBeNull();
-        // 本轮的池子与计数一起清了：下次点「学习新的题目」是**新的一轮**
+        // 本轮的池子与轮模型一起清了：下次点「学习新的题目」是**新的一轮**
         const stored = loadStoredState(view.bank.hash);
         expect(stored.activePool).toEqual([]);
-        expect(stored.roundMastered).toBe(0);
+        expect(stored.round).toBeUndefined();
     });
 
     it("触发区只有箭头那一块：指针扫过这一行的别处不会点亮", async () => {

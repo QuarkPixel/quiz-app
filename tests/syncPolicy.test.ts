@@ -62,10 +62,7 @@ const FULL_STATE = {
   filterType: "single",
   settings: { selectionMode: "random" },
   ui: { progressFocused: true, showPool: true },
-  roundMastered: 3,
-  roundGoal: 5,
-  roundPoolIds: ["q1", "q2"],
-  learningPool: ["q3"],
+  round: { goal: 5, cardIds: ["q1", "q2", "q3"], masteredIds: ["q1"] },
   memory: {
     progress: { q1: { state: "reviewing", level: 2, streak: 0, nextDue: 123, lapses: 0, rev: 9 } },
     settings: { graduateLevel: 7, roundTarget: 5, lockRoundTarget: false },
@@ -108,10 +105,7 @@ describe("写回本地时贴回本机的设备本地字段", () => {
     expect(merged.ui).toEqual(FULL_STATE.ui);
     expect(merged.filterType).toBe(FULL_STATE.filterType);
     expect(merged.activePool).toEqual(FULL_STATE.activePool);
-    expect(merged.roundMastered).toBe(FULL_STATE.roundMastered);
-    expect(merged.roundGoal).toBe(FULL_STATE.roundGoal);
-    expect(merged.roundPoolIds).toEqual(FULL_STATE.roundPoolIds);
-    expect(merged.learningPool).toEqual(FULL_STATE.learningPool);
+    expect(merged.round).toEqual(FULL_STATE.round);
   });
 
   it("同步字段用云端/合并后的那份，不被本机覆盖", () => {

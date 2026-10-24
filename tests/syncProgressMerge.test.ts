@@ -762,10 +762,8 @@ describe("设备本地的字段：不传出去，也不被擦掉", () => {
     ui: { progressFocused: true, showPool: true },
     filterType: "single",
     activePool: [{ id: "q1", consecutiveCorrect: 2, hasBeenShown: true }],
-    roundMastered: 3,
-    roundGoal: 5,
-    roundPoolIds: ["q1", "q2"],
-    learningPool: ["q2"],
+    // 学习轮（目标 / 这一批 / 已掌握）整份都是设备本地的
+    round: { goal: 5, cardIds: ["q1", "q2"], masteredIds: ["q1"] },
   };
 
   test("云端不含设备本地字段；本机那份在同步后原样还在", async () => {
