@@ -49,6 +49,7 @@ import {
   type ShuffledOption,
 } from "../types/types";
 import { maybePlayAnswerSound } from "@/sound";
+import { SWAP_LEAVING_ATTR } from "@/lib/transitions/swap";
 import type {
   CopyQuestionOptions,
   CopyQuestionResult,
@@ -85,6 +86,14 @@ export class QuizSession extends ProgressSessionBase {
   blankAnswerInputs: string[] = $state([]);
   showResult = $state(false);
   isCorrect = $state(false);
+
+  /**
+   * 出题序号：每次 `selectNext()` 都 +1，UI 用它做换题过渡的 `{#key}`。
+   *
+   * 与记忆模式的同名字段口径一致：按「一次出题」而不是「一道题」计数——
+   * 同一道题被排回池子再次出现时也算新的一次展示，照样该淡入。
+   */
+  presentationSeq = $state(0);
 
   // === 筛选变更确认 / 新题预览 state ===
   pendingFilterType: QuestionType | "all" | null = $state(null);
@@ -178,6 +187,7 @@ export class QuizSession extends ProgressSessionBase {
       this.appState,
       this.currentQuestion?.id,
     );
+    this.presentationSeq += 1;
     this.markCurrentQuestionAsShown();
 
     if (this.currentQuestion?.options) {
@@ -577,10 +587,19 @@ export class QuizSession extends ProgressSessionBase {
   private focusBlankInputIfNeeded(): void {
     if (this.currentQuestion?.type !== "blank") return;
     void tick().then(() => {
-      const el = document.querySelector<HTMLInputElement>(
-        ".blank-input:not(:disabled)",
-      );
-      el?.focus();
+      /*
+       * 换题过渡期间，旧题那一层还留在 DOM 里 100ms（见 `swapOut`），
+       * 它的输入框也还匹配 `.blank-input`。所以：
+       *   - 跳过被标了 `SWAP_LEAVING_ATTR` 的那一层；
+       *   - 取最后一个匹配项（新的一层排在旧的后面）。
+       * 否则焦点会落在 100ms 后就被删掉的输入框上，看起来像「没聚焦」。
+       */
+      const inputs = [
+        ...document.querySelectorAll<HTMLInputElement>(
+          ".blank-input:not(:disabled)",
+        ),
+      ].filter((el) => el.closest(`[${SWAP_LEAVING_ATTR}]`) === null);
+      inputs.at(-1)?.focus();
     });
   }
 }
