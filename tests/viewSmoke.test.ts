@@ -9,7 +9,7 @@ import {
     saveState,
 } from "../src/store";
 import { createDefaultMemorySettings } from "../src/features/memory/settings";
-import { startOfDay } from "../src/features/memory/algorithm";
+import { studyDay } from "../src/features/memory/algorithm";
 import type { Bank } from "../src/source/types";
 import type { MemoryProgress, StoredState } from "../src/types";
 
@@ -46,13 +46,19 @@ const QUIZ_BANK = JSON.stringify({
     ],
 });
 
-/** 一张今天到期的复习卡（进「复习」的门槛） */
+/**
+ * 一张今天到期的复习卡（进「复习」的门槛）。
+ *
+ * 用 `studyDay` 而不是 `startOfDay`：记忆模式的「今天」是按凌晨 5 点切换的
+ * （`MEMORY_DAY_START_HOUR`），凌晨 0~5 点跑这套用例时 `startOfDay(now)` 落在
+ * **还没到来的那个学习日**上，`isDue` 判成「没到期」——用例会莫名其妙地红。
+ */
 function dueToday(): MemoryProgress {
     return {
         state: "reviewing",
         level: 1,
         streak: 0,
-        nextDue: startOfDay(Date.now()),
+        nextDue: studyDay(Date.now()),
         lapses: 0,
     };
 }

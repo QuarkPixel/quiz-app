@@ -168,9 +168,23 @@ afterEach(() => {
   toastStore.dismiss();
 });
 
-/** 会话是不是开着：屏上有没有题（首页没有）。 */
+/**
+ * 会话是不是开着：屏上有没有题（首页没有）。
+ *
+ * **要跳过正在退场的那一层**（`[data-swap-leaving]`）：换屏过渡是「新旧两层同时在
+ * DOM 里」，`flushSync()` 不等动画（`tests/_setup.ts` 里动画是立刻结束的桩，但
+ * Svelte 拆 out 过渡还要走两个微任务），于是旧那一屏的题面会在这里多留一下。
+ * 它属于过渡的残影，不是「现在屏上是哪一屏」。
+ *
+ * 用克隆去掉它而不是只看某个选择器：真出了「题面没被卸载」的 bug，克隆里仍然
+ * 会有题，照样能抓到。
+ */
 function questionOnScreen(): boolean {
-  return (document.body.textContent ?? "").includes("题-m");
+  const live = document.body.cloneNode(true) as HTMLElement;
+  for (const leaving of live.querySelectorAll("[data-swap-leaving]")) {
+    leaving.remove();
+  }
+  return (live.textContent ?? "").includes("题-m");
 }
 
 /** 按一下某个按钮（按可见文字找）。 */

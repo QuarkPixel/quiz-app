@@ -4,18 +4,20 @@ import ViewShellHarness from "./ViewShellHarness.svelte";
 import { SCROLL_TOP_THRESHOLD_PX } from "../src/config";
 
 /**
- * 答题视图的公共外壳（滚动容器 + 底部渐变遮罩 + 底部工具栏）。
+ * 答题视图的公共外壳。
  *
- * 这些行为以前在两个视图里各写一遍，于是记忆模式那边**整块漏掉**：
- * 没有底部遮罩、可滚动时 footer 不让位、鼠标压在工具栏上滚不动。
- * 现在只有这一份实现，所以这里逐条把它们钉住：
+ * 这一版外壳的版面是「三块固定 + 一块滚动」：
  *
- *   1. 遮罩只在内容可滚动时点亮（不可滚动时不能挡住内容）；
- *   2. 可滚动时 footer 要多让出一点上边距（否则渐变压住最后一行）；
- *   3. 工具栏上的滚轮事件要转发给滚动容器；
- *   4. 「回到顶部」按钮只有刷题模式要（`scrollTopButton`），且滚过阈值才出现；
- *   5. `data-main-scroll-viewport` 必须打在执行滚动的那个元素上
- *      （页头的滚轮转发靠它选元素，曾经全项目没人写这个属性，转发表面上是死的）。
+ *   header（题号行） / actions（操作条） / progress（进度条）都在滚动区**外面**，
+ *   滚动区只有题干与作答。以前整块内容一起滚，题干一长，题号、提交按钮、进度条
+ *   全被滚走。这里逐条钉住新的约定：
+ *
+ *   1. 只有 `[data-main-scroll-viewport]` 那个元素在滚，另外三块不在它里面；
+ *   2. 两条裁切边遮罩只在「有内容被切掉」时点亮（贴顶不亮上边、贴底不亮下边）；
+ *   3. 底部固定区上的滚轮要转发给滚动容器；
+ *   4. 活动池那一列靠网格轨道宽度做 0 ↔ 280px，内容靠右钉住；
+ *   5. `data-main-scroll-viewport` 必须打在执行滚动的元素上
+ *      （页头的滚轮转发靠它选元素）。
  */
 
 const mounted: Array<() => void> = [];
@@ -40,10 +42,12 @@ function stubMetrics({ scrollHeight = 0, clientHeight = 0, scrollTop = 0 } = {})
   return () => spies.forEach((spy) => spy.mockRestore());
 }
 
-function render(scrollTopButton = false) {
+function render(
+    props: { scrollTopButton?: boolean; asideOpen?: boolean; withAside?: boolean } = {},
+) {
   const host = document.createElement("div");
   document.body.appendChild(host);
-  const app = mount(ViewShellHarness, { target: host, props: { scrollTopButton } });
+  const app = mount(ViewShellHarness, { target: host, props });
   flushSync();
   mounted.push(() => {
     void unmount(app);
@@ -55,15 +59,17 @@ function render(scrollTopButton = false) {
   return { host, viewport };
 }
 
-function mask(host: HTMLElement): HTMLElement {
-  const el = host.querySelector<HTMLElement>('[data-slot="view-bottom-mask"]');
-  if (!el) throw new Error("找不到底部遮罩");
+function mask(host: HTMLElement, which: "top" | "bottom"): HTMLElement {
+  const el = host.querySelector<HTMLElement>(
+    `[data-slot="view-${which}-mask"]`,
+  );
+  if (!el) throw new Error(`找不到${which}遮罩`);
   return el;
 }
 
-function footer(host: HTMLElement): HTMLElement {
-  const el = host.querySelector("footer");
-  if (!el) throw new Error("找不到底部工具栏");
+function byTestId(host: HTMLElement, id: string): HTMLElement {
+  const el = host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  if (!el) throw new Error(`找不到 ${id}`);
   return el;
 }
 
@@ -73,8 +79,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("滚动容器", () => {
-  it("执行滚动的那个元素带着 data-main-scroll-viewport（页头滚轮转发认它）", () => {
+describe("只有中间那块在滚", () => {
+  it("滚动容器带着 data-main-scroll-viewport（页头滚轮转发认它）", () => {
     const restore = stubMetrics();
     try {
       const { viewport } = render();
@@ -85,43 +91,50 @@ describe("滚动容器", () => {
     }
   });
 
-  it("不可滚动时 data-shell-scrollable=false（顶部 backdrop 不该亮）", () => {
-    const restore = stubMetrics({ scrollHeight: 400, clientHeight: 400 });
+  it("题号行 / 操作条 / 进度条都在滚动区外面", () => {
+    const restore = stubMetrics({ scrollHeight: 1000, clientHeight: 400 });
     try {
-      const { host } = render();
+      const { host, viewport } = render();
 
-      const shell = host.querySelector('[data-shell-scrollable]');
-      expect(shell!.getAttribute("data-shell-scrollable")).toBe("false");
+      for (const id of ["header", "actions", "progress"]) {
+        expect(viewport.contains(byTestId(host, id)), `${id} 不该在滚动区里`).toBe(
+          false,
+        );
+      }
+      // 题面本身当然在里面
+      expect(viewport.contains(byTestId(host, "body"))).toBe(true);
     } finally {
       restore();
     }
   });
 });
 
-describe("底部遮罩与工具栏让位", () => {
-  it("不可滚动时遮罩是透明的，footer 用小的上边距", () => {
+describe("裁切边遮罩", () => {
+  it("不可滚动时两条遮罩都是透明的", () => {
     const restore = stubMetrics({ scrollHeight: 400, clientHeight: 400 });
     try {
       const { host } = render();
 
-      expect(mask(host).className).toContain("opacity-0");
-      expect(mask(host).className).not.toContain("opacity-100");
-      expect(footer(host).className).toContain("pt-4");
+      expect(mask(host, "top").className).toContain("opacity-0");
+      expect(mask(host, "bottom").className).toContain("opacity-0");
+      expect(
+        host.querySelector('[data-shell-scrollable]')!.getAttribute(
+          "data-shell-scrollable",
+        ),
+      ).toBe("false");
     } finally {
       restore();
     }
   });
 
-  it("可滚动时遮罩点亮成背景渐变，footer 让位（pt-6）", () => {
+  it("可滚动且贴着顶：只亮下边那条", () => {
     const restore = stubMetrics({ scrollHeight: 1000, clientHeight: 400 });
     try {
       const { host } = render();
 
-      expect(mask(host).className).toContain("opacity-100");
-      expect(mask(host).className, "遮罩本体应当是「从背景色渐隐」").toContain(
-        "bg-gradient-to-t",
-      );
-      expect(footer(host).className).toContain("pt-6");
+      expect(mask(host, "top").className).toContain("opacity-0");
+      expect(mask(host, "bottom").className).toContain("opacity-100");
+      expect(mask(host, "bottom").className).toContain("bg-gradient-to-t");
       expect(
         host.querySelector('[data-shell-scrollable]')!.getAttribute(
           "data-shell-scrollable",
@@ -132,7 +145,36 @@ describe("底部遮罩与工具栏让位", () => {
     }
   });
 
-  it("鼠标压在工具栏上滚动时，事件被转发给滚动容器", () => {
+  it("滚到中间：两条都亮；滚到底：只剩上边那条", () => {
+    let scrollTop = 300;
+    const spies = [
+      vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000),
+      vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400),
+      vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(
+        () => scrollTop,
+      ),
+    ];
+    try {
+      const { host, viewport } = render();
+
+      expect(mask(host, "top").className).toContain("opacity-100");
+      expect(mask(host, "bottom").className).toContain("opacity-100");
+
+      // 600 = scrollHeight - clientHeight，正好贴底
+      scrollTop = 600;
+      viewport.dispatchEvent(new Event("scroll"));
+      flushSync();
+
+      expect(mask(host, "top").className).toContain("opacity-100");
+      expect(mask(host, "bottom").className).toContain("opacity-0");
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
+  });
+});
+
+describe("固定区上的滚轮", () => {
+  it("鼠标压在操作条上滚动时，事件被转发给滚动容器", () => {
     const restore = stubMetrics({ scrollHeight: 1000, clientHeight: 400 });
     try {
       const { host, viewport } = render();
@@ -144,7 +186,7 @@ describe("底部遮罩与工具栏让位", () => {
         bubbles: true,
         cancelable: true,
       });
-      footer(host).dispatchEvent(wheel);
+      byTestId(host, "actions").dispatchEvent(wheel);
 
       expect(scrollBy).toHaveBeenCalledWith(
         expect.objectContaining({ top: 120 }),
@@ -156,11 +198,53 @@ describe("底部遮罩与工具栏让位", () => {
   });
 });
 
+describe("活动池那一列", () => {
+  it("收起时轨道宽 0px，展开时 280px", () => {
+    const restore = stubMetrics();
+    try {
+      const { host } = render({ asideOpen: false });
+      const grid = host.querySelector<HTMLElement>(".session-grid")!;
+
+      expect(grid.style.gridTemplateColumns).toContain("0px");
+      expect(byTestId(host, "aside")).toBeTruthy();
+
+      void unmount;
+    } finally {
+      restore();
+    }
+  });
+
+  it("展开态下轨道是 280px（内容靠右钉住，从窗口右缘推进来）", () => {
+    const restore = stubMetrics();
+    try {
+      const { host } = render({ asideOpen: true });
+      const grid = host.querySelector<HTMLElement>(".session-grid")!;
+
+      expect(grid.style.gridTemplateColumns).toContain("280px");
+    } finally {
+      restore();
+    }
+  });
+
+  it("没有池子时只有一列（记忆模式）", () => {
+    const restore = stubMetrics();
+    try {
+      const { host } = render({ withAside: false });
+      const grid = host.querySelector<HTMLElement>(".session-grid")!;
+
+      expect(grid.style.gridTemplateColumns).toBe("minmax(0, 42rem)");
+      expect(host.querySelector('[data-testid="aside"]')).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe("回到顶部按钮", () => {
   it("默认不渲染（记忆模式不要它）", () => {
     const restore = stubMetrics({ scrollHeight: 1000, clientHeight: 400 });
     try {
-      const { host } = render(false);
+      const { host } = render({ scrollTopButton: false });
 
       expect(host.querySelector('button[aria-label="回到顶部"]')).toBeNull();
     } finally {
@@ -180,14 +264,13 @@ describe("回到顶部按钮", () => {
       ),
     ];
     try {
-      const { host, viewport } = render(true);
+      const { host, viewport } = render({ scrollTopButton: true });
       const button = () =>
         host.querySelector<HTMLElement>('button[aria-label="回到顶部"]')!;
 
       expect(button(), "开关打开时按钮应当在 DOM 里").not.toBeNull();
       expect(button().className, "还没滚过阈值，先藏着").toContain("opacity-0");
 
-      // 滚过阈值：外壳靠滚动容器上的 scroll 事件更新自己的状态
       scrollTop = SCROLL_TOP_THRESHOLD_PX + 100;
       viewport.dispatchEvent(new Event("scroll"));
       flushSync();

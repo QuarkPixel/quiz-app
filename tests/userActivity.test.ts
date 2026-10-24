@@ -126,17 +126,10 @@ describe("能不能打断", () => {
     expect(reloads).toBe(2);
   });
 
-  it("真刷新之前弹一条提示（不然用户只看到页面自己跳了）", () => {
-    activity.setAnswering(true);
-    requestReload();
-    expect(toastStore.current, "挂起时不打扰用户").toBeNull();
-
-    activity.setAnswering(false);
-    flushSync();
-
-    expect(reloads).toBe(1);
-    expect(toastStore.current?.title).toBe("已拉取云端更新");
-  });
+  // 「真刷新之前弹一条提示」那条用例已经删掉：提示本身在
+  // `974354e (Remove reload toast from deferred sync refresh)` 里被有意去掉了
+  // （挂起的那笔刷新是「稍后自己补上」，不是需要用户操心的事，补之前再弹一句
+  // 反而像在报告一个错误）。用例没跟着删，于是它一直在断言一个不存在的行为。
 
   it("三条理由叠在一起：全放开才刷", () => {
     activity.setAnswering(true);
