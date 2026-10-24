@@ -33,6 +33,16 @@ pnpm verify                    # check + test + build
 
 跑单个测试：`pnpm vitest run tests/answerMatcher.test.ts -t '<name>'`。
 
+**`pnpm` 在本机卡死过（连 `--version` 都没输出），与项目代码无关**：PATH 里的
+`/opt/homebrew/bin/pnpm` 是 Homebrew 的 pnpm 12（Rust 重写的 "pacquet"），它启动时会按
+`package.json` 的 `packageManager` 自动切换版本，在这条路径上死锁（`sample` 显示主线程
+`_pthread_join` 等一个卡在 `__psynch_cvwait` 的线程）。隔离验证：空目录正常、只放
+`package.json` 就卡、删掉 `packageManager` 字段就正常、`npm_config_manage_package_manager_versions=false`
+也正常。现在的修法是 `~/Library/pnpm/bin/pnpm` 放了个 wrapper（该目录在 PATH 里更靠前），直接
+`exec node …/.tools/pnpm/11.5.2/node_modules/pnpm/bin/pnpm.mjs "$@"`；**不要** exec
+`~/Library/pnpm/pnpm`（指向 10.32.1，会与它的版本切换逻辑递归卡死）。wrapper 硬编码 11.5.2，
+升级 pnpm 要同步改；彻底方案是 `brew uninstall pnpm`。
+
 ## 架构
 
 ### 数据流
@@ -316,15 +326,21 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - **⌘Y（Ctrl+Y）就是「点一下这颗点」**（`sync/shortcut.ts`）：动作与点击共用同一个 `onClick`，
     所以红点同样是去设置；云同步关着时它跟着指示点一起消失（⌘Y 完全不碰，留给浏览器）。
     悬浮标题 / `aria-label` 里也带上这个键（只在真的按得动、即 `clickable` 时挂）
-- `src/components/quiz/QuizView.svelte` — 容器，接收 `bank: QuizBank`。业务全在 `QuizSession`
+- `src/components/quiz/QuizView.svelte` — **装配层**：只决定「哪几块放进 `ViewShell` 的哪个槽」。
+  业务全在 `QuizSession`；版面全在 `ViewShell`；题型相关的内容拆成
+  `QuestionMeta`（固定顶栏）/ `QuestionBody`（滚动区）/ `QuestionActions`（固定底栏）
 - `src/components/layout/` — 两个模式共用的外壳（**记忆模式不要再抄一份**）
-  - `ViewShell.svelte`：答题视图的公共版面——滚动容器 + 底部渐变遮罩 + 底部工具栏（外加
-    刷题模式那颗「回到顶部」）。「内容可滚动时才有遮罩、footer 跟着让位、工具栏上滚轮也能滚」
-    这三条行为只此一份；内容区与左右按钮走 snippet
+  - `ViewShell.svelte`：**唯一的版面实现**——`header` / `actions` / `progress` 三块固定、
+    `children` 是唯一滚动区、`aside` 是活动池（宽屏并排 / 窄屏折进滚动区）、`left` / `right` 是工具栏。
+    版面模型、为什么「放得下居中、放不下贴边」不需要量高度、池子为什么必须靠右钉住、
+    遮罩为什么是常量高度——全在「版面（`ViewShell`）」一节
   - `ToolbarIconButton.svelte`：工具栏上的圆图标按钮。传 `shortcut="toggleSettings"` 就会
     自动带上 `<Kbd>` 提示——**提示文案来自 `@/config` 的快捷键注册表**，不会两边写得不一样
   - `AppShell.svelte`：更外层（页头 / 内容区）。页头的滚轮转发认的是
     `[data-main-scroll-viewport="true"]`，这个属性由 `ViewShell` 打在滚动容器上
+- `src/components/shared/SwapFade.svelte` + `src/lib/transitions/swap.ts` — **「换一屏」的唯一实现**
+  （换题 / 换题库 / 记忆模式进出学习·复习）。时长只有 `SWAP_MS` 一个值；`css` 里只能写可动画属性，
+  退场层的定位必须写内联样式——原因见「动效（过渡 / 缓动）」一节
 - `src/components/settings/` 里两个模式共用的三块
   - `ImportProgressDialog.svelte`：导入进度的二次确认（覆盖全部进度且不可撤销）。
     两个 session 各自持有一个 `importConfirmText`，弹窗与文案共用这一份
@@ -333,10 +349,17 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `BankNameSetting.svelte` / `QuestionOrder.svelte` / `QuestionFilters.svelte`：按库设置里
     两边同构的行与控件
 - `src/components/memory/` — 记忆模式 UI（全部复用刷题模式的组件与样式）
-  - `MemoryView.svelte`：容器，版面对齐 `QuizView`（同一个 `ViewShell`、同一套工具栏按钮、同一个导入确认弹窗），内容区在首页 / `MemoryQuestionArea` 之间切换。
+  - `MemoryView.svelte`：**装配层**，版面与 `QuizView` 完全同构（同一个 `ViewShell`、同一套工具栏按钮、
+    同一个导入确认弹窗）。三块固定内容：`MemoryRoundActions` + `MemoryQuestionMeta`（顶栏）、
+    `MemoryQuestionActions`（底栏）、`MemoryProgressBar`（进度条）；滚动区里只有
+    `MemoryQuestionBody` 与首页 `MemoryHome` 二选一，**且只有这一层进 `SwapFade`**。
     另有四个 effect：两个给云同步的刷新让路（`answering` / `overlayOpen`），两个把子路径与会话对上
     （`会话 → URL`、`URL → 会话`）。**那对路由 effect 的顺序与判据见「记忆模式」一节的「子路径」**——
     写错就会出现「刷新之后又回到首页」
+  - `MemoryQuestionMeta` / `MemoryQuestionBody` / `MemoryQuestionActions` / `MemoryRoundActions`：
+    分别对应顶栏（题号 + 掌握指示）、滚动区（题干 + 答案卡）、底栏（知道 / 模糊 / 忘记）、
+    本轮操作（退出 / 结束本轮）。拆开的理由与刷题模式那三个一样：以前 `MemoryQuestionArea`
+    把版面、交互、动效写在一个文件里，换版面时两个模式各改一遍
   - `MemoryHome.svelte`：首页，两个入口 + 统计卡，全部用现有 `Button` / `Card`；每种状态各配水印图标
   - `MemoryOverview.svelte`：总览对话框，与 `ReviewView` 同构（顶部三张 `Card` + `ToggleGroup` 筛选 + `QuestionPreview` 列表）
   - `MemoryMasteryButton.svelte`：卡片右侧那句状态文字，**它同时是「标熟」按钮**（点两下确认，
@@ -711,6 +734,110 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   `runed` / `svelte-toolbelt`；`bits-ui` 的**根入口**仍然挂，所以测试里要验一个懒加载的
   对话框时，先静态 `import` 一次把它塞进模块缓存（见 `tests/globalSettingsShortcut.test.ts`）。
 
+### 版面（`ViewShell`）
+
+**两个模式共用同一份版面**；装配层（`QuizView` / `MemoryView`）只决定「往哪个槽里放什么」，
+内容层（`QuestionMeta` / `QuestionBody` / `QuestionActions` 及记忆模式的对应四块）只负责自己那一行。
+
+```
+┌ 固定：header（题型图标 / 题号 / 掌握进度）─────────────────┐
+│ ↑ 遮罩                                                     │
+│ 题干 + 作答            ← 唯一滚动的地方        活动池一列   │
+│ ↓ 遮罩                                     （≥64rem 才并排）│
+├ 固定：actions（提交答案 / 下一题 / 知道·模糊·忘记）────────┤
+├ 固定：progress（进度条）──────────────────────────────────┤
+└ 工具栏：设置 总览 … 活动池 ───────────────────────────────┘
+```
+
+- 槽位：`header` / `actions` / `progress` / `aside` / `left` / `right` / `children`（滚动区）/
+  `scrollTopButton`。不给某个 snippet 就不占高度（记忆模式首页就是 `header` / `actions` / `progress` 全空）。
+- **「放得下就居中、放不下才上下贴边」不需要量高度**：`header` + 滚动区 + `actions` 装在同一个
+  `justify-center` 的 flex 列里，滚动区是唯一可收缩项（`min-h-0 flex-1`）。内容矮时这一坨整体居中；
+  内容高时滚动区先被压到剩余高度并开始滚动，上下两行自然贴边。**不要**再引入「量一下够不够高」的
+  JS 判断——那正是下面「尺寸预留」那条 ResizeObserver 反馈回路的入口。
+- `progress` 在那一坨**之外**（贴底），否则居中时进度条会跟着往上飘。
+- 列宽由 `columnClass`（默认 `max-w-2xl`）统一控制；主列与活动池列是同一条网格线
+  `minmax(0, 42rem) 280px`，池子靠 `grid-template-columns` 做 0 ↔ 280px 的过渡。
+- 活动池那一列的内容必须**靠右钉住**（内层 `ml-auto w-[280px] shrink-0 pl-8`）：轨道比内容窄时
+  多出来的部分被 `overflow-hidden` 从**左边**裁掉，面板才像「从窗口右缘推进来」。让它靠左会裁右边，
+  看着是「凭空长出来的一块」（曾经就是这样，还带着一条黑边）。
+- 窄版面（`COMPACT_LAYOUT_QUERY`）池子折进滚动区、排在作答下面，高度用 `max-height` 过渡
+  （所以要用 `ResizeObserver` 量一次内容高度）。**两套摆法各自只挂一个**，靠 `compact` 二选一，
+  不会同时存在两份 DOM。
+- 遮罩高度是常量（32px）：滚动区被裁在自己盒子里，内容到不了 header / footer 底下，遮罩只负责
+  柔化裁切边；贴到顶 / 贴到底时对应的那条收起来。
+- 底部工具栏是**正常 flex 行**，不是浮层：内容在它上面就被裁住，所以「footer 让位」「工具栏滚轮转发」
+  这些补丁都不需要了（只保留 `forwardWheelToScrollViewport`——固定区上的滚轮事件不会落到滚动容器上）。
+- 拆出 `ViewShell` 的动机：以前 `QuestionArea` / `MemoryQuestionArea` 把「版面 + 交互 + 动效」写在
+  一个文件里、两个模式各抄一份，于是记忆模式漏了遮罩、窄屏池子高度算了两遍。
+
+### 填空题的下划线（`BlankField`）
+
+`src/components/quiz/BlankField.svelte` 是**唯一**的填空输入位，`src/quiz/types/blank/Input.svelte`
+只负责「每个空一条线 + 答错时换成 diff」。以前是带边框的输入框（`h-12 rounded-lg border`），看起来像
+设置面板里的表单控件；填空是**答题**，字要大、框要轻：
+
+- 没有背景 / 圆角 / 边框，只有一条 `1px` 的底线（`color-mix` 取的 `--foreground` 18%）；
+- 聚焦时底线之上叠一条 2px 的深色线，用 `scaleX(0→1)` 从中间展开（`transform` 不触发布局），
+  底线本身也加深一档；对答案时（`disabled`）这条线不再闪；
+- 字号 `--blank-font`：1.25rem，`≥40rem` 时 1.5rem（比题干小一档，但明显大于表单控件）；
+- 传 `children` 就换成只读内容（diff / 预览答案），**壳与下划线完全一样**，所以「我写的」和
+  「错在哪」在同一个位置、同一个字号，不需要在两块 UI 之间来回看；
+- `tone` 只影响那条线：预览 / 模糊 = `warning`，答对 = `success`，答错 = `destructive`。
+
+### 动效（过渡 / 缓动）
+
+- **「换一屏」只有一份实现**：`src/lib/transitions/swap.ts` 的 `swapIn` / `swapOut`，外层容器是
+  `components/shared/SwapFade.svelte`（`{#key seq}` + 两个方向）。用在换题、换题库、
+  记忆模式进出学习 / 复习。时长只有 `SWAP_MS = 200` 一个值（换题原本是 100ms，合并掉了——
+  同样是「换内容」，快慢不一只会让人觉得别扭）。
+- **`css` 里只能写真正可动画的属性。** Svelte 5 把过渡的 `css` 字符串转成 **Web Animations 关键帧**
+  交给 `element.animate()`（`svelte/src/internal/client/dom/elements/transitions.js` 的
+  `css_to_keyframe`），WAAPI 只认可动画属性，`position` / `inset` / `pointer-events` 会被**静默丢掉**
+  ——不生效、也不警告。所以退场层的定位写在 `swapOut` 里（内联样式），`css` 只留 `opacity` / `scale`。
+  踩过的坑：写进 `css` 时退场层压根没脱离文档流，新旧两层各占一半高度，换题库 / 进出复习时内容被
+  挤成上下两半再弹回来，看着像「元素跑到左上 / 左下角」。`tests/swapTransition.test.ts` 钉住了这一条。
+- **Svelte 过渡的默认缓动是 `linear`**（不写就是匀速）。所有 `in:` / `out:` / `transition:` 都要显式给
+  缓动：`swap` 用 `cubicOut`；`slide` / `fly` 用 `circOut`；`flip` 默认已是 `cubicOut`；CSS 动画
+  （`PoolPanel` 那条 3s 答案淡出）用 `ease-in`——匀速的话它从第一帧就开始变淡，三秒里一直「正在消失」，
+  反而看不清答案。
+- 缩放用**独立的 `scale` 属性**，不用 `transform`：`transform` 会顶掉弹窗的 `translate(-50%, -50%)`
+  居中，也会盖住别处写的 `translateX`。
+- 退场层要**脱离文档流**，否则容器高度先变成两层之和再缩回去，抖动比过渡本身还显眼。
+  写内联样式的时机是安全的：`{#key}` 的分支先建新的、再提交旧的退场，两步在同一次 flush 里、
+  **在浏览器绘制之前**，「两层挤在一起」的那一帧不会被看见。
+- 同一个 key 在过渡期间切回来时 Svelte 会**复用**正在退场的那份 DOM，它身上还留着 `swapOut` 写的
+  内联样式——所以 `swapIn` 第一件事是把它们清干净（`clearOutroStyles`）。
+- 弹窗开关动画写在 `app.css`（`[data-slot="dialog-content"][data-state="open|closed"]`），所有
+  shadcn Dialog 共用一份。**注意 bits-ui 输出的是 `data-state="open|closed"`**，不是 shadcn 模板里的
+  `data-open:` 变体，照模板写不会生效（踩过）。
+- `prefers-reduced-motion` 一律把 duration 归零（`SWAP_MS` 的消费点用 `$derived` 判一次）。
+
+### 尺寸预留：不要用 ResizeObserver 的结果驱动尺寸
+
+答案区 / 反馈条的「预留高度」是为了紧凑版面下不跳（反馈条一出现就把整组内容顶上去，一题一跳）。
+但**不能拿「当前可不可滚」当这个开关**：预留改变滚动区高度 → 改变「可不可滚」→ 改变预留，卡在
+临界高度上就是无限抖动，控制台刷满 `ResizeObserver loop completed with undelivered notifications`，
+表现成「UI 在特定高度抽搐」。正确做法是纯 CSS 按视口高度收到 0：
+
+```css
+.feedback-slot { min-height: 4.25rem; }            /* 高屏：全额预留（h-16 + mb-1） */
+@supports (height: 100svh) {
+    .feedback-slot { min-height: clamp(0rem, calc(100svh - 30rem), 4.25rem); }
+}
+```
+
+减掉的那个常量是「固定外框（页头、题号行、按钮行、进度条、工具栏、内边距）+ 留给题面的最小高度」。
+`.question-stage`（记忆模式题干 + 答案区）用的是同一套。**任何由 ResizeObserver 状态驱动的「尺寸」
+都会反噬**——要自适应就用 `clamp()` + `svh`，别回头问 JS。
+
+### 负 z-index 会穿到祖先背后
+
+水印图标用 `-z-1` 想「垫在文字下面、但在卡片底色之上」。卡片自己**没有层叠上下文**时，负 z-index
+会一路穿到祖先（`#app` / `Inset` 那层 `bg-background`）后面，平时根本看不见；只有在换屏过渡那一刻，
+动画层带 `opacity < 1` 凭空生成了一个层叠上下文，它才突然冒出来——症状就是「小图标只在过渡动画播放
+时显示」。修法是给卡片的 `Card.Content` 加 `isolate`（`MemoryStatsCards` / `ReviewView` 共六处）。
+
 ## 题库格式
 
 统一结构：
@@ -757,7 +884,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 
 ### 两条流（`MemorySession.svelte.ts`）
 
-会话骨架与 `QuizSession` 一致：`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()` / `copyCurrentQuestion()`，所以 `QuestionArea` 式的 UI 可以直接套用（每个动作要在同一帧内写入 `selectedAnswers` 再 `submit()`，答案页才会出现）。额外多一个 `run: "idle" | "learning" | "reviewing"`（首页 / 学习 / 复习）。
+会话骨架与 `QuizSession` 一致：`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()` / `copyCurrentQuestion()`，所以 `QuestionBody` / `QuestionActions` 式的 UI 可以直接套用（每个动作要在同一帧内写入 `selectedAnswers` 再 `submit()`，答案页才会出现）。额外多一个 `run: "idle" | "learning" | "reviewing"`（首页 / 学习 / 复习）。
 
 - **学习新的题目**（`startLearning` → `run = "learning"`）
   - **本轮 = 一个对象**（`StoredState.round` / `session.round`，模型在 `src/features/memory/round.ts`）：
@@ -824,9 +951,9 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     - 判分流里**不能**先改 `appState` 再 `writeProgress`：后者是从 `base` 重建整个 `memory` 段的，会把刚写进去的清单抹掉。走 `reviewSnapshot()` 拿快照，由 `withReview()` 并进那一次写入；不走判分流的（「下一题」结算、总览标熟）才用 `markReviewedAndSave()`
     - 与 `reviewTotal` / `reviewedIds` 一起被净化的是 `normalizeMemoryReview()`（`normalizeMemoryState` 里调），`store.ts` 的 `cleanMemoryState` 还会丢掉题库里已不存在的 id
 
-一轮的队列状态（`shownIds` / `reviewTarget` / `reviewedIds` / `reviewTotal` / `failedThisRound`）只存在 session 上，不写进 `RuntimeState`；`MemoryProgress`、`memory.retry` 与学习轮的 `roundMastered` / `roundGoal` 落盘。
+一轮的队列状态（`shownIds` / `reviewTarget` / `reviewedIds` / `reviewTotal` / `failedThisRound`）只存在 session 上，不写进 `RuntimeState`；`MemoryProgress`、`memory.retry` 与学习轮的 `round`（整份 `{ goal, cardIds, masteredIds }`）落盘。
 
-> **落盘时机**：`submit()` / `startReview()` / `exitSession()` 会 `save()`，`advanceQuestionFlow()` 里的结算（复习晋升一级、学习轮 `roundMastered += 1`、补题、清待办）也**必须立刻 `save()`**——否则答完题点「下一题」后直接关页面会丢掉这次推进（表现为卡片又回到今天到期、本轮少算一张）。
+> **落盘时机**：`submit()` / `startReview()` / `exitSession()` 会 `save()`，`advanceQuestionFlow()` 里的结算（复习晋升一级、学习轮 `markMemoryRoundMastered`、补题、清待办）也**必须立刻 `save()`**——否则答完题点「下一题」后直接关页面会丢掉这次推进（表现为卡片又回到今天到期、本轮少算一张）。
 
 ### 出题顺序
 
@@ -894,8 +1021,8 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - `src/App.svelte` 按 `activeBank.mode === "memory"` 渲染 `MemoryView`
 - **对话框焦点**：总览（`ReviewView` / `MemoryOverview`）用 `onOpenAutoFocus` 阻止默认行为后聚焦搜索框，且 `isCoarsePointer` 时（触屏）不聚焦，免得弹键盘；**设置面板（`Settings` / `MemorySettings`）只 `preventDefault()`**——默认行为会把焦点丢给第一个可聚焦元素，也就是「修改名称」输入框，打开设置不该直接进输入态
 - `src/components/memory/`：
-  - `MemoryView`：版面与 `QuizView` 一致（滚动容器 / 居中列宽 / 底部工具栏：左设置、右总览）；窗口级快捷键（复制 / 导入 / 导出 / 设置 / 总览 / Esc 退出本轮）也在这里
-  - **答题区那一行**（`data-slot="memory-round-actions"`）：左边「退出本轮」（`IconArrowLeft`，`exitSession`：回首页、这一轮留着），中间一条半透明分割线，右边「结束本轮」（`ConfirmActionButton` + `hand-stop`，点两下确认 → `endRound()`：本轮作废，**同样回首页**，下次点「学习新的题目」是新的一轮；第一下只把文案换成「确认结束」，字数一样所以宽度不跳）。两个词不能混：退出留着这一轮，结束把它作废
+  - `MemoryView`：版面与 `QuizView` 一致（同一个 `ViewShell`：三块固定 + 一块滚动 + 底部工具栏：左设置、右总览）；窗口级快捷键（复制 / 导入 / 导出 / 设置 / 总览 / Esc 退出本轮）也在这里。**`ViewShell` 本身不参与换屏过渡**，只有滚动区那层内容进 `SwapFade`（否则底部工具栏会跟着缩放淡出，看着像「图标抖了一下」）；三块固定内容各自只写 `in:swapIn`、**不写 `out`**——退场时若淡出，这两百毫秒里它们还占着高度，收起来时刚居中的首页内容又得跳一下
+  - **答题区那一行**（`MemoryRoundActions`，`data-slot="memory-round-actions"`）：左边「退出本轮」（`IconArrowLeft`，`exitSession`：回首页、这一轮留着），中间一条半透明分割线，右边「结束本轮」（`ConfirmActionButton` + `hand-stop`，点两下确认 → `endRound()`：本轮作废，**同样回首页**，下次点「学习新的题目」是新的一轮；第一下只把文案换成「确认结束」，字数一样所以宽度不跳）。两个词不能混：退出留着这一轮，结束把它作废
     - **「结束本轮」只有学习轮有**：复习队列就是「今天还欠什么」，没有可以结束的一轮，所以 `session.run !== "learning"` 时分割线与那颗按钮整块不渲染，整行只剩「退出本轮」
     - 两颗按钮各带一句 tooltip：退出 = 「暂时退出 + `Esc` 键帽 / 保留进度」，结束 = 「完全退出 / 下次开启新一轮」
     - **平时只有箭头露着**（100%，点了不生效），分割线与「结束本轮」藏在原位（`opacity: 0`）；指到箭头上（或焦点进来）三部分才依次向右就位、两颗按钮到 60%，鼠标再压到哪一颗上它才回到 100%
@@ -909,7 +1036,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     - tooltip 挂在**按钮自己**身上时，`{...props}` 必须排在 `onclick` 前面，而且 `ConfirmActionButton` 那侧要先用 `tooltipProps()` 把 trigger 属性里的 `onclick` 摘掉——它的 `{...restProps}` 排在自己的 `onclick` 之后，整包透进去会让按钮点不动
     - 别在 `<script>` 的注释里写「见文件末尾的 `<style>`」这种字面量：Svelte 解析器会把它当成真标签，报一句莫名其妙的「`<script>` was left open」（同一句话坑过一次，改说「样式块」）
     - `isCoarsePointer`（触屏）时直接常亮：没有 hover，压暗 / 藏起来就等于永远点不到「结束本轮」；键盘则靠 `focusin` / `focusout` 点亮（`data-revealed` 是这一行的抓手，测试也用它）
-  - `MemoryHome`：首页（顶部是题库名大字），两个入口与统计卡都用现有 `Button` / `Card`。每种状态配一个水印图标（沿用 `QuestionArea` 空状态那种大图标 + `opacity-20 -z-1`）
+  - `MemoryHome`：首页（顶部是题库名大字），两个入口与统计卡都用现有 `Button` / `Card`。每种状态配一个水印图标（沿用 `QuestionBody` 空状态那种大图标 + `opacity-20 -z-1`，**卡片上必须加 `isolate`**，见「负 z-index 会穿到祖先背后」）
     - **学习入口四态**（`learnableCount` 是否 > 0 × `session.learnedToday`）：
       | 状态 | 条件 | 外观 | 可点 |
       |---|---|---|---|
@@ -921,7 +1048,11 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     - 学习入口的提示：「接着上一轮 · 已掌握 X / Y」（续未完成的轮）／「还有 N 张没学完 · 这次 M 张」（新开一轮）／「今天已经学过一轮 · 还有 N 张没学完」（`extra`）
     - **可点击性**：学习入口的 `due` / `extra` 与复习入口的「待复习」可点，其余状态 `disabled`
     - **颜色**：可点击且今天还没学过 → `variant="default"`（`--primary` = 黑底白字）；学过一轮但还能加学 → `variant="outline"`（白底）；没得学 → `variant="ghost"` + `disabled`。**不要自己写黑底白字的 class**，颜色一律走 shadcn variant / 主题变量
-  - `MemoryQuestionArea`：答题区，版式与单选题 `QuestionArea.svelte` 完全一致（题型图标 + 题号 + 复制 + `StreakIndicator` / 题干 / 底部按钮），只是**没有选项**、题干在「只展示题干」时放大（`text-2xl sm:text-3xl`，进入答案页回到 `text-lg`）。`StreakIndicator` 传 `readonly`：刷题模式那个「双击标记为已掌握」在记忆模式没有对应语义（掌握只能靠连对够次数毕业），接了 `onMaster` 只会把卡从本轮队列里静默丢掉
+  - `MemoryQuestionMeta`（固定顶栏）/ `MemoryQuestionBody`（滚动区）/ `MemoryQuestionActions`（固定底栏）/
+    `MemoryRoundActions`（本轮操作行）：记忆模式的内容层，三块分别对应 `ViewShell` 的三个槽。
+    顶栏是题型图标 + 题号 + 复制 + `StreakIndicator`（**传 `readonly`**：刷题模式那个「双击标记为已掌握」
+    在记忆模式没有对应语义——掌握只能靠连对够次数毕业，接了 `onMaster` 只会把卡从本轮队列里静默丢掉）。
+    滚动区里**没有选项**，题干在「只展示题干」时放大、进入答案页回到常规字号（动效见下面「答题区的动效」）
   - `MemoryStatsCards`：首页与总览共用的三张统计卡（第一张是四类数字 **未学习 / 学习中 / 复习中 / 已掌握**，加起来等于「共 N 张卡片」；另外两张是「今日待复习」=`reviewableCount`、「目前」= 学习中 + 复习中）
   - `MemoryProgressBar`：**只是 `ProgressBar` 的适配器**——把「本轮已完成 / 本轮总数」映射成
     `stats`（已完成 → `mastered`、剩下的算 `learning`），并传 `interactive={false}`（记忆模式不做聚焦放大）
@@ -940,14 +1071,15 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - **总览里的状态文字是「标熟」按钮**（`MemoryMasteryButton`）：第一下只是确认态（绿底 `bg-success` + `text-success-foreground` 白字「标熟」，原状态文字 `invisible` 留在原地，「标熟」绝对定位盖上去——连点两下时按钮宽度不变），第二下才 `session.masterQuestion(id)`。已掌握的卡不给这个入口（终态，只留一句绿色的「已掌握」）。**这个功能只在总览里有**，答题区、热力图、设置面板都不放第二个入口
 - **算「还有几天到期」必须用 `session.now`**（它带上调试的时间偏移），不要直接 `Date.now()`；同理 `this.now` 是 getter 而不是函数，生产路径每次现算 `Date.now() + debugOffset`，这样调试里「加一天」能对已挂载的会话立刻生效（不要把偏移捕获进闭包）
 - `src/components/settings/MemorySettings.svelte`：与 `Settings.svelte` 同构，顺序设置直接复用 `QuestionOrder` 组件；掌握阈值用 `$lib/components/ui/slider`（**官方 shadcn-svelte 源码原样落地**，含 `slider-track` 那层横条，别自己重写）；最底部是快捷键说明
-- 记忆题型的 `Input.svelte`：只负责答案卡片（按钮在 `MemoryQuestionArea` 的按钮区，与刷题模式的「提交答案 / 视作正确」同一位置）；**不显示「答案」标签**
+- 记忆题型的 `Input.svelte`：只负责答案卡片（按钮在 `MemoryQuestionActions` 的按钮区，与刷题模式的「提交答案 / 视作正确」同一位置）；**不显示「答案」标签**
 - 答案多段的约定：`answer` 里一个换行符 `\n` = 一个段落（`splitAnswerParagraphs`，`src/quiz/types/memory/paragraphs.ts`），答题页与总览的 `Review.svelte` 都按段落渲染并留段间距（`my-3 first:mt-0 last:mb-0`）。Prompt 只要求 LLM 输出单个 `\n`，段间距由渲染层负责
-- 答题区那一行（`MemoryView`）跟着内容流走，**不悬浮在顶部**：换行时不会盖住题干。两颗按钮平时压到 60%、悬停点亮并向右就位（见上）
-- **答题区的动效**（`MemoryQuestionArea`）：
+- 本轮操作行（`MemoryRoundActions`）在**固定顶栏**里、题号行之上，不随题干滚动：两颗按钮平时压到 60%、悬停点亮并向右就位（见上）
+- **答题区的动效**（`MemoryQuestionBody`）：
   - **题干字号用 `Tween`（`svelte/motion`）驱动，不用 CSS transition**：字号动画要与答案 slide 共用同一条缓动（`circOut`），而 CSS 的 `transition-timing-function` 只能写 cubic-bezier / steps / linear()，没法引用 JS 缓动函数。Tween 把 0–1 的进度写进 `--reveal`（`style:--reveal={textReveal.current}`），字号档位（`--question-font` / `--answer-font` + line-height + 字重）留在组件 `<style>` 里插值，`@media (width>=40rem)` 覆盖 sm 档——响应式断点不跑到 JS 里
   - **「换了一次展示」和「同一次展示内部」必须分开**：Tween 是组件状态，不像 CSS transition 那样按元素各算。组件用 `$effect.pre` 比对 `presentationSeq` / `showResult`：序号变了就 `textReveal.set(1, { duration: 0 })` 直接落位（在 DOM 更新前，免得新题先以小字号闪一帧），只有同一次展示里 `showResult` 翻转才 `.target = 0 | 1` 走 200ms。**不要**用题目 id 当分界：同一张卡被排回队尾时元素复用，「从小变大」的假动画就回来了
+  - **注意换题时元素是复用的**：`SwapFade` 换的是它内层那层 DOM，`MemoryQuestionBody` 组件本身不重建，所以 Tween 实例跨题共享——想「换题时直接落位」只能靠上面那个 `lastSeq` 比较，不能靠重新构造 Tween（早期版本试过「退场时冻结 Tween」，结果它被永久冻死，从第二题起字号再也大不了）
   - 答案卡片用 `in:slide`（只写 `in:`，没有 `out:`）滑入：高度一起动画，下方按钮是被平滑推下去而不是瞬移；`prefersReducedMotion` 时两条动画 duration 都是 0
-  - 题干 + 答案区有 `min-h-64`（16rem）：一段答案之内的卡片展开时按钮完全不动，更长的答案才由 slide 推开
+  - 题干 + 答案区（`.question-stage`）有一段**自适应预留**：`min-height: clamp(0rem, calc(100svh - 27rem), 14rem)`。高屏留 14rem（一段答案之内展开时按钮完全不动，更长的答案才由 slide 推开），矮屏一路收到 0——**判据必须是视口高度，不能是「可不可滚」**（见「尺寸预留」一节）
   - 注意：`<script>` 里不要出现字面量 `<style>` 之类的标签文本（哪怕写在 JS 注释里），Svelte 解析器会当成真标签并报「`<script>` was left open」
 - 热力图的布局 class（`.heatmap-*` / `.dotted-leader` / `.filter-collapsible`）统一放在 `app.css`，刷题与记忆两个模式共用，不要再写第二份
 
@@ -1008,13 +1140,23 @@ memoryPayload = [progress[][], memorySettings[], trailing]
   **数字文本读不到**（数值口径请断言 `aria-*`）；`color-mix()` 会被 happy-dom 的
   CSS 解析丢掉（要断言插值色得另想办法）。测试里**不要**依赖计时与随机
   （踩过：题库选项会打乱，写死「按 a 一定答对」会偶发失败）。
+- **过渡的残影不算「屏上是哪一屏」**：`SwapFade` 退场的那一层在 DOM 里还留着旧内容
+  （`flushSync()` 不等动画），断言「现在显示的是不是新内容」时要先剔掉 `[data-swap-leaving]`
+  （`tests/memoryRouting.test.ts` 的 `questionOnScreen()` 就是先克隆 body 再移除它们）。
+- **算「今天」用 `studyDay()`，不是 `startOfDay()`**：记忆模式的「今天」按凌晨 5 点换日，
+  0–5 点跑用例时 `startOfDay(now)` 落在还没到的学习日上，`isDue` 会判否、用例莫名变红
+  （`tests/viewSmoke.test.ts` 的 `dueToday()`）。
 
 **共享层与配置**
 
 - `tests/config.test.ts` — 快捷键注册表完整且不漏项、浮层层级变量存在且严格递增、
   **禁止再写裸 `z-[数字]`**（扫 `src/**`），以及层级只定义一次
-- `tests/viewShell.test.ts` — 共享滚动外壳：遮罩只在可滚动时点亮、footer 跟着让位、
-  工具栏滚轮转发、`data-main-scroll-viewport` 打在滚动容器上、回到顶部按钮只在需要时出现
+- `tests/viewShell.test.ts` — 共享版面：三块固定内容都在滚动区**外**、两条遮罩按位置显隐、
+  池子列宽在 0 ↔ 280px 之间、`data-main-scroll-viewport` 打在滚动容器上、工具栏滚轮转发、
+  回到顶部按钮只在需要时出现
+- `tests/swapTransition.test.ts` — 「换一屏」过渡的三条硬约束：退场层用**内联样式**脱离文档流、
+  `css` 里**只有可动画属性**（断言不含 `position` / `inset` / `pointer-events`——WAAPI 会静默丢掉）、
+  进场先清掉复用节点上残留的退场样式，两个方向都是 `cubicOut`、默认时长一致
 - `tests/toolbarIconButton.test.ts` — 工具栏圆按钮：点击回调、`aria-expanded/pressed`，
   以及 **tooltip 的快捷键提示来自注册表**
 - `tests/shortcutHelp.test.ts` — 快捷键说明表：**两行同名不许炸**（那条真事故的回归）、
@@ -1105,3 +1247,7 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - 学习流里，卡片连对到门槛时会在 `submit()` 阶段就毕业并离开 `activePool`，所以 `advanceQuestionFlow()` 里 `activePool.find()` 查不到 = 已学会（`MemoryProgress` 已变成 `reviewing`），要按「毕业」处理并计入 `completed`；不要当成「没连够」
 - `src/features/importExport.ts` 的 `FORMAT_VERSION` 每次 bump 都要保留旧版本的解码分支，并接受对应长度的紧凑数组
 - 新增题库模式时按 `BankModeDef` 的五步注释执行（`src/quiz/modes/types.ts`）
+- **「同一块位置换内容」一律用 `swapIn` / `swapOut`**（或包一层 `SwapFade`），不要另写一份过渡；时长只改 `SWAP_MS`
+- **过渡一律显式给缓动**（Svelte 默认 `linear`）；缩放用 `scale` 而不是 `transform`；退场层的定位写内联样式，不要写进过渡的 `css`
+- **不要用 ResizeObserver 的结果去决定某个尺寸**（预留 / padding / 高度），那会形成反馈回路；自适应用 `clamp()` + `svh`
+- 元素要「垫在父级底色之上、内容之下」时，父级必须有层叠上下文（`isolate`），否则负 `z-index` 会穿到祖先背后
