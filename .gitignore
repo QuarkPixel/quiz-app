@@ -143,3 +143,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# 本地 agent 工作目录（工作日志等），不进仓库
+.workbuddy-ai/
