@@ -30,9 +30,11 @@
      *  1. **遮罩高度是常量**（`MASK_H`）。旧版遮罩要盖住「从工具栏底下滚过去」的
      *     内容，所以得跟着 footer 的高度算；现在滚动区被裁在自己的盒子里，内容
      *     根本到不了 header / footer 底下，遮罩只负责柔化**裁切边**，32px 就够。
-     *  2. **活动池是同一份 `aside` 的两种摆法**：宽屏是主列右边的一列（网格列宽
-     *     0 → 280px 过渡），窄屏折进滚动区、排在作答下面（max-height 过渡）。
-     *     两种摆法各自只挂一个，靠 `compact` 二选一，不会同时存在两份 DOM。
+     *  2. **活动池只在这一列里出现**（宽版面）。窄版面的池子是另一套摆法——底部
+     *     抽屉（`components/quiz/PoolDrawer.svelte`），由 `QuizView` 按同一个断点
+     *     二选一，所以这里根本不会渲染它。以前窄屏是「折进滚动区、`max-height`
+     *     展开」，为了那条动画要量内容高度，池子还会把题干顶走；抽屉没有这些问题。
+     *     两套摆法读的是同一个状态 `ui.showPool`，不存在两份真相。
      *  3. **底部工具栏不再是浮层**。以前它绝对定位压在滚动区上、还要一条渐变把
      *     底下滚过去的内容糊掉；现在它是正常的 flex 行，内容在它上面就被裁住，
      *     于是「footer 让位」「滚轮转发」这些补丁全都不需要了。
@@ -44,9 +46,9 @@
         actions?: Snippet;
         /** 底部固定区第二行：进度条 */
         progress?: Snippet;
-        /** 活动题目池（宽屏并排、窄屏折进滚动区） */
+        /** 活动题目池（只有宽版面有这一列；窄版面由调用方换成抽屉，这里不渲染） */
         aside?: Snippet;
-        /** 活动池是否展开 */
+        /** 活动池是否展开（宽版面读它决定列宽） */
         asideOpen?: boolean;
         /** 工具栏左侧（设置 / 总览） */
         left?: Snippet;
@@ -72,9 +74,9 @@
         children,
     }: Props = $props();
 
-    /** 窄版面：活动池从「并排一列」变成「折进滚动区」（口径见 `@/config/layout`） */
+    /** 窄版面（口径见 `@/config/layout`）：池子那一列整个不出现 */
     const compact = new MediaQuery(COMPACT_LAYOUT_QUERY);
-    /** 宽屏且真的有池子时才有那一列 */
+    /** 宽版面且真的有池子时才有那一列 */
     const asideColumn = $derived(!compact.current && aside !== undefined);
 
     let scrollViewport: HTMLDivElement | null = $state(null);
@@ -125,25 +127,10 @@
         };
     });
 
-    // ── 窄版面：活动池折在滚动区里，高度得量出来才能做展开 / 收起动画 ──
-    let inlinePoolContent: HTMLDivElement | null = $state(null);
-    let inlinePoolHeight = $state(0);
-
-    $effect(() => {
-        if (!inlinePoolContent) return;
-
-        const content = inlinePoolContent;
-        const measure = (): void => {
-            inlinePoolHeight = content.scrollHeight;
-        };
-
-        measure();
-
-        const resizeObserver = new ResizeObserver(measure);
-        resizeObserver.observe(content);
-
-        return () => resizeObserver.disconnect();
-    });
+    // ── 窄版面：活动池不在这里 ──
+    // 池子折进滚动区的那一版已经删掉了：窄屏改由 `QuizView` 挂底部抽屉
+    // （`components/quiz/PoolDrawer.svelte`）。这里顺带省掉了那次「量内容高度」
+    // 的 `ResizeObserver`——它唯一的用途就是给 `max-height` 过渡喂一个 px 值。
 
     /** 主列与池子那一列：同一条网格线上做 0px ↔ 280px 的过渡 */
     const columns = $derived.by(() => {
@@ -218,28 +205,6 @@
                                 )}
                             >
                                 {@render children?.()}
-
-                                {#if compact.current && aside}
-                                    <div
-                                        class={cn(
-                                            "overflow-hidden transition-[max-height,opacity,margin,transform] duration-300 ease-emphasized",
-                                            asideOpen
-                                                ? "mt-6 opacity-100 translate-y-0"
-                                                : "-mt-2 opacity-0 -translate-y-2 pointer-events-none",
-                                        )}
-                                        style:max-height={asideOpen
-                                            ? `${inlinePoolHeight}px`
-                                            : "0px"}
-                                        aria-hidden={!asideOpen}
-                                    >
-                                        <div
-                                            bind:this={inlinePoolContent}
-                                            class="flex w-full flex-col"
-                                        >
-                                            {@render aside()}
-                                        </div>
-                                    </div>
-                                {/if}
                             </div>
                         </div>
 

@@ -18,6 +18,10 @@ import { SCROLL_TOP_THRESHOLD_PX } from "../src/config";
  *   4. 活动池那一列靠网格轨道宽度做 0 ↔ 280px，内容靠右钉住；
  *   5. `data-main-scroll-viewport` 必须打在执行滚动的元素上
  *      （页头的滚轮转发靠它选元素）。
+ *
+ * 窄版面的池子**不在这里**：它换成了底部抽屉（`PoolDrawer`），由 `QuizView` 挂，
+ * 外壳在窄断点下根本不渲染 `aside`。这条也钉在这里——不然「两套摆法同时出现」
+ * 这种错没人看得见。
  */
 
 const mounted: Array<() => void> = [];
@@ -40,6 +44,32 @@ function stubMetrics({ scrollHeight = 0, clientHeight = 0, scrollTop = 0 } = {})
     ),
   ];
   return () => spies.forEach((spy) => spy.mockRestore());
+}
+
+/**
+ * 让 `window.matchMedia` 一律回答「命中」或「不命中」。
+ *
+ * `ViewShell` 用 `svelte/reactivity` 的 `MediaQuery` 判宽窄，它内部就是
+ * `window.matchMedia(query).matches` + `addEventListener("change")`，
+ * 所以在这里换掉整个 `matchMedia` 就够了。**必须在 mount 之前调用**
+ * （`MediaQuery` 在组件初始化时就建好了）。
+ */
+function stubMatchMedia(matches: boolean) {
+  const original = window.matchMedia;
+  window.matchMedia = ((query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+
+  return () => {
+    window.matchMedia = original;
+  };
 }
 
 function render(
@@ -236,6 +266,24 @@ describe("活动池那一列", () => {
       expect(host.querySelector('[data-testid="aside"]')).toBeNull();
     } finally {
       restore();
+    }
+  });
+
+  it("窄版面：整个不渲染池子（改由底部抽屉承载）", () => {
+    const restoreMetrics = stubMetrics();
+    const restoreMatchMedia = stubMatchMedia(true);
+    try {
+      const { host } = render({ asideOpen: true });
+
+      expect(host.querySelector('[data-testid="aside"]')).toBeNull();
+      // 轨道回到单列，不会被那个「0px 的第二列」占着
+      expect(
+        host.querySelector<HTMLElement>(".session-grid")!.style
+          .gridTemplateColumns,
+      ).toBe("minmax(0, 42rem)");
+    } finally {
+      restoreMetrics();
+      restoreMatchMedia();
     }
   });
 });

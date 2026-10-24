@@ -396,6 +396,19 @@ export class QuizSession extends ProgressSessionBase {
     this.save();
   }
 
+  /**
+   * 直接设定活动池的开合（`togglePool` 的幂等版）。
+   *
+   * 窄版面的池子是个抽屉，关闭的途径有好几条（下滑 / 点遮罩 / 点关闭按钮），
+   * 它们都只知道「现在该关」，不该关心「现在是不是开着」——所以给一个设定值的
+   * 入口，而不是逼调用方去 toggle。宽版面的那一列仍然走 `togglePool`。
+   */
+  setPoolOpen(open: boolean): void {
+    if (this.appState.ui.showPool === open) return;
+    this.appState.ui.showPool = open;
+    this.save();
+  }
+
   advanceQuestionFlow(): void {
     if (this.isPreviewingNewQuestion) {
       this.newQuestionQueue = this.newQuestionQueue.slice(1);

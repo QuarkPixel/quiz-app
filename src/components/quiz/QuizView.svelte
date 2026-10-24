@@ -21,7 +21,9 @@
     import { provideQuizSession } from "@/quiz/session/context";
     import { provideQuizUiActions } from "@/quiz/session/uiContext";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
-    import { untrack } from "svelte";
+    import { untrack, type Component } from "svelte";
+    import { MediaQuery } from "svelte/reactivity";
+    import { COMPACT_LAYOUT_QUERY } from "@/config";
     import {
         OVERLAY_KEYS,
         userActivity,
@@ -69,6 +71,34 @@
     };
 
     provideQuizUiActions(uiActions);
+
+    // ── 活动池的两种摆法（同一个状态，两个壳） ──────────────────────────
+    //
+    //  宽版面 → `ViewShell` 右边那一列（宽度 0 ↔ 280px）
+    //  窄版面 → 底部抽屉 `PoolDrawer`
+    //
+    // 两边读的都是 `session.appState.ui.showPool`，所以不存在「切了宽度状态对不上」。
+    // 断点用同一个 `COMPACT_LAYOUT_QUERY`，与 `ViewShell` 内部那个 `MediaQuery` 同源。
+    const compact = new MediaQuery(COMPACT_LAYOUT_QUERY);
+
+    interface PoolDrawerProps {
+        open: boolean;
+        onOpenChange?: (open: boolean) => void;
+    }
+
+    /**
+     * 抽屉是**懒加载**的：它拖着 `vaul-svelte`（约 16 kB gzip），而首屏
+     * 99% 的情况用不到——`AGENTS.md` 的「首屏体积」一节明确要求别往主包里塞。
+     * 只在真的落到窄版面时才把那个 chunk 拉下来（模式与 `SyncGuideDrawer` 一致）。
+     */
+    let PoolDrawer = $state<Component<PoolDrawerProps> | null>(null);
+
+    $effect(() => {
+        if (!compact.current || PoolDrawer !== null) return;
+        void import("./PoolDrawer.svelte").then((module) => {
+            PoolDrawer = module.default;
+        });
+    });
 
     const handleKeydown = createAppKeyboardHandler(session, {
         toggleReview: uiActions.toggleReview,
@@ -123,15 +153,31 @@
 {/snippet}
 
 {#snippet rightControls()}
-    <ToolbarIconButton
-        icon={IconStack2}
-        label="查看活动池"
-        tooltip="{session.appState.ui.showPool ? '收起' : '展开'}活动池"
-        shortcut="togglePool"
-        rotateClass="hover:-rotate-[8deg]"
-        pressed={session.appState.ui.showPool}
-        onclick={() => session.togglePool()}
-    />
+    {#if compact.current}
+        <!--
+            窄版面：这是一颗**打开**按钮，不是开关。抽屉有自己的关闭途径
+            （下滑 / 点遮罩 / Esc），所以不需要 `pressed` 去表达状态——
+            而且它开着的时候本来就被抽屉盖住了，压暗 / 变深都看不见。
+        -->
+        <ToolbarIconButton
+            icon={IconStack2}
+            label="查看活动池"
+            tooltip="查看活动池"
+            shortcut="togglePool"
+            rotateClass="hover:-rotate-[8deg]"
+            onclick={() => session.setPoolOpen(true)}
+        />
+    {:else}
+        <ToolbarIconButton
+            icon={IconStack2}
+            label="查看活动池"
+            tooltip="{session.appState.ui.showPool ? '收起' : '展开'}活动池"
+            shortcut="togglePool"
+            rotateClass="hover:-rotate-[8deg]"
+            pressed={session.appState.ui.showPool}
+            onclick={() => session.togglePool()}
+        />
+    {/if}
 {/snippet}
 
 {#snippet header()}
@@ -167,6 +213,18 @@
 >
     <QuestionBody />
 </ViewShell>
+
+<!--
+    窄版面的池子：底部抽屉。与 `ViewShell` 里那一列**互斥**（同一个 `compact` 判据），
+    所以任何时刻只有一份池子的 DOM。`onOpenChange` 把抽屉自己的关闭动作写回
+    `ui.showPool`——否则宽窄切换时会「明明关掉了、再切回来又弹出来」。
+-->
+{#if compact.current && PoolDrawer}
+    <PoolDrawer
+        open={session.appState.ui.showPool}
+        onOpenChange={(open) => session.setPoolOpen(open)}
+    />
+{/if}
 
 <Settings bind:open={showSettings} hash={bank.hash} bankName={bank.name} />
 
