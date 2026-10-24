@@ -253,7 +253,9 @@
 
 <style>
     .pool-answer.pointer-reveal {
-        animation: pool-answer-fade-out 3000ms linear forwards;
+        /* `ease-in`：先基本维持不动、末尾才快速淡掉。匀速的话它从第一帧就开始
+           变淡，三秒里一直「正在消失」，反而看不清答案 */
+        animation: pool-answer-fade-out 3000ms ease-in forwards;
     }
 
     @keyframes pool-answer-fade-out {
