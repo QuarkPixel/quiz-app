@@ -343,7 +343,8 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   `QuestionMeta`（固定顶栏）/ `QuestionBody`（滚动区）/ `QuestionActions`（固定底栏）
 - `src/components/layout/` — 两个模式共用的外壳（**记忆模式不要再抄一份**）
   - `ViewShell.svelte`：**唯一的版面实现**——`header` / `actions` / `progress` 三块固定、
-    `children` 是唯一滚动区、`aside` 是活动池（宽屏并排 / 窄屏折进滚动区）、`left` / `right` 是工具栏。
+    `children` 是唯一滚动区、`aside` 是活动池（宽版面并排一列；窄版面由 `QuizView`
+    换成底部抽屉，外壳不渲染它）、`left` / `right` 是工具栏。
     版面模型、为什么「放得下居中、放不下贴边」不需要量高度、池子为什么必须靠右钉住、
     遮罩为什么是常量高度——全在「版面（`ViewShell`）」一节
   - `ToolbarIconButton.svelte`：工具栏上的圆图标按钮。传 `shortcut="toggleSettings"` 就会
@@ -770,12 +771,21 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - `progress` 在那一坨**之外**（贴底），否则居中时进度条会跟着往上飘。
 - 列宽由 `columnClass`（默认 `max-w-2xl`）统一控制；主列与活动池列是同一条网格线
   `minmax(0, 42rem) 280px`，池子靠 `grid-template-columns` 做 0 ↔ 280px 的过渡。
-- 活动池那一列的内容必须**靠右钉住**（内层 `ml-auto w-[280px] shrink-0 pl-8`）：轨道比内容窄时
-  多出来的部分被 `overflow-hidden` 从**左边**裁掉，面板才像「从窗口右缘推进来」。让它靠左会裁右边，
-  看着是「凭空长出来的一块」（曾经就是这样，还带着一条黑边）。
-- 窄版面（`COMPACT_LAYOUT_QUERY`）池子折进滚动区、排在作答下面，高度用 `max-height` 过渡
-  （所以要用 `ResizeObserver` 量一次内容高度）。**两套摆法各自只挂一个**，靠 `compact` 二选一，
-  不会同时存在两份 DOM。
+- **活动池那一列刻意不写 `overflow-hidden`**。写了就等于「窗口慢慢变宽」，池子是被一条边
+  一点点擦出来的（`width: 0 → 100%` 的闪现感）。不裁的话池子是一整块在动：轨道变宽把它
+  带着往左走 140px（= 280 的一半，正好是主列让出的距离），再叠上 `.pool-rail` 自己的
+  40px 位移和 0 → 1 的淡入——相对主列也在动，才像「从右边被推进来」。溢出屏幕的部分由
+  `#app` 的 `overflow: hidden` 兜住，不会出横向滚动条。
+  - 内容仍然**靠右钉住**（内层 `ml-auto w-[280px] shrink-0 pl-8`），让它靠左会从右边溢出。
+  - 渐变 mask 挂在**内层那 280px** 上，不要挂在 `aside` 上：`aside` 收起时宽度是 0，
+    `mask-image` 会跟着缩成 0 宽并按 `repeat` 平铺，过渡中间会看到条纹。
+  - **进出用同一条曲线**（`--ease-emphasized`，先快后慢）：池子的 `transform` / `opacity`
+    和主列让位那条（`.session-grid` 的 `grid-template-columns`）都是它，两个方向都一样。
+    一段运动在最后一刻必须是减速的，否则收尾就是「急刹」；换成先慢后快（镜像曲线）的话，
+    主列会慢慢挪、最后猛地冲到终点再顿一下（踩过）。
+- 窄版面（`COMPACT_LAYOUT_QUERY`）的池子**不是这一列**：它是底部抽屉
+  （`components/quiz/PoolDrawer.svelte`，vaul），由 `QuizView` 懒加载、按同一个断点二选一。
+  两套摆法读同一个 `ui.showPool`，任何时刻只有一份池子的 DOM。
 - 遮罩高度是常量（32px）：滚动区被裁在自己盒子里，内容到不了 header / footer 底下，遮罩只负责
   柔化裁切边；贴到顶 / 贴到底时对应的那条收起来。
 - 底部工具栏是**正常 flex 行**，不是浮层：内容在它上面就被裁住，所以「footer 让位」「工具栏滚轮转发」
@@ -815,6 +825,15 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   反而看不清答案。
 - 缩放用**独立的 `scale` 属性**，不用 `transform`：`transform` 会顶掉弹窗的 `translate(-50%, -50%)`
   居中，也会盖住别处写的 `translateX`。
+- **收尾一定要减速**。`--ease-emphasized`（`cubic-bezier(0.42, 0, 0, 1)`，先快后慢）是默认选择：
+  展开 / 收起、进场 / 退场都可以用它，**布局尺寸（列宽、宽高）两个方向必须都用它**——
+  换成先慢后快（把两个控制点绕中心翻过来的镜像曲线）看着就是慢慢挪、最后猛地冲过去再急刹。
+  - 内容进出可以配一对 `cubicOut` / `cubicIn`（Svelte 过渡里「一收就走」），但那是**内容消失**
+    的语义，别套到尺寸过渡上。
+  - **CSS 过渡读的是变化之后那一份 `transition`**，所以「收起」的曲线写在基础规则里、
+    「展开」的写在 `[data-open="true"]` / `[data-revealed]` 这类状态属性上
+    （`MemoryRoundActions` 就是这个写法）。两个方向用同一条曲线时，一套规则就够，
+    别再挂状态属性——`data-open` 只为了切曲线才值得存在。
 - 退场层要**脱离文档流**，否则容器高度先变成两层之和再缩回去，抖动比过渡本身还显眼。
   写内联样式的时机是安全的：`{#key}` 的分支先建新的、再提交旧的退场，两步在同一次 flush 里、
   **在浏览器绘制之前**，「两层挤在一起」的那一帧不会被看见。
@@ -1260,6 +1279,8 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - `src/features/importExport.ts` 的 `FORMAT_VERSION` 每次 bump 都要保留旧版本的解码分支，并接受对应长度的紧凑数组
 - 新增题库模式时按 `BankModeDef` 的五步注释执行（`src/quiz/modes/types.ts`）
 - **「同一块位置换内容」一律用 `swapIn` / `swapOut`**（或包一层 `SwapFade`），不要另写一份过渡；时长只改 `SWAP_MS`
-- **过渡一律显式给缓动**（Svelte 默认 `linear`）；缩放用 `scale` 而不是 `transform`；退场层的定位写内联样式，不要写进过渡的 `css`
+- **过渡一律显式给缓动**（Svelte 默认 `linear`），默认用 `--ease-emphasized`（先快后慢，
+  收尾减速）；尺寸 / 布局过渡两个方向都用同一条，不要套镜像曲线；
+  缩放用 `scale` 而不是 `transform`；退场层的定位写内联样式，不要写进过渡的 `css`
 - **不要用 ResizeObserver 的结果去决定某个尺寸**（预留 / padding / 高度），那会形成反馈回路；自适应用 `clamp()` + `svh`
 - 元素要「垫在父级底色之上、内容之下」时，父级必须有层叠上下文（`isolate`），否则负 `z-index` 会穿到祖先背后
