@@ -1,4 +1,4 @@
-import type { QuizQuestionType } from "../../types";
+import type { QuestionType, QuizQuestionType } from "../../types";
 import type { QuestionTypeLogic } from "./types";
 import { judgmentLogic } from "./judgment/logic";
 import { singleLogic } from "./single/logic";
@@ -35,8 +35,14 @@ export const QUIZ_QUESTION_TYPES_LOGIC: Record<
   blank: blankLogic,
 };
 
-/** 全部题型的逻辑（含记忆题型），按 id 查找。 */
-export const QUESTION_TYPES_LOGIC: Record<string, QuestionTypeLogic> = {
+/**
+ * 全部题型的逻辑（含记忆题型），按 id 查找。
+ *
+ * 类型是 `Record<QuestionType, …>` 而不是 `Record<string, …>`：`src/types.ts` 的
+ * `QuestionType` union 新增一个 id 时，这里少登记就直接编译不过——不用等到
+ * 用户点到那道题、`QUESTION_TYPES_LOGIC[type]` 变成 undefined 才发现。
+ */
+export const QUESTION_TYPES_LOGIC: Record<QuestionType, QuestionTypeLogic> = {
   ...QUIZ_QUESTION_TYPES_LOGIC,
   memory: memoryLogic,
 };
@@ -48,8 +54,3 @@ export const QUESTION_TYPE_ORDER: QuizQuestionType[] = [
   "multiple",
   "blank",
 ];
-
-/** 所有刷题题型逻辑，按 ORDER 排列。 */
-export function listQuestionTypesLogic(): QuestionTypeLogic[] {
-  return QUESTION_TYPE_ORDER.map((id) => QUIZ_QUESTION_TYPES_LOGIC[id]);
-}

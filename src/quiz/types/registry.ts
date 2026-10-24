@@ -32,13 +32,3 @@ export const QUESTION_TYPES: Record<QuestionType, QuestionTypeDef> = {
 };
 
 export { QUESTION_TYPE_ORDER };
-
-/** 安全访问 registry，不存在时返回 undefined（题型 union 已经穷尽，理论上不可达）。 */
-export function getQuestionType(id: QuestionType): QuestionTypeDef {
-  return QUESTION_TYPES[id];
-}
-
-/** 所有 QuestionTypeDef，按 ORDER 排列（刷题四型）。 */
-export function listQuestionTypes(): QuestionTypeDef[] {
-  return QUESTION_TYPE_ORDER.map((id) => QUESTION_TYPES[id]);
-}

@@ -17,8 +17,6 @@
  * 占位的一方是会话、消费的一方是同步引擎，两边在不同的组件树分支上。
  */
 
-import { toastStore } from "./toast.svelte";
-
 /** 弹窗 / 抽屉的占位名字（`setOverlay` 的 key）：三个视图各一份，别写混。 */
 export const OVERLAY_KEYS = {
   /** 当前题库设置 / 记忆模式设置 */
