@@ -26,7 +26,14 @@
     class="grid grid-cols-1 gap-3 sm:grid-cols-3 *:rounded-md *:bg-foreground/5"
 >
     <Card.Root size="sm">
-        <Card.Content class="flex flex-col gap-1 relative">
+        <!--
+            `isolate` 不能省：水印图标是 `-z-1`，要它「垫在文字下面、但仍在卡片底色
+            之上」。卡片自己没有层叠上下文时，负 z-index 会一路穿到祖先（`#app` /
+            Inset 那层 `bg-background`）后面去——平时根本看不见，只有在「换屏过渡」
+            那一刻，因为动画层带了 `opacity < 1` 凭空生成了一个层叠上下文，它才突然
+            冒出来。加 `isolate` 后图标被夹在 Card.Content 里，常态和过渡态一致。
+        -->
+        <Card.Content class="flex flex-col gap-1 relative isolate">
             <IconProgressCheck
                 size={96}
                 class="absolute sm:top-1 sm:-right-3 -top-3 right-0 text-muted-foreground opacity-20 -z-1"
@@ -56,7 +63,8 @@
     </Card.Root>
 
     <Card.Root size="sm">
-        <Card.Content class="flex flex-col gap-1 relative">
+        <!-- `isolate` 的作用见第一张卡片 -->
+        <Card.Content class="flex flex-col gap-1 relative isolate">
             <IconTargetArrow
                 size={96}
                 class="absolute sm:bottom-1 sm:right-0 -bottom-3 right-0 text-muted-foreground opacity-20 -z-1"
@@ -77,7 +85,8 @@
     </Card.Root>
 
     <Card.Root size="sm">
-        <Card.Content class="flex flex-col gap-1 relative">
+        <!-- `isolate` 的作用见第一张卡片 -->
+        <Card.Content class="flex flex-col gap-1 relative isolate">
             <IconRepeat
                 size={96}
                 class="absolute sm:-bottom-12 sm:-right-5 -bottom-3 right-0 text-muted-foreground opacity-20 -z-1"

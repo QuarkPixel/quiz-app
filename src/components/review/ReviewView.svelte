@@ -26,11 +26,9 @@
     import HeatmapSection from "./HeatmapSection.svelte";
     import QuestionListSection from "./QuestionListSection.svelte";
     import ReviewFilterBar from "./ReviewFilterBar.svelte";
-    import {
-        IconInnerShadowTopLeft,
-        IconProgressCheck,
-        IconTargetArrow,
-    } from "@tabler/icons-svelte";
+    import IconInnerShadowTopLeft from "@tabler/icons-svelte/icons/inner-shadow-top-left";
+    import IconProgressCheck from "@tabler/icons-svelte/icons/progress-check";
+    import IconTargetArrow from "@tabler/icons-svelte/icons/target-arrow";
     import { isCoarsePointer } from "$lib/utils";
     import type { QuestionGroup, ReviewIndicator } from "./virtualList/types";
 
@@ -243,7 +241,9 @@
                 class="grid grid-cols-1 gap-3 sm:grid-cols-3 *:rounded-md *:bg-foreground/5"
             >
                 <Card.Root size="sm">
-                    <Card.Content class="flex flex-col gap-1 relative">
+                    <!-- `isolate`：水印图标是 `-z-1`，要夹在卡片里（原因见
+                         MemoryStatsCards 第一张卡片的注释） -->
+                    <Card.Content class="flex flex-col gap-1 relative isolate">
                         <IconProgressCheck
                             size={96}
                             class="absolute sm:top-1 sm:-right-3 -top-3 right-0 text-muted-foreground opacity-20 -z-1"
@@ -270,7 +270,9 @@
                 </Card.Root>
 
                 <Card.Root size="sm">
-                    <Card.Content class="flex flex-col gap-1 relative">
+                    <!-- `isolate`：水印图标是 `-z-1`，要夹在卡片里（原因见
+                         MemoryStatsCards 第一张卡片的注释） -->
+                    <Card.Content class="flex flex-col gap-1 relative isolate">
                         <IconTargetArrow
                             size={96}
                             class="absolute sm:bottom-1 sm:right-0 -bottom-3 right-0 text-muted-foreground opacity-20 -z-1"
@@ -295,7 +297,9 @@
                 </Card.Root>
 
                 <Card.Root size="sm">
-                    <Card.Content class="flex flex-col gap-1 relative">
+                    <!-- `isolate`：水印图标是 `-z-1`，要夹在卡片里（原因见
+                         MemoryStatsCards 第一张卡片的注释） -->
+                    <Card.Content class="flex flex-col gap-1 relative isolate">
                         <IconInnerShadowTopLeft
                             size={96}
                             class="absolute sm:-bottom-12 sm:-right-5 -bottom-3 right-0 text-muted-foreground opacity-20 -z-1"
