@@ -12,7 +12,7 @@ This file provides guidance to coding agents working in this repository.
 
 - `quiz` — **刷题模式**。题目带 `type` / `options` / `answer`，参与间隔重复算法。
 - `memory` — **记忆模式**，已实现。题目是第五种题型 `type: "memory"`（只有题干和答案），用户自评「知道 / 模糊 / 忘记」。两个入口：
-  - 「学习新的题目」：活动题目池里练题，连对 N 次算学会并补一道新题进来；一轮掌握 `roundTarget`（默认 5）题就结束，可中断续学
+  - 「学习新的题目」：活动题目池里练题，连对 N 次算学会并补一道新题进来；一轮掌握 `roundTarget`（默认 5）题就结束，可中断续学。**每轮的目标会收敛到「题库里真能学出来的数量」**（只剩 3 道可学 → 这一轮就是 3 题），见「记忆模式（memory）」
   - 「复习」：按 1/2/4/8… 天翻倍间隔复习，默认答对一次过；答「忘记」→ 阶梯归零、答「模糊」→ 阶梯退一级，两者本轮都要重新连对 N 次才算复习完；走完 M（`graduateLevel`）次变已掌握
   详见「记忆模式（memory）」章节。
 
@@ -73,6 +73,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `src/lib/validateQuestions.ts`：通用校验（`validateQuestionsWithType`）+ `validateQuizQuestions` / `validateMemoryQuestions`（记忆模式允许省略 `type`，统一补成 `"memory"`）
 - `src/features/memory/` — 记忆模式的算法、会话与设置
   - `algorithm.ts`：纯算法与常量（`memoryIntervalDays` 的 2^(level-1) 天曲线、`advanceReview` / `resetReview` / `reviewProgress` / `isDue`、默认值与边界）
+  - `round.ts`：**学习轮的模型（纯函数，不碰 Svelte / 存储）**——`createMemoryRound`（目标 = min(设置, 这一批数量)）/ `addMemoryRoundCards` / `markMemoryRoundMastered` / `memoryRoundRemaining` / `isMemoryRoundComplete` / `pruneMemoryRound` / `normalizeMemoryRound` / `migrateLegacyMemoryRound`。三条不变式见文件头；**要动「本轮」只走这里**
   - `MemorySession.svelte.ts`：会话层，骨架与 `QuizSession` 一致（`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()`），额外持有记忆模式自己的 `run` / `progress` / `memorySettings`；两条流见「记忆模式（memory）」章节
   - `settings.ts`：`MemoryBankSettings` 默认值与净化（`createDefaultMemorySettings` / `sanitizeMemorySettings` / `MEMORY_SETTINGS_BOUNDS`）
   - `normalize.ts`：`StoredState.memory` 的净化（`normalizeMemoryState` / `normalizeMemoryProgressMap` / `normalizeMemoryRetry` / `normalizeMemoryReview`）
@@ -83,7 +84,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `bankStore.ts`：`BankStore`（唯一 `QuizSource` 实现），维护 general 配置里的 library / activeBank，负责 import / export / rename / remove / moveToTop
   - `types.ts`：`QuizBank` / `MemoryBank` / `Bank`（判别联合）、`BankSummary`（含 `mode`）、`QuizSource`
   - `context.ts`：`provideQuizSource` / `useQuizSource`
-- `src/store.ts` — **每个题库**的状态读写（按 `hash` 分 key）：`StoredState` 加载 / 保存 / 重置；`saveState` 原样携带 `memory` 段。`buildRuntimeState` 会丢掉题库里已不存在的 `activePool` / `learningPool` / `memory.progress` 条目（以及这些题的 `memory.retry` 待办与 `memory.review.reviewedIds` 条目）——统计与导出都只认题库里真实存在的卡
+- `src/store.ts` — **每个题库**的状态读写（按 `hash` 分 key）：`StoredState` 加载 / 保存 / 重置；`saveState` 原样携带 `memory` 段。`buildRuntimeState` 会丢掉题库里已不存在的 `activePool` / `round` 里的卡 / `memory.progress` 条目（以及这些题的 `memory.retry` 待办与 `memory.review.reviewedIds` 条目）——统计与导出都只认题库里真实存在的卡
 - `src/features/importExport.ts` — 进度编码：`{hash}.{base64url-deflate}`，`exportProgress` / `importProgress`。只依赖题目 `id`（`ProgressQuestion`），刷题 / 记忆模式通用；`FORMAT_VERSION = 9` 起记忆模式走第 10 个元素，记忆设置数组的**第 3 项**是 `lockRoundPool`（后加的，老备份那里是预留位 → 读不到就按关处理，所以没升版本号）
 - `src/algorithm.ts` — 纯算法：加权随机选题、`processAnswer`、`computeLearningSegments`
 - `src/features/quiz/` — UI 与算法之间的胶水层（`runtime.ts`、`answer.ts`、`answerMatcher.ts`、`filters.ts`、`settings.ts` …）
@@ -364,7 +365,8 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `library: BankSummary[]` — 题库索引（含 `mode`）
   - `globalSettings: GlobalSettings` — `{ soundEnabled, autoSubmitOnSelection, autoNextOnCorrect }`
 - `BankSettings`（按题库，刷题模式）— `{ activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode, notifyNewQuestionInPool }`
-- `StoredState`（按题库）— `masteredIds` / `masteredMistakes` / `activePool` / `currentRound` / `filterType` / `settings` / `ui` / `memory?` / `roundMastered?` / `roundGoal?` / `roundPoolIds?` / `learningPool?`（后四个只在记忆模式用：学习轮已掌握数 / 本轮目标 / **「每轮限定题数」记下的那一批 id** / 复习期间暂存的学习池）
+- `StoredState`（按题库）— `masteredIds` / `masteredMistakes` / `activePool` / `currentRound` / `filterType` / `settings` / `ui` / `memory?` / `round?`。
+  `round?: MemoryRoundState` = `{ goal, cardIds, masteredIds }`，**记忆模式学习轮的唯一真相**（只在记忆模式用；以前拆成 `roundMastered` / `roundGoal` / `roundPoolIds` / `learningPool` 四份，读盘时由 `migrateLegacyMemoryRound` 一次性迁移）
 - `RuntimeState = StoredState & { pendingIds }`，`pendingIds` 不入存
 
 掌握门槛（刷题模式）：从未答错 → `correctStreakToMaster`（默认 3）；曾错过 → `correctStreakAfterMistake`（默认 4）。`src/config/algorithm.ts` 定默认，按库设置覆盖。
@@ -493,8 +495,8 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   本地改动永远传不上去，而基准线照常刷新，下一轮判成 pull、云端旧进度反手覆盖回来。
   **判定结果不许再被调用方改写**，要加语义就加字段。
 - **设备本地的字段不参与同步，也不能被同步擦掉**（`model/policy.ts` 的
-  `DEVICE_LOCAL_BANK_FIELDS`）：`ui` / `filterType` / `activePool` / `roundMastered` /
-  `roundGoal` / `roundPoolIds` / `learningPool`。它们没有语义上说得通的合并方式
+  `DEVICE_LOCAL_BANK_FIELDS`）：`ui` / `filterType` / `activePool` / `round`。
+  它们没有语义上说得通的合并方式
   （原来那种 `local ?? remote` 谁在本地谁赢 ⇒ **违反交换律**）。两条边界都要顾：
   **收集本地与解云端都要剥**（只剥一边会让进度哈希永远对不上 → "永远待同步"，
   而且老快照会把别的设备的界面状态灌回本地），写回本地统一走引擎的
@@ -751,24 +753,33 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 会话骨架与 `QuizSession` 一致：`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()` / `copyCurrentQuestion()`，所以 `QuestionArea` 式的 UI 可以直接套用（每个动作要在同一帧内写入 `selectedAnswers` 再 `submit()`，答案页才会出现）。额外多一个 `run: "idle" | "learning" | "reviewing"`（首页 / 学习 / 复习）。
 
 - **学习新的题目**（`startLearning` → `run = "learning"`）
-  - **活动题目池**（与刷题模式同一套概念）：池子容量 = 本轮目标 `roundTarget`（**不用** `activePoolSize`），`fillActivePool()` 从「没学过的 + 学到一半的」里补题——`selectionMode` 只决定补进来的顺序（顺序 = 按题库原序 / 随机 = 随机抽），**池内出题一律随机**
-  - **每掌握一题就补一题**（默认）：`graduateInLearning()` 记入本轮后立刻 `fillActivePool()`，所以池子始终是满的
-  - **「每轮限定题数」（`lockRoundPool`）**：打开后开轮时挑一批（数量 = `targetPerRound`，规则同上）就把这一轮定死，
-    `fillActivePool()` **只从这一批里补位**、绝不引新卡，于是池子只会随着毕业变小，这一批学完本轮结束。
-    要点：
-    - 这一批的 id 记在 `StoredState.roundPoolIds`（**落盘**）里，而且**只收不放**（毕业 / 被标熟的卡仍留着），
-      否则刚被 `masterQuestion` 摘掉的卡会被补位逻辑立刻捞回来
-    - `startLearning()` 开新轮时清空它（跟 `roundMastered` 一起），`finishLearningRound` / `endRound` 也清；
-      **开轮那一次 `fillActivePool()` 之后必须 `save()`**——不写下去，「开轮后立刻刷新」就会读回上一份状态，
-      这一批是谁就丢了（这项功能的核心正是「存得住」）
-    - `lockRoundPoolInPlace()` 返回的 `{ ids, fresh }` 里 `fresh` 不能省：刚挑出来的那一批**还没进池子**，
-      当成「已在池中」的话补位名额就是 0，整批卡一道都进不来（这个 bug 真踩过，靠 `memorySession.test.ts` 抓住）
-    - 关掉开关时中途改设置不影响已经开着的那一轮（那一批的 id 还在，只是不再限制补题）
-  - **本轮判定**（接上面两条）：不是「一轮开始时选一批题」，而是数「本轮已经掌握了几题」——`roundMastered` 达到 `roundTarget`（默认 5，可设置）这一轮就结束。这一批里的卡凑不出这么多（题库新卡不够）时本轮提前收尾，`finishLearningRound("bank" | "pool")` 按原因换文案——`"bank"` =「题库里没有更多新卡片了」、`"pool"` =「本轮这一批就这些了」——两者都**不报成功音效**（`mastered < target` 时谎报「已掌握 5 / 5」是之前的 bug）
+  - **本轮 = 一个对象**（`StoredState.round` / `session.round`，模型在 `src/features/memory/round.ts`）：
+    `{ goal, cardIds, masteredIds }`。三条不变式**构造 / 读盘时都成立**：
+    `masteredIds ⊆ cardIds`、`1 ≤ goal ≤ cardIds.length`、池子 = `cardIds - masteredIds`。
+    第二条是治本的一条：**目标不会超过这一轮真能学出来的数量**（见下面「本轮判定」）
+  - **活动题目池 = 本轮这一批还没学完的卡**：`syncPoolToRound()` 按 `round.cardIds - round.masteredIds`
+    重建 `activePool`（保留原有的 `consecutiveCorrect`）。池子**不是**第二份真相，别直接往里加卡
+  - **每掌握一题就补一题**（默认）：`graduateInLearning()` 记进 `round.masteredIds` 后调 `refillRound()`，
+    从「没学过的 + 学到一半的」里补一道进 `round.cardIds`（`selectionMode` 只决定补进来的顺序，
+    **池内出题一律随机**），新卡同时排进本轮队列
+  - **「每轮限定题数」（`lockRoundPool`）**：打开后开轮时挑一批就把这一轮定死，`refillRound()` 直接返回、
+    绝不引新卡，于是池子只会随着毕业变小，这一批学完本轮结束。这一批就是 `round.cardIds`（落盘、
+    只收不放：毕业 / 被标熟的卡仍留在里面，否则刚被 `masterQuestion` 摘掉的卡会被补位逻辑立刻捞回来）。
+    关掉开关时中途改设置不影响已经开着的那一轮
+  - **本轮判定**：`memoryRoundDone(round) >= round.goal` 就结束（`graduateInLearning` 里判）。
+    目标是**开轮时收敛过的**——`createMemoryRound` 取「设置里的 `roundTarget`」与「这一批有几道」的小值，
+    所以「设置 5 题、题库只剩 3 道可学」时这一轮的目标就是 3，进度条 0/3、结束 3/3。
+    **别再让目标停留在设置值**：那正是「学两题后结束本轮，下次学到第 3 题就突然结束」那条 bug
+    （目标 5 配着池子 3，池子一空本轮就收尾，进度条停在 3/5）
+  - `finishLearningRound("bank" | "pool")` 只剩兜底（题库被改 / 这一批的卡在总览里被标熟 / 旧数据）：
+    `"bank"` =「题库里没有更多新卡片了」、`"pool"` =「本轮这一批就这些了」——两者都**不报成功音效**
   - 本轮结束时把 `memory.learnedDay` 写成当天（`studyDay(now)`）并落盘：首页据此把学习入口降一档颜色。中途退出（`exitSession`）不算学完一轮，`learnedDay` 不动
-  - **可中断续学**：`roundMastered` / `roundGoal` 与 `activePool` 都落盘，**只要池子里还有没学完的卡就续轮**——哪怕这一轮一张都还没掌握（`startLearning` 用 `hasOngoingRound` 判断，判据是池子，不是 `roundMastered`）。本轮目标 `roundGoal` 在开轮时从设置里取快照，中途改设置不影响本轮
-  - **学到一半去复习，池子不会被顶掉**：复习轮要拿 `activePool` 当到期队列用，所以 `startReview()` 会先把学习池原样挪进 `StoredState.learningPool`（成员与顺序都不动，并立刻 `save()`），复习结束（`exitSession` / `finishSession`）或下次 `startLearning()` 时再放回 `activePool`。中途刷新页面也不会丢：`learningPool` 和到期队列都在盘上
-  - 读「学习池」一律用 `session.learningPool` getter（`learningPool ?? activePool`，并滤掉 `reviewing` / `mastered` 的卡兜底），**不要**直接读 `activePool`——它在复习轮里是到期队列
+  - **可中断续学**：`round` 整份落盘，`hasOngoingRound` 的判据是「轮里还剩几道**能学的**」（不是池子里有没有条目——复习期间池子被借去当到期队列了）。续轮时目标沿用轮里的那个，不重新取设置
+  - **学到一半去复习，池子不会被顶掉**：复习轮借 `activePool` 当到期队列；学习轮**不需要暂存位**
+    （以前的 `StoredState.learningPool` 已删除）——它随时能由 `round` 重建，`startLearning()` 里
+    `syncPoolToRound()` 一次就恢复，成员与顺序（`cardIds` 的顺序）都跟去复习之前一样。刷新也不丢：`round` 在盘上
+  - 要拿「学习池」**一律**用 `session.round`（或 `startLearning` 之后的 `activePool`），
+    不要在复习轮里直接读 `activePool`——那时它是到期队列
   - 题干页只有大字号题干 + 「忘记 / 模糊 / 知道」三个按钮（`outline` / `secondary` / `default`）；点任意一个都只做两件事：题干回到常规字号、展示答案
   - **三档自评**（编码见 `src/quiz/types/memory/logic.ts` 的 `MEMORY_ANSWER_CODE`）：
     - `知道`（1）→ 轮内连对 +1
@@ -935,7 +946,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 
 ### 进度导出 / 导入（v9）
 
-`src/features/importExport.ts` 的 `FORMAT_VERSION = 9`；**有 `memory` 段就走记忆分支**（一张卡都没学过的记忆题库也算，否则第 10 项不会写出、导入时 `graduateLevel` / `roundTarget` 会被重置成默认值），没有才走原来的刷题分支（刷题在 v9 仍是 9 个元素）。`memory.retry` 与 `roundMastered` / `roundGoal` / `roundPoolIds` / `learningPool` 一样**不进备份**（都属于「本轮」这种短周期状态）；`memory.settings` 里那个 `lockRoundPool` 是设置，照常跟着备份走。
+`src/features/importExport.ts` 的 `FORMAT_VERSION = 9`；**有 `memory` 段就走记忆分支**（一张卡都没学过的记忆题库也算，否则第 10 项不会写出、导入时 `graduateLevel` / `roundTarget` 会被重置成默认值），没有才走原来的刷题分支（刷题在 v9 仍是 9 个元素）。`memory.retry` 与学习轮的 `round` 一样**不进备份**（都属于「本轮」这种短周期状态）；`memory.settings` 里那个 `lockRoundPool` 是设置，照常跟着备份走。
 
 ```
 刷题：[version, questionCount, masteredBitmapHex, activePool[][], currentRound,
