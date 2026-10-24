@@ -36,11 +36,6 @@
             <Drawer.Title class="text-base font-semibold">
                 活动题目池
             </Drawer.Title>
-            <Drawer.Description
-                class="text-muted-foreground text-xs leading-relaxed"
-            >
-                还没掌握的题目都在这儿。长按卡片可以偷看答案。
-            </Drawer.Description>
         </Drawer.Header>
 
         <!-- 抽屉自己的滚动区：`min-h-0` 不能省，否则 flex 子项会把高度顶回去 -->
