@@ -123,9 +123,12 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `collect.ts`：`collectLocalState`（键 → **逐题库**）、`filesOfState` / `collectLocalFiles`（题库装进分片后的样子）、
     **三个哈希**（`bankContentHash` 只含题目 + 模式、`bankProgressHash` 只含 `state`、`bankFullHash` 两者都含）、`stableHash`。
     **冲突判定只认第一个**，`computePendingChanges` 用第三个——混用会让「两台设备各答各的题」变成一次冲突（踩过）
-  - `merge.ts`：**逐题库**三方合并的纯函数（`buildSyncPlan` / `judgeBank` / `mergeGeneral` / `buildRemoteState` / `applyResolution` / `forcePushPlan` / `forcePullPlan`），重点测试对象。
-    「题目一样、进度两边都动过」时它只返回 `push`，真正的合并交给 `progressMerge.ts`（见下一条）
-  - `progressMerge.ts`：**进度按卡合并**（`mergeProgressMap` / `mergeBankSnapshots` / `planProgressMerge` / `sameProgress`）。
+  - `planner.ts`：**逐题库**三方合并的计划层（`judgeBank` / `buildSyncPlan` / `applyResolution` / `forcePushPlan` / `forcePullPlan`），重点测试对象。
+    「题目一样、进度两边都动过」时它只返回 `push`，真正的合并交给 `progressMerge.ts`（见下一条）。
+    单个题库的判定在 `plan.ts`（`decideBank`），云端读回来的快照在 `remote.ts`（`buildRemoteState` / `remoteReadDamage`），
+    general 段的合并与「一轮同步说成人话」在 `general.ts`（`mergeGeneral` / `summarize`）
+  - `progressMerge.ts`：**进度按卡合并**（`planProgressMerge` / `mergeBankSnapshots`；底层算子
+    `mergeProgressMap` / `mergeBankState` / `sameProgress` 在同目录 `model/merge.ts`，只有这里用）。
     内容冲突给人、进度冲突自动解——这是「两台设备都做过同一份题库」不再报冲突的全部实现
   - `gitee.ts`：Gitee Gists API 客户端（`GiteeClient` 的 `createGist` / `getGist` / `listGists` / `updateFiles` / `deleteFiles` / `deleteGist` / `ping`）+ `GistSummary` + `describeHttpError`
   - `engine.svelte.ts`：`syncEngine` 单例（打开页面即对账 / 防抖上传 20 秒 / 焦点与轮询检查 / 冲突状态机 / 拉取后刷新）
@@ -342,7 +345,11 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     stats），数字滚动动画、完成时的庆祝高亮、细条样式全部来自那一份实现
   - `src/components/settings/MemorySettings.svelte`：设置面板，与 `Settings.svelte` 同构（`Input` / `Switch` / `Separator` / `ConfirmActionButton` / 复用 `QuestionOrder`），掌握阈值用 `$lib/components/ui/slider`，最底部是共用那份快捷键说明
 - `src/quiz/session/` — 答题流状态层（Pinia 等价物，纯 Svelte 5 runes）
-  - `QuizSession.svelte.ts`：持有 reactive state；`globalSettings` 是**指向共享 store 的 getter**（不自己持有副本）
+  - `ProgressSessionBase.svelte.ts`：**两个模式共用的会话外壳**（`exportProgress` / `startImport` / `commitImport` /
+    `copyQuestion` 的剪贴板出口 / `toggleSound` / `toggleAutoNext` / 复制状态计时器）。子类只回答四个问题：
+    `sessionHash` / `sessionQuestions` / `sessionState` / `applyImportedState`。
+    **凡是两个模式一模一样的行为都加在这里**，不要再往两个 Session 里各抄一份（记忆模式曾因此漏过 ⌘N / ⌘S）
+  - `QuizSession.svelte.ts`：持有 reactive state，继承上面那个基类；`globalSettings` 是**指向共享 store 的 getter**（不自己持有副本）
   - `types.ts`：两个 session 共享的类型（复制题目相关、`KeyboardUiActions`）。
     **不要**再从 `QuizSession.svelte.ts` 里 import 类型——记忆模式并不依赖刷题会话
 - 设置面板分两处（入口与图标都不同，避免混淆）：
