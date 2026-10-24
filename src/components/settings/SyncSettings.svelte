@@ -35,11 +35,9 @@
     import { mtimeOf } from "@/features/sync/storage";
     import { looksLikeSyncGist } from "@/features/sync/types";
     import type { GistSummary } from "@/features/sync/gitee";
-    import {
-        IconArrowUpRight,
-        IconHelp,
-        IconRosetteDiscountCheckFilled,
-    } from "@tabler/icons-svelte";
+    import IconArrowUpRight from "@tabler/icons-svelte/icons/arrow-up-right";
+    import IconHelp from "@tabler/icons-svelte/icons/help";
+    import IconRosetteDiscountCheckFilled from "@tabler/icons-svelte/icons/rosette-discount-check-filled";
 
     /** 总开关：关掉只是不显示、不自动跑，令牌仍留着。 */
     let enabled = $state(syncConfigStore.value.enabled);

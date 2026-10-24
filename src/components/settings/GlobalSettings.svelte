@@ -10,7 +10,7 @@
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import SyncSettings from "./SyncSettings.svelte";
-    import { IconInfoCircle } from "@tabler/icons-svelte";
+    import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
     import { toastStore } from "@/features/toast.svelte";
     import { globalSettingsStore } from "@/features/globalSettings.svelte";
     import { createSoundPlayer, setSoundEnabledPreference } from "@/sound";

@@ -9,7 +9,7 @@
     import IconRosetteDiscountCheck from "@tabler/icons-svelte/icons/rosette-discount-check";
     import MemoryStatsCards from "./MemoryStatsCards.svelte";
     import IconConfetti from "@tabler/icons-svelte/icons/confetti";
-    import { IconBounceRightFilled } from "@tabler/icons-svelte";
+    import IconBounceRightFilled from "@tabler/icons-svelte/icons/bounce-right-filled";
 
     /**
      * 记忆模式首页。只用现有 Button / Card 组件，不写自定义样式。

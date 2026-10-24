@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Snippet } from "svelte";
-    import { IconFishBoneFilled } from "@tabler/icons-svelte";
+    import IconFishBoneFilled from "@tabler/icons-svelte/icons/fish-bone-filled";
     import { cn } from "$lib/utils";
     import { QUESTION_TYPES } from "@/quiz/types/registry";
     import { useQuizSession } from "@/quiz/session/context";

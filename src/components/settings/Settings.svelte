@@ -17,7 +17,7 @@
     import { useQuizSession } from "@/quiz/session/context";
     import QuestionOrder from "./QuestionOrder.svelte";
     import BankNameSetting from "./BankNameSetting.svelte";
-    import { IconInfoCircle } from "@tabler/icons-svelte";
+    import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
     import { getLearningLevelColor } from "@/features/quiz/learningProgress";
     import SettingsDialog from "./SettingsDialog.svelte";
     import SettingsSection from "./SettingsSection.svelte";
