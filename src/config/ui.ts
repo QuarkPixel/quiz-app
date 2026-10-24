@@ -54,3 +54,13 @@ export const IDLE_PREFETCH_MS = 2000;
 
 /** 「回到顶部」按钮的出现阈值（像素）：滚过这么多才显示。 */
 export const SCROLL_TOP_THRESHOLD_PX = 256;
+
+/**
+ * 「换一屏」的时长（毫秒）：换题、换题库、记忆模式进出学习 / 复习。
+ *
+ * **只有这一个值**——三处是同一段观感（缩放 + 淡入淡出），各配一个数只会让人
+ * 觉得「同样是换内容，怎么快慢不一」。缓动统一走 `cubicOut`（见
+ * `@/lib/transitions/swap`），前段快、末段收，所以 200ms 的实际观感比原来那个
+ * 「100ms 线性」还利落。
+ */
+export const SWAP_MS = 200;

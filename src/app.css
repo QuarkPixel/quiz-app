@@ -337,3 +337,79 @@
 ::-webkit-scrollbar-thumb:active {
     background-color: oklch(from var(--foreground) l c h / 55%);
 }
+
+/* ── 弹窗的开关动画（所有 Dialog 共用这一份） ─────────────────────────
+ *
+ * 只写在这一处：`[data-slot="dialog-content"]` 是 shadcn 那层壳统一打的标记，
+ * 设置 / 总览 / 全局设置 / 导入确认……全部走它，不需要每个弹窗各自配一遍。
+ *
+ * 观感与「换题 / 换屏」是同一套（`@/lib/transitions/swap`）：缩放 + 淡入淡出。
+ * 缩放用独立的 `scale` 属性而不是 `transform`——弹窗靠
+ * `translate(-50%, -50%)` 居中，写 `transform` 会把它顶掉，弹窗就跑到右下角去了。
+ *
+ * 时长：开 160ms / 关 120ms。关得比开快一点，符合「离开不拖泥带水」的直觉；
+ * bits-ui 的 Presence 会等动画播完再卸载节点（测试环境里 `getAnimations` 被抹掉，
+ * 所以用例不会等）。
+ */
+@keyframes dialog-pop-in {
+    from {
+        opacity: 0;
+        scale: 0.95;
+    }
+    to {
+        opacity: 1;
+        scale: 1;
+    }
+}
+
+@keyframes dialog-pop-out {
+    from {
+        opacity: 1;
+        scale: 1;
+    }
+    to {
+        opacity: 0;
+        scale: 0.95;
+    }
+}
+
+@keyframes overlay-fade-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes overlay-fade-out {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+[data-slot="dialog-content"][data-state="open"] {
+    animation: dialog-pop-in 160ms var(--ease-emphasized) both;
+}
+
+[data-slot="dialog-content"][data-state="closed"] {
+    animation: dialog-pop-out 120ms var(--ease-emphasized) both;
+}
+
+[data-slot="dialog-overlay"][data-state="open"] {
+    animation: overlay-fade-in 160ms ease both;
+}
+
+[data-slot="dialog-overlay"][data-state="closed"] {
+    animation: overlay-fade-out 120ms ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-slot="dialog-content"][data-state],
+    [data-slot="dialog-overlay"][data-state] {
+        animation-duration: 0ms;
+    }
+}
