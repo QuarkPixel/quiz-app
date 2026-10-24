@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { SHORTCUTS } from "@/config";
+    import { APP_SHORTCUTS } from "@/config";
     import { modKeyLabel } from "$lib/platform";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Button } from "$lib/components/ui/button";
@@ -179,7 +179,7 @@
                 </span>
                 <KbdGroup class="text-[10px]">
                     <Kbd>{modKeyLabel}</Kbd>
-                    <Kbd>{SHORTCUTS.exportProgress.toUpperCase()}</Kbd>
+                    <Kbd>{APP_SHORTCUTS.exportProgress.kbd}</Kbd>
                 </KbdGroup>
             </Button>
             <Button
@@ -194,7 +194,7 @@
                 </span>
                 <KbdGroup class="text-[10px]">
                     <Kbd>{modKeyLabel}</Kbd>
-                    <Kbd>{SHORTCUTS.importProgress.toUpperCase()}</Kbd>
+                    <Kbd>{APP_SHORTCUTS.importProgress.kbd}</Kbd>
                 </KbdGroup>
             </Button>
         </div>

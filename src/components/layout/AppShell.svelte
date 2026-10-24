@@ -12,6 +12,7 @@
     import { handleSyncNowShortcut } from "@/features/sync/shortcut";
     import { createSoundPlayer, maybePlaySyncSuccessSound } from "@/sound";
     import { modKeyLabel } from "$lib/platform";
+    import { APP_SHORTCUTS } from "@/config";
     import * as Tooltip from "$lib/components/ui/tooltip";
     import * as Kbd from "$lib/components/ui/kbd";
 
@@ -138,7 +139,9 @@
      * 那会儿提示它反而是骗人。
      */
     const indicatorText = $derived(
-        clickable ? `${indicatorLabel}（${modKeyLabel}+Y）` : indicatorLabel,
+        clickable
+            ? `${indicatorLabel}（${modKeyLabel}+${APP_SHORTCUTS.syncNow.kbd}）`
+            : indicatorLabel,
     );
 
     /**

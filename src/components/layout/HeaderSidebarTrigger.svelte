@@ -5,7 +5,7 @@
     import PanelLeftIcon from "@tabler/icons-svelte/icons/layout-sidebar";
     import { useSidebar } from "$lib/components/ui/sidebar/context.svelte";
     import { modKeyLabel } from "$lib/platform";
-    import { SHORTCUTS } from "@/config";
+    import { APP_SHORTCUTS } from "@/config";
 
     const sidebar = useSidebar();
 </script>
@@ -29,7 +29,7 @@
         <span>{sidebar.open ? "收起" : "展开"}侧边栏</span>
         <KbdGroup>
             <Kbd>{modKeyLabel}</Kbd>
-            <Kbd>{SHORTCUTS.sidebar.toUpperCase()}</Kbd>
+            <Kbd>{APP_SHORTCUTS.sidebar.kbd}</Kbd>
         </KbdGroup>
     </Tooltip.Content>
 </Tooltip.Root>

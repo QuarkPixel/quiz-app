@@ -24,7 +24,7 @@
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { modKeyLabel } from "$lib/platform";
-    import { SHORTCUTS } from "@/config";
+    import { APP_SHORTCUTS } from "@/config";
     import SettingsDialog from "./SettingsDialog.svelte";
     import SettingsSection from "./SettingsSection.svelte";
     import SettingNumberRow from "./SettingNumberRow.svelte";
@@ -208,7 +208,7 @@
                 </span>
                 <KbdGroup class="text-[10px]">
                     <Kbd>{modKeyLabel}</Kbd>
-                    <Kbd>{SHORTCUTS.exportProgress.toUpperCase()}</Kbd>
+                    <Kbd>{APP_SHORTCUTS.exportProgress.kbd}</Kbd>
                 </KbdGroup>
             </Button>
             <Button
@@ -223,7 +223,7 @@
                 </span>
                 <KbdGroup class="text-[10px]">
                     <Kbd>{modKeyLabel}</Kbd>
-                    <Kbd>{SHORTCUTS.importProgress.toUpperCase()}</Kbd>
+                    <Kbd>{APP_SHORTCUTS.importProgress.kbd}</Kbd>
                 </KbdGroup>
             </Button>
         </div>

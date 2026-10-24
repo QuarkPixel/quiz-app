@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { SHORTCUTS } from "@/config";
+    import { APP_SHORTCUTS } from "@/config";
     import { modKeyLabel } from "$lib/platform";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Switch } from "$lib/components/ui/switch";
@@ -86,7 +86,7 @@
                         音效
                         <KbdGroup class="text-[10px]">
                             <Kbd>{modKeyLabel}</Kbd>
-                            <Kbd>{SHORTCUTS.toggleSound.toUpperCase()}</Kbd>
+                            <Kbd>{APP_SHORTCUTS.toggleSound.kbd}</Kbd>
                         </KbdGroup>
                     </Label>
                     <Switch
@@ -143,7 +143,7 @@
                         答对自动下一题
                         <KbdGroup class="text-[10px]">
                             <Kbd>{modKeyLabel}</Kbd>
-                            <Kbd>{SHORTCUTS.toggleAutoNext.toUpperCase()}</Kbd>
+                            <Kbd>{APP_SHORTCUTS.toggleAutoNext.kbd}</Kbd>
                         </KbdGroup>
                     </Label>
                     <Switch
