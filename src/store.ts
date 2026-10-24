@@ -10,6 +10,7 @@ import type {
   RuntimeState,
   ActivePoolItem,
   MemoryProgressMap,
+  MemoryRoundState,
   MemoryStoredState,
   Question,
   QuestionType,
@@ -22,6 +23,10 @@ import {
   createDefaultBankSettings,
   sanitizeBankSettings,
 } from "./bankSettings";
+import {
+  migrateLegacyMemoryRound,
+  normalizeMemoryRound,
+} from "./features/memory/round";
 import { normalizeMemoryState } from "./features/memory/normalize";
 import { loadGeneralConfig, updateGeneralConfig } from "./generalConfig";
 
@@ -110,53 +115,36 @@ function createDefaultStoredState(): StoredState {
   };
 }
 
-/** 净化「本轮已掌握几题」：非负整数，缺失/非法时返回 undefined。 */
-function normalizeRoundMastered(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return undefined;
-  }
-  return Math.floor(value);
-}
-
-function toNonNegativeInt(value: unknown): number {
-  const numberValue = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numberValue) || numberValue < 0) return 0;
-  return Math.floor(numberValue);
-}
-
 /**
- * 净化记忆模式暂存的学习池。缺失 / 结构非法时返回 undefined，
- * 免得给刷题模式题库凭空加一个字段。
+ * 读盘时把「学习轮」收成一份（`MemoryRoundState`）。
+ *
+ * 新数据直接读 `round`；旧版本把这一轮拆成 `roundMastered` / `roundGoal` /
+ * `roundPoolIds` 三份，走 `migrateLegacyMemoryRound` 拼回来（近似：旧数据没记
+ * 哪几道已掌握，进度从 0 重新数，但**目标会收敛到这一批的数量**，
+ * 所以不会出现「目标 5、池子 3、学到 3 就收尾」）。
  */
-function normalizeLearningPool(value: unknown): ActivePoolItem[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const items: ActivePoolItem[] = [];
-  for (const raw of value) {
-    if (!isRecord(raw) || typeof raw.id !== "string") continue;
-    items.push({
-      id: raw.id,
-      consecutiveCorrect: toNonNegativeInt(raw.consecutiveCorrect),
-      hasEverMistaken: raw.hasEverMistaken === true,
-      hasBeenShown: raw.hasBeenShown === true,
-      lastSelectedRound: toNonNegativeInt(raw.lastSelectedRound),
-    });
-  }
-  return items;
+function normalizeStoredRound(parsed: Record<string, unknown>): MemoryRoundState | undefined {
+  const current = normalizeMemoryRound(parsed.round);
+  if (current) return current;
+  if (parsed.round !== undefined) return undefined;
+
+  const activePoolIds = Array.isArray(parsed.activePool)
+    ? parsed.activePool
+        .map((item) =>
+          isRecord(item) && typeof item.id === "string" ? item.id : null,
+        )
+        .filter((id): id is string => id !== null)
+    : [];
+
+  return migrateLegacyMemoryRound({
+    roundGoal: parsed.roundGoal,
+    roundPoolIds: parsed.roundPoolIds,
+    activePoolIds,
+  });
 }
 
 /**
- * 净化「每轮限定题数」记下的那一批（`MemoryBankSettings.lockRoundPool` 打开时才有）。
- * 缺失 / 结构非法时返回 undefined，不凭空造一个字段。
- */
-function normalizeRoundPoolIds(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return [
-    ...new Set(value.filter((id): id is string => typeof id === "string")),
-  ];
-}
-
-/**
- * 丢掉记忆进度里题库中已不存在的题目（`activePool` / `learningPool` 是同一套约定），
+ * 丢掉记忆进度里题库中已不存在的题目（`activePool` / `round` 是同一套约定），
  * 顺带清掉这些题的「本轮重新连对」待办。
  */
 function cleanMemoryState(
@@ -225,13 +213,9 @@ export function loadStoredState(hash: string): StoredState {
         // 记忆模式的段只有在文件里真的存在时才保留；否则保持 undefined，
         // 免得刷题模式题库的状态里凭空多出一个空段。
         memory: normalizeMemoryState(parsedState.memory),
-        // 记忆模式「本轮已掌握几题」：学到一半退出时要能续上
-        roundMastered: normalizeRoundMastered(parsedState.roundMastered),
-        roundGoal: normalizeRoundMastered(parsedState.roundGoal),
-        // 记忆模式复习期间暂存的学习轮活动池
-        learningPool: normalizeLearningPool(parsedState.learningPool),
-        // 记忆模式本轮固定下来的这一批（开关打开时才有）
-        roundPoolIds: normalizeRoundPoolIds(parsedState.roundPoolIds),
+        // 记忆模式「学习轮」：目标 / 这一批 / 已掌握装在一个对象里。
+        // 旧版本的 `roundMastered` / `roundGoal` / `roundPoolIds` 在这里一次性迁移。
+        round: normalizeStoredRound(parsed as Record<string, unknown>),
       };
     }
   } catch (e) {
@@ -256,7 +240,6 @@ export function loadStoredState(hash: string): StoredState {
  */
 function persistedState(state: StoredState): StoredState {
   return {
-
     masteredIds: state.masteredIds,
     masteredMistakes: state.masteredMistakes,
     activePool: state.activePool,
@@ -267,13 +250,8 @@ function persistedState(state: StoredState): StoredState {
     // 记忆模式题库的状态：`saveState` 是唯一出口，必须原样带出去，
     // 否则刷题流的保存会把记忆进度抹掉（同一个 hash 键）。
     memory: state.memory,
-    roundMastered: state.roundMastered,
-    roundGoal: state.roundGoal,
-    // 复习期间暂存的学习轮活动池（成员与顺序都要保住）
-    learningPool: state.learningPool,
-    // 本轮固定下来的这一批：不带上就等于每次保存都把这一轮解封
-    roundPoolIds: state.roundPoolIds,
-  
+    // 记忆模式的学习轮：目标、这一批、已掌握必须一起存 —— 拆开存就会各自漂移
+    round: state.round,
   };
 }
 
@@ -370,14 +348,9 @@ export function buildRuntimeState(
     ...storedState,
     masteredMistakes: cleanedMasteredMistakes,
     activePool: cleanedActivePool,
-    // 暂存的学习池同样要丢掉已经不在题库里的题
-    learningPool: storedState.learningPool?.filter((item) =>
-      questionIds.has(item.id),
-    ),
-    // 这一批同理：题被删 / id 改了之后，留着它只会让这一轮少几道卡
-    roundPoolIds: storedState.roundPoolIds?.filter((id) =>
-      questionIds.has(id),
-    ),
+    // 学习轮同理：题被删 / id 改了之后，留在这一批里只会让这一轮少几道卡。
+    // 净化会把目标重新收敛到剩下的数量（不变式 2），所以不会出现「目标 5、只能学 3」
+    round: normalizeMemoryRound(storedState.round, questionIds),
     // 记忆进度同理：改了题库（题目被删 / id 变了）之后，旧进度条目既不该
     // 计入统计，也不该让导出直接报错——统一按「题库里没有这道卡」丢掉
     memory: cleanMemoryState(storedState.memory, questionIds),

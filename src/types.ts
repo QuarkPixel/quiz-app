@@ -188,7 +188,7 @@ export interface MemoryBankSettings {
    *
    * 关掉（默认）是「每掌握一题就补一题」的老规矩：活动池始终是满的，
    * 于是刷到后面必然会碰见这一轮才第一次见到的新卡。打开之后「这次就刷这几道」
-   * 才是确定的——固定下来的那批 id 记在 `StoredState.roundPoolIds` 里。
+   * 才是确定的——固定下来的那批 id 就是 `StoredState.round.cardIds`。
    */
   lockRoundPool: boolean;
 }
@@ -234,6 +234,33 @@ export interface MemoryReviewState {
   total: number;
 }
 
+/**
+ * 记忆模式「学习轮」的全部状态 —— **一轮就是这一个对象**。
+ *
+ * 以前一轮是六份字段拼的（目标 / 已掌握数 / 池子 / 池子暂存位 / 这一批是谁 /
+ * 每道卡的轮内连对），彼此不知道对方，于是「结束本轮」要记得把五样一起清零、
+ * 「学完一轮」要记得把目标收回……漏一样就是一个说不清的 bug（用户报的
+ * 「设 5 题、学到第 3 题就结束」正是目标与池子对不上账）。
+ *
+ * 现在只留这一份，并保证三条不变式（构造 / 读盘时都成立，见
+ * `@/features/memory/round`）：
+ *
+ *   1. `masteredIds ⊆ cardIds`
+ *   2. `1 ≤ goal ≤ cardIds.length` —— 目标不会超过这一批真能学出来的数量
+ *   3. 池子 = `cardIds - masteredIds`（`MemorySession.syncPoolToRound` 按它重建）
+ *
+ * 只属于本机：换设备时各挑各的批，没有语义上说得通的合并方式（见同步层的
+ * `DEVICE_LOCAL_BANK_FIELDS`）。
+ */
+export interface MemoryRoundState {
+  /** 本轮目标（开轮时按「设置」与「这一批有几道」取小，中途只降不升） */
+  goal: number;
+  /** 本轮这一批卡（顺序即挑选顺序；「每掌握一题就补一题」时会往后长） */
+  cardIds: string[];
+  /** 本轮已掌握的卡（一定是 `cardIds` 的子集） */
+  masteredIds: string[];
+}
+
 /** `StoredState.memory` 的结构。 */
 export interface MemoryStoredState {
   progress: MemoryProgressMap;
@@ -277,32 +304,12 @@ export interface StoredState {
   /** UI 偏好（不影响学习算法） */
   ui: UiPreferences;
   /**
-   * 记忆模式「本轮学习」已经掌握了几题。
-   * 学到一半退出时可以续着这一轮继续（配合 `activePool`）。
-   */
-  roundMastered?: number;
-  /** 本轮的目标题数（开始时定下，中途改设置不影响本轮） */
-  roundGoal?: number;
-  /**
-   * 本轮固定下来的这一批（`MemoryBankSettings.lockRoundPool` 打开时才有）。
+   * 记忆模式「学习轮」：目标 / 这一批 / 已掌握，三者装在同一个对象里。
    *
-   * 打开那个开关后，这一轮**只能**用开轮时挑的这一批卡：`fillActivePool`
-   * 不再从题库补新题进来（详见 `MemorySession.fillActivePool`）。所以这一批
-   * id 必须落盘——不然刷新页面后就认不出「本轮是哪几道」，池子会重新灌满，
-   * 开关也就形同虚设。
-   *
-   * 它只收不放：卡毕业 / 被标熟离开池子后仍然留在这里，避免 `masterQuestion`
-   * 刚把它摘掉、补位逻辑又把它捞回来。
+   * 只有记忆模式题库、且开过学习轮时才有这个字段（刷题模式题库里不存在）。
+   * 学到一半退出 / 刷新 / 切题库回来都靠它续上这一轮；「结束本轮」= 把它清掉。
    */
-  roundPoolIds?: string[];
-  /**
-   * 记忆模式「学习轮」的活动池。
-   *
-   * 复习轮要拿 `activePool` 当到期队列用，所以进复习之前把学习轮的池子
-   * 原样挪到这里（成员和顺序都不动），复习结束后再放回 `activePool`。
-   * 只有记忆模式题库、且「学到一半去复习」时才有这个字段。
-   */
-  learningPool?: ActivePoolItem[];
+  round?: MemoryRoundState;
   /**
    * 记忆模式的进度与设置。刷题模式题库没有这个字段。
    *

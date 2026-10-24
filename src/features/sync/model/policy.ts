@@ -42,9 +42,9 @@ export const SYNCED_BANK_FIELDS = [
  * 为什么把它们排除，而不是给它们编一条合并规矩：
  *   - `ui` / `filterType` 是纯 UI 状态，跨设备传只会让"我在手机上收起的面板
  *     在电脑上也是收起的"这种莫名其妙的行为；
- *   - `activePool` / `roundMastered` / `roundGoal` / `roundPoolIds` / `learningPool`
- *     是**本轮会话**的状态。它们没有语义上说得通的合并方式（两台设备各挑了一批题
- *     怎么办？），而原来那种「`local ?? remote`」写法谁在本地谁赢 ⇒
+ *   - `activePool` / `round` 是**本轮会话**的状态（`round` 是记忆模式学习轮的
+ *     全部：目标 / 这一批 / 已掌握）。它们没有语义上说得通的合并方式（两台设备
+ *     各挑了一批题怎么办？），而原来那种「`local ?? remote`」写法谁在本地谁赢 ⇒
  *     **违反交换律** ⇒ 两台设备永远算不出同一个结果。
  *
  * 排除它们之后，拉取 / 合并写回本地时**必须原样保留本机那份**（见 `attachDeviceLocal`），
@@ -86,10 +86,10 @@ export const DEVICE_LOCAL_BANK_FIELDS = [
   "ui",
   "filterType",
   "activePool",
-  "roundMastered",
-  "roundGoal",
-  "roundPoolIds",
-  "learningPool",
+  // 记忆模式学习轮（目标 / 这一批 / 已掌握）——一整份，见 `@/types` 的
+  // `MemoryRoundState`。以前拆成 `roundMastered` / `roundGoal` / `roundPoolIds`
+  // 三份登记，拆得越细越容易漏登记（漏了就会被同步出去）
+  "round",
 ] as const;
 
 /** general 里参与同步的字段。`activeBank` 是设备本地的（各设备看自己的题库）。 */

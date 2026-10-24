@@ -14,6 +14,18 @@
  * 这些刷题模式的 UI 都能直接套用，只有「对错」的含义不同：
  *   - 学习流：知道 = 对，忘记 = 错（连对到门槛就毕业进入复习）
  *   - 复习流：知道 = 对，忘记 = 错（对 → 阶梯 +1，错 → 阶梯归零）
+ *
+ * ── 「一轮」只有一份真相 ────────────────────────────────────────────────────
+ *
+ * 学习轮的全部状态装在 `this.round`（`MemoryRoundState`）里：目标、这一批、
+ * 已掌握。**池子不再是第二份真相**——`activePool` 由 `syncPoolToRound()` 从
+ * `round.cardIds - round.masteredIds` 重建（复习轮借用 `activePool` 当到期队列，
+ * 回到学习时重建一次就恢复，不再需要 `learningPool` 那个暂存位）。
+ *
+ * 于是「结束本轮」「学完一轮」「开新一轮」「题库被改」都只做一件事：
+ * **动这个对象**（或者把它清成 `null`）。没有第二、第三份计数需要同步清零，
+ * 也就没有「漏清一个字段 → 下一轮学到一半突然结束」这种 bug 的土壤。
+ * 模型的规矩（目标 ≤ 这一批的数量等）见 `@/features/memory/round`。
  */
 
 import type {
@@ -23,6 +35,7 @@ import type {
   MemoryProgressMap,
   MemoryQuestion,
   MemoryReviewState,
+  MemoryRoundState,
   MemoryStoredState,
   Question,
   RuntimeState,
@@ -39,6 +52,15 @@ import {
   resetReview,
   studyDay,
 } from "@/features/memory/algorithm";
+import {
+  addMemoryRoundCards,
+  createMemoryRound,
+  isMemoryRoundComplete,
+  markMemoryRoundMastered,
+  memoryRoundDone,
+  memoryRoundRemaining,
+  pruneMemoryRound,
+} from "@/features/memory/round";
 import { nextRev, revOf } from "@/lib/rev";
 import {
   normalizeMemoryProgressMap,
@@ -131,12 +153,13 @@ export class MemorySession {
    */
   presentationSeq = $state(0);
   /**
-   * 本轮已经掌握了几题（达到 `roundTarget` 本轮就结束）。
-   * 这是**落盘**的：学到一半退出，下次进来继续算这一轮。
+   * 当前的学习轮（`null` = 没有进行中的一轮）。
+   *
+   * **本轮的唯一真相**：目标、这一批、已掌握都在这里，池子是它的投影。
+   * 落盘为 `StoredState.round`，学到一半退出 / 刷新都能续上；
+   * 「结束本轮」= 置 `null`。
    */
-  roundMastered = $state(0);
-  /** 本轮的目标题数快照（开始时从设置里取，中途改设置不影响本轮） */
-  roundGoal = $state(0);
+  round: MemoryRoundState | null = $state(null);
   /**
    * 本轮「复习完成」还需要连对几次（key = 题 id）。
    * 默认 1（答对一次就完成本轮）；答错后提到 `correctStreakToMaster`（默认 3）。
@@ -229,8 +252,8 @@ export class MemorySession {
     this.fixedNow = options.now ?? null;
     const stored = loadStoredState(bank.hash);
     this.appState = this.loadState(stored);
-    this.roundMastered = stored.roundMastered ?? 0;
-    this.roundGoal = stored.roundGoal ?? 0;
+    // 进行中的一轮（如果有）：目标 / 这一批 / 已掌握整份读回来
+    this.round = this.appState.round ?? null;
     this.normalizeQuestionTypes();
     this.syncQueueToPool();
   }
@@ -340,10 +363,25 @@ export class MemorySession {
     return this.fixedNow ? this.fixedNow() : devNow(this.debugOffset);
   }
 
-  /** 本轮学习目标（题） */
+  /**
+   * 本轮学习目标（题）。
+   *
+   * 有进行中的一轮就用**那一轮的目标**（开轮时定下，中途改设置不影响它）；
+   * 没有就用设置里的 `roundTarget`（首页「每轮 N 道」的文案）。
+   */
   get targetPerRound(): number {
-    if (this.roundGoal > 0) return this.roundGoal;
+    if (this.round) return this.round.goal;
     return Math.max(1, this.memorySettings.roundTarget);
+  }
+
+  /** 本轮已经掌握了几道（UI / 测试都用它，读的是轮模型） */
+  get roundMastered(): number {
+    return this.round ? memoryRoundDone(this.round) : 0;
+  }
+
+  /** 本轮目标；没有进行中的一轮时是 0（`MemoryHome` 据此判断「是不是在续轮」） */
+  get roundGoal(): number {
+    return this.round?.goal ?? 0;
   }
 
   /** 本轮学习已完成多少 / 共多少（进度条用） */
@@ -365,27 +403,22 @@ export class MemorySession {
   }
 
   /**
-   * 学习轮的活动池：成员与顺序都保持原样。
+   * 学到一半（这一轮还有没学完的卡），下次点「学习新的题目」接着这一轮继续。
    *
-   * 复习轮要拿 `activePool` 当到期队列用，所以进复习之前学习池会被原样挪到
-   * `appState.learningPool`（落盘），结束时再放回 `activePool`。
-   * 所以这里优先读暂存的那一份。
-   *
-   * 最后那层过滤是给旧版本留下的状态兜底：老版本会直接把到期队列写进
-   * `activePool`，没有暂存位，于是复习中的卡会混进来——它们不属于学习轮
-   * （否则在学习流里答对它会被当成「刚学会」，把复习阶梯冲回第 1 级）。
+   * 判据是**轮模型里还剩几道能学的**，不是「池子里有没有条目」——池子只是轮的
+   * 投影，复习期间它还被借去当到期队列了（以前用池子判断，于是「学完一轮后去
+   * 复习」会让首页以为还有半轮）。
    */
-  get learningPool(): RuntimeState["activePool"] {
-    const pool = this.appState.learningPool ?? this.appState.activePool;
-    return pool.filter((item) => {
-      const progress = this.progress[item.id];
-      return progress === undefined || progress.state === "learning";
-    });
+  get hasOngoingRound(): boolean {
+    const round = this.round;
+    if (!round) return false;
+    return memoryRoundRemaining(round).some((id) => this.isLearnable(id));
   }
 
-  /** 学到一半（活动池里还有没学完的卡），下次点「学习新的题目」接着这一轮继续 */
-  get hasOngoingRound(): boolean {
-    return this.learningPool.length > 0;
+  /** 这道卡还能学吗（没学过，或者学到一半）。与 `poolCandidates` 同一份判据。 */
+  private isLearnable(id: string): boolean {
+    const progress = this.progress[id];
+    return progress === undefined || progress.state === "learning";
   }
 
   /**
@@ -440,38 +473,29 @@ export class MemorySession {
   /**
    * 开始「学习新的题目」。
    *
-   * 上一轮只要学到一半就接着继续，**一道都没掌握也一样**：中途退出不该丢掉
-   * 这一轮，也不该重挑一批题。判断依据是「池子里还有没有没学完的卡」，
-   * 不是「已经掌握了几道」。
+   * 两种情况，判据只有一条：**轮模型里还有没有没学完的卡**。
+   *   - 有 → 续这一轮（池子按轮重建，复习期间它被借去当到期队列了）
+   *   - 没有 → 开新的一轮：挑一批卡，目标取「设置」与「这一批有几道」的小值
+   *
+   * 目标必须在这里收敛（`createMemoryRound` 负责），否则就会出现
+   * 「设置 5 题、题库只剩 3 道可学、学到第 3 道突然收尾」——用户报的那条。
    */
   startLearning(): void {
-    // 把学习轮的活动池放回 `activePool`（如果中途去复习过，池子暂存在
-    // `learningPool` 里，成员和顺序都是原样），顺手清掉暂存位。
-    const ongoing = this.hasOngoingRound;
-    this.appState = {
-      ...this.appState,
-      activePool: this.learningPool,
-      learningPool: undefined,
-      pendingIds: [],
-    };
-
-    // 这一轮的计数还能不能接着用？
-    //  - 池子里还有没学完的卡 → 正常续轮
-    //  - 池子被「复习」顶掉过，但这一轮已经掌握了几道 → 计数留着，只把池子放回来
-    const keepRound = this.roundGoal > 0 && (ongoing || this.roundMastered > 0);
-    if (!keepRound) {
-      // 新的一轮：从 0 开始数，本轮这一批也跟着重新挑
-      this.roundMastered = 0;
-      this.roundGoal = Math.max(1, this.memorySettings.roundTarget);
-      this.appState = { ...this.appState, roundPoolIds: [] };
-    } else if (this.roundMastered >= this.roundGoal) {
-      // 计数已经到顶就不该再留着，免得进度条卡在「5-5」
-      this.roundMastered = 0;
+    if (!this.hasOngoingRound) {
+      // 旧的一轮（如果还有残留）作废：新的一轮就是新的一批、新的目标
+      this.round = this.pickRound();
+      if (!this.round) {
+        this.deps.toast("没有新的题目了", "去「复习」里继续吧。");
+        return;
+      }
     }
 
-    this.fillActivePool();
+    // 池子 = 轮里还没学完的卡（顺序与 `cardIds` 一致）。
+    // 复习轮借 `activePool` 当到期队列，所以**每次进学习都要重建一次**。
+    this.syncPoolToRound();
     if (this.appState.activePool.length === 0) {
       this.deps.toast("没有新的题目了", "去「复习」里继续吧。");
+      this.round = null;
       return;
     }
 
@@ -482,10 +506,25 @@ export class MemorySession {
     this.queue = shuffleArray(
       this.appState.activePool.map((item) => ({ id: item.id })),
     );
-    // 开轮这一步也要落盘：池子与「本轮这一批」的快照都是刚挑出来的，不写下去
-    // 的话「开轮后立刻刷新 / 切题库」会读回上一份状态——这一批是谁就丢了
+    // 开轮这一步也要落盘：这一批是谁、目标几道，都是刚定下的，不写下去
+    // 的话「开轮后立刻刷新 / 切题库」会读回上一份状态
     this.save();
     this.selectNext();
+  }
+
+  /**
+   * 挑一批卡开一轮：数量取「设置里的每轮题数」，但**不超过题库里真能学出来的数量**。
+   *
+   * 候选由 `poolCandidates` 给出（没学过的 + 学到一半的，已按顺序 / 随机排好），
+   * 所以「这一批」与首页那句「还有 N 道 · 每轮 M 道」是同一个来源。
+   */
+  private pickRound(): MemoryRoundState | null {
+    const target = Math.max(1, this.memorySettings.roundTarget);
+    const candidates = this.poolCandidates(new Set()).slice(0, target);
+    return createMemoryRound(
+      candidates.map((q) => q.id),
+      target,
+    );
   }
 
   /**
@@ -562,9 +601,9 @@ export class MemorySession {
     const shuffled = shuffleArray(queueQuestions);
     this.appState = {
       ...this.appState,
-      // 复习轮要拿 `activePool` 当到期队列用：学习轮的活动池先原样挪到
-      // `learningPool`（成员与顺序都不动，并且落盘），复习结束后放回。
-      learningPool: this.learningPool,
+      // 复习轮借 `activePool` 当到期队列用。学习轮不需要另存一份：
+      // 它随时能由 `round`（`cardIds - masteredIds`）重建，
+      // 回到学习时 `startLearning` 会调 `syncPoolToRound()` 恢复。
       activePool: shuffled.map((q) => ({
         id: q.id,
         consecutiveCorrect: 0,
@@ -647,23 +686,9 @@ export class MemorySession {
     this.showResult = false;
     this.selectedAnswers = [];
     this.shownIds = [];
-    // 活动池与本轮掌握计数都保留：下次「学习新的题目」接着这一轮继续
-    this.restoreLearningPool();
+    // 这一轮整个留着（`round` 不动）：下次「学习新的题目」接着这一轮继续。
+    // 池子不用特意放回 `activePool`——`startLearning` 会按 `round` 重建。
     this.save();
-  }
-
-  /**
-   * 复习结束时把学习轮的活动池放回 `activePool`。
-   * 没在复习（或本来就没有暂存的池子）时是空操作。
-   */
-  private restoreLearningPool(): void {
-    const stash = this.appState.learningPool;
-    if (stash === undefined) return;
-    this.appState = {
-      ...this.appState,
-      activePool: stash,
-      learningPool: undefined,
-    };
   }
 
   // ── 整轮的动作（总览里的「标熟」 / 答题区的「结束本轮」） ────────────
@@ -675,9 +700,9 @@ export class MemorySession {
    * level / streak / nextDue 一起清零（与 `advanceReview` 的最后一步同形），
    * `lapses` 原样保留——它是累计答错次数，不属于复习阶梯。
    *
-   * 这张卡可能正待在本轮里（甚至就是当前这一题），所以三处一起清：活动池与
-   * 暂存的学习池、本轮队列、以及「答错后重新连对」的落盘待办。它在复习轮里
-   * 也顺手记成「今日已复习」，否则进度条会永远停在 4 / 5。
+   * 这张卡可能正待在本轮里（甚至就是当前这一题）：如果它在**本轮这一批**里，
+   * 就同时记成「本轮已掌握」——否则 `syncPoolToRound` 会把它当成「还没学完」
+   * 又塞回池子。本轮之外的卡只改进度，不影响这一轮的计数。
    */
   masterQuestion(id: string): void {
     if (!this.questions.some((q) => q.id === id)) return;
@@ -687,12 +712,12 @@ export class MemorySession {
     const wasCurrent = this.currentQuestion?.id === id;
     const inRound = this.appState.activePool.some((item) => item.id === id);
 
+    if (this.round) {
+      this.round = markMemoryRoundMastered(this.round, id);
+    }
     this.appState = this.withSyncedMasteredIds({
       ...this.appState,
       activePool: this.appState.activePool.filter((item) => item.id !== id),
-      learningPool: this.appState.learningPool?.filter(
-        (item) => item.id !== id,
-      ),
       memory: this.writeProgress(this.appState, id, {
         state: "mastered",
         level: 0,
@@ -714,8 +739,17 @@ export class MemorySession {
     if (this.run === "reviewing" && inRound) this.markReviewedAndSave(id);
 
     // 学习轮少了一张就补一张进来：池子始终是满的（与 `graduateInLearning` 同一条规矩）
-    if (this.run === "learning") this.fillActivePool();
+    if (this.run === "learning") {
+      this.refillRound();
+      this.syncPoolToRound();
+    }
     this.save();
+
+    // 标熟也可能正好把这一轮凑满（在总览里连点几下）：照常收尾
+    if (this.run === "learning" && this.round && isMemoryRoundComplete(this.round)) {
+      this.finishLearningRound();
+      return;
+    }
 
     // 标熟的正好是当前这一题：别把它留在屏幕上，照常走「下一题」
     if (wasCurrent) this.selectNext();
@@ -726,8 +760,11 @@ export class MemorySession {
    *
    * 与「退出本轮」的区别只在轮次留不留：
    *   - 退出（`exitSession`）：回首页，这一轮留着，下次点「学习新的题目」接着学；
-   *   - 结束（这里）：回首页，本轮的计数、池子与轮内连对一起作废，
+   *   - 结束（这里）：回首页，这一轮整个丢掉（`round = null`），
    *     下次点「学习新的题目」是**新的一轮**（tooltip 那句「下次开启新一轮」）。
+   *
+   * 「丢掉一整轮」只有一句 `this.round = null`：目标 / 这一批 / 已掌握装在同
+   * 一个对象里，不存在「漏清某个字段」的可能。池子是轮的投影，跟着一起空。
    *
    * 只认学习轮：复习轮没有「结束」这个概念（复习队列就是「今天还欠什么」，
    * 按钮也不在那边显示），所以这里不是学习轮就什么都不做。
@@ -741,16 +778,11 @@ export class MemorySession {
     this.selectedAnswers = [];
     this.shownIds = [];
     this.reviewTarget = {};
-    this.roundMastered = 0;
-    this.roundGoal = 0;
+    this.round = null;
     this.run = "idle";
     this.appState = {
       ...this.appState,
       activePool: [],
-      // 复习期间暂存的那份学习池同样作废：它属于刚被结束的这一轮
-      learningPool: undefined,
-      // 本轮这一批跟着作废：下一轮要按新设置重新挑
-      roundPoolIds: [],
       memory: this.clearLearningStreaks(),
     };
     // 这里**不写** `learnedDay`：没学完的一轮不算「今天学过一轮」，
@@ -839,109 +871,90 @@ export class MemorySession {
   // ── 答题流 ──────────────────────────────────────────────────────────
 
   /**
-   * 活动题目池：池子里的题 = 本轮正在练的题；每掌握一题就从「未学习」里补一题进来。
-   * 记忆模式不再单独配置池大小，池子容量与本轮目标共用 `roundTarget`。
+   * 把池子**按轮重建**：`activePool = round.cardIds - round.masteredIds`。
    *
-   * 「每轮限定题数」（`lockRoundPool`）打开时换一套规矩：开轮时按同样的规则挑一批
-   * （数量 = `targetPerRound`）并记进 `roundPoolIds`（落盘），**之后不再补新题**——
-   * 学会一道池子就少一道，这一批学完本轮结束。这样「这次就刷这 5 题」才是确定的；
-   * 关掉时保持「掌握一题补一题」，池子始终是满的。
+   * 这是本轮唯一的「池子从哪来」。以前池子是第二份真相：`endRound` 清一份、
+   * `startReview` 挪一份、旧的 `fillActivePool` 补一份，三处都要记得同步，漏一处就
+   * 出现「池子里有卡、轮里没有」或者反过来。
+   *
+   * 重建时保留池子里原有的 `consecutiveCorrect` / `hasBeenShown`（连对进度在
+   * 池子条目上显示）；池子里没有的卡按 `progress.streak` 起头。
+   * `round` 为 `null`（没有进行中的一轮）时池子就是空的。
    */
-  private fillActivePool(): void {
-    const size = Math.max(1, this.targetPerRound);
-    const locked = this.memorySettings.lockRoundPool;
-    // 本轮这一批：锁上之后只收不放（毕业 / 被标熟离开池子的卡仍留在这里），
-    // 否则刚被 `masterQuestion` 摘掉的卡会被补位逻辑立刻捞回来
-    const inPool = new Set(this.appState.activePool.map((item) => item.id));
-    if (locked) {
-      // 这次是**刚挑出来**的那一批（还没进池子）就不算「已在池中」——算进去
-      // 补位名额就成 0 了，整批卡一道都进不来
-      const { ids, fresh } = this.lockRoundPoolInPlace();
-      if (!fresh) for (const id of ids) inPool.add(id);
+  private syncPoolToRound(): void {
+    // 先剔掉已经不属于这一轮的卡（题被删 / 在别处被标熟），目标跟着收敛
+    const round = this.round
+      ? pruneMemoryRound(this.round, (id) => this.isLearnable(id))
+      : null;
+    this.round = round;
+
+    if (!round) {
+      if (this.appState.activePool.length > 0) {
+        this.appState = { ...this.appState, activePool: [] };
+      }
+      return;
     }
 
-    const candidates = this.poolCandidates(inPool);
-    const room = Math.max(0, size - inPool.size);
-    if (room === 0 || candidates.length === 0) return;
-
-    const picked =
-      this.appState.settings.selectionMode === "sequential"
-        ? candidates.slice(0, room)
-        : shuffleArray(candidates).slice(0, room);
-
-    const added = picked.map((q) => ({
-      id: q.id,
-      // 学到一半被收回来的卡要接着之前的连对次数数，不能从 0 开始
-      consecutiveCorrect: this.progress[q.id]?.streak ?? 0,
-      hasEverMistaken: false,
-      hasBeenShown: false,
-      lastSelectedRound: 0,
-    }));
-    const addedQueue = shuffleArray(added).map((item) => ({ id: item.id }));
-    // 锁定模式下补进来的卡同样算进这一批：`picked` 是**新**进池的那几道，
-    // 得单独并进去（`inPool` 里那份是加之前的快照）。`poolCandidates` 已经
-    // 按「这一批之外的一律不要」筛过，所以这里并进去的必然还在这一批里。
-    const roundPoolIds = locked
-      ? [...inPool, ...picked.map((q) => q.id)]
-      : this.appState.roundPoolIds;
-    const poolAfterAdd = [...this.appState.activePool, ...added];
-    this.appState = {
-      ...this.appState,
-      activePool: poolAfterAdd,
-      // 锁定模式下**必须在 `poolCandidates` 之后再读一次**：这一批的 id 是那一步
-      // 刚写进 `appState` 的，`startLearning` 传进来的那份还是空的（早先的写法
-      // 在这里展开旧对象，把刚挑好的那批 id 又抹回 []，池子于是一道都进不来）。
-      roundPoolIds: locked ? roundPoolIds : this.appState.roundPoolIds,
-    };
-    // 新补进来的题加入本轮队列，同样随机出题
-    this.queue = [...this.queue, ...addedQueue];
+    const existing = new Map(
+      this.appState.activePool.map((item) => [item.id, item]),
+    );
+    const activePool = memoryRoundRemaining(round).map((id) => {
+      const previous = existing.get(id);
+      if (previous) return previous;
+      return {
+        id,
+        // 学到一半的卡要接着之前的连对次数数，不能从 0 开始
+        consecutiveCorrect: this.progress[id]?.streak ?? 0,
+        hasEverMistaken: false,
+        hasBeenShown: false,
+        lastSelectedRound: 0,
+      };
+    });
+    this.appState = { ...this.appState, activePool };
   }
 
   /**
-   * 打开「每轮限定题数」但这一轮还没记过这一批时，补一次快照。
+   * 往这一轮里补卡：**只在「每掌握一题就补一题」时补**（`lockRoundPool` 关掉）。
    *
-   * 正常路径是 `startLearning` 开轮时先清空、由 `fillActivePool` 一次挑满；
-   * 这里兜的是两种旧数据：开关是中途打开的（池子已经有卡，本轮就该以现有的为准）、
-   * 以及 `roundPoolIds` 被单独抹掉过。**已有真值就原样返回**，不重挑。
+   * 池子（= 轮里还没学完的卡）少于目标，就从候选里挑几道补进 `round.cardIds`。
+   * 目标是开轮时定下的，**补卡不会把目标顶高**；`createMemoryRound` 已经保证
+   * 「目标 ≤ 这一批的数量」，所以补卡只在「学出来一道、池子空出一个位」时发生。
    *
-   * `fresh` 说明这一批是**刚挑的、还没进池子**——调用方据此决定要不要把它们
-   * 算进「已在池中」（见 `fillActivePool`）。
+   * 补进来的卡同时排进本轮队列（否则它在池子里却永远不被抽到，队列一空本轮
+   * 就误判成结束了）。
+   *
+   * 打开「每轮限定题数」时不补：这一批就是这一批，学完为止。
    */
-  private lockRoundPoolInPlace(): { ids: string[]; fresh: boolean } {
-    const existing = this.roundPoolIds;
-    if (!this.memorySettings.lockRoundPool || existing.length > 0) {
-      return { ids: existing, fresh: false };
-    }
-    const picked = this.poolCandidates(new Set()).slice(
-      0,
-      Math.max(1, this.targetPerRound),
-    );
-    const ids = picked.map((q) => q.id);
-    // 立刻落进 `appState`：后面 `fillActivePool` 会展开它，再晚就丢了
-    this.appState = { ...this.appState, roundPoolIds: ids };
-    return { ids, fresh: true };
-  }
+  private refillRound(): void {
+    const round = this.round;
+    if (!round || this.memorySettings.lockRoundPool) return;
 
-  /** 本轮这一批（开关打开且已经挑过才有）。 */
-  private get roundPoolIds(): string[] {
-    return this.appState.roundPoolIds ?? [];
+    const room = round.goal - memoryRoundRemaining(round).length;
+    if (room <= 0) return;
+
+    const picked = this.poolCandidates(new Set(round.cardIds)).slice(0, room);
+    if (picked.length === 0) return;
+
+    this.round = addMemoryRoundCards(
+      round,
+      picked.map((q) => q.id),
+    );
+    this.queue = [
+      ...this.queue,
+      ...shuffleArray(picked.map((q) => ({ id: q.id }))),
+    ];
   }
 
   /**
    * 还能进池子的候选卡，按 `selectionMode` 排好序。
    *
-   * `exclude` 是「本轮这一批」与「已在池中」两拨 id 的并集。顺序模式直接取前几道，
-   * 所以在锁定模式下「挑哪 5 道」是可预期的：题库最前面的 5 道没学过的卡。
+   * `exclude` 是「已经在这一轮里」的 id（补卡时不该重复挑）。判据与首页的
+   * `learnableCount` 完全一致：没学过的，或者学到一半的（`state === "learning"`）。
    */
   private poolCandidates(exclude: ReadonlySet<string>): MemoryQuestion[] {
-    const candidates = this.questions.filter((q) => {
-      if (exclude.has(q.id)) return false;
-      const progress = this.progress[q.id];
-      // 没学过的，或者「学到一半但掉在池子外」的卡。后者是旧版「半轮被重置成
-      // 新一轮」留下的孤儿：它有 learning 进度、进不了「未学习」，又不在池子里，
-      // 不收回来就永远学不到。
-      return progress === undefined || progress.state === "learning";
-    });
+    const candidates = this.questions.filter(
+      (q) => !exclude.has(q.id) && this.isLearnable(q.id),
+    );
     return this.appState.settings.selectionMode === "sequential"
       ? candidates
       : shuffleArray(candidates);
@@ -1104,11 +1117,17 @@ export class MemorySession {
   }
 
   /**
-   * 学习模式：这一题学会了 → 记入本轮、补一道新题进活动池；
+   * 学习模式：这一题学会了 → 记进本轮（`round.masteredIds`）、补一道新题进池子；
    * 本轮掌握数达到目标就结束这一轮。
+   *
+   * 注意这里**不再自己数 `roundMastered`**：已掌握是谁就是 `round.masteredIds`，
+   * 计数由模型算（`memoryRoundDone`）。以前「计数 + 池子 + 这一批」是三份，
+   * 谁忘同步谁就出错。
    */
   private graduateInLearning(id: string): void {
-    this.roundMastered += 1;
+    if (this.round) {
+      this.round = markMemoryRoundMastered(this.round, id);
+    }
     this.shownIds = this.shownIds.filter((x) => x !== id);
     this.completed += 1;
 
@@ -1119,11 +1138,14 @@ export class MemorySession {
         this.appState.activePool.some((poolItem) => poolItem.id === item.id),
       );
 
-    this.fillActivePool();
-    // 本轮计数与补进来的新卡都要立刻落盘，否则紧接着关页面会少算一道
+    // 补卡（「每掌握一题就补一题」时才会补）：新卡进池子，同时排进本轮队列
+    // （`refillRound` 自己会把新卡排到队尾）
+    this.refillRound();
+    this.syncPoolToRound();
+    // 本轮进度与补进来的新卡都要立刻落盘，否则紧接着关页面会少算一道
     this.save();
 
-    if (this.roundMastered >= this.targetPerRound) {
+    if (this.round && isMemoryRoundComplete(this.round)) {
       this.finishLearningRound();
       return;
     }
@@ -1134,19 +1156,19 @@ export class MemorySession {
   /**
    * 结束本轮学习。
    *
-   * 两个「没学满目标就收尾」的原因要分开说（都是 `exhausted`）：
-   *   - `"bank"`：题库里没有更多新卡了（`exhausted = true` 的老说法）
-   *   - `"pool"`：本轮这一批（`lockRoundPool`）里的卡被搁下了——那几张连对
-   *     到一半就退出本轮，池子空了，而这一轮又不再补新题
+   * **正常情况下这里不会被提前调用**：`createMemoryRound` 保证「目标 ≤ 这一批
+   * 能学出来的数量」，所以学到目标就正好把池子学空。两个 `exhausted` 分支是
+   * 兜底（题库被改 / 这一批的卡在总览里被标熟 / 旧数据），分开说是因为文案不同：
+   *   - `"bank"`：题库里没有更多新卡了
+   *   - `"pool"`：本轮这一批（`lockRoundPool`）里的卡被搁下了
    *
-   * 两种都不能报成功，否则用户会看到绿色的「本轮学习完成 · 已掌握 2 / 5 题」；
-   * 文案也得分开，不然「题库里没有更多新卡片了」在第二种情况下是句假话。
+   * 两种都不能报成功，否则用户会看到绿色的「本轮学习完成 · 已掌握 2 / 5 题」。
    */
   private finishLearningRound(exhausted: false | "bank" | "pool" = false): void {
+    // 先把这一轮的两个数读出来，再把它丢掉（丢掉之后就只剩设置里的默认值了）
     const mastered = this.roundMastered;
     const target = this.targetPerRound;
-    this.roundMastered = 0;
-    this.roundGoal = 0;
+    this.round = null;
     this.run = "idle";
     this.currentQuestion = null;
     this.queue = [];
@@ -1158,10 +1180,9 @@ export class MemorySession {
         // 首页靠它把学习按钮降一档颜色（今天学过一轮了）
         learnedDay: studyDay(this.now),
       }),
-      activePool: this.endRoundPool(),
-      // 这一轮到此为止：这一批作废，下一轮开轮时重新挑（下面那句
-      // `startLearning` 也会清一次，这里清是为了「本轮结束」之后盘上不留旧快照）
-      roundPoolIds: [],
+      // 一轮结束，池子跟着轮一起空掉：还没学完的卡都还没学（`state` 是
+      // `undefined` 或 `learning`），下一轮开轮时照样会被挑中
+      activePool: [],
     };
     this.save();
 
@@ -1181,14 +1202,6 @@ export class MemorySession {
       "success",
     );
     maybePlaySuccessSound(this.globalSettings, this.deps.sound);
-  }
-
-  /** 一轮结束时：只在还没学完的题里保留活动池，学完就清空 */
-  private endRoundPool(): RuntimeState["activePool"] {
-    const stillUnlearned = this.questions.some(
-      (q) => this.progress[q.id] === undefined,
-    );
-    return stillUnlearned ? this.appState.activePool : [];
   }
 
   /** 排到队尾（学习流没连对够时用）。 */
@@ -1448,14 +1461,22 @@ export class MemorySession {
     const learned = this.completed;
     const run = this.run;
 
-    // 学习池可能因为题库已没有未学习卡片而自然耗尽，此时即使目标数
-    // 尚未达到，也要正常收尾并清掉本轮计数，不能留下一个下次会被重置的
-    //“半轮”状态。收尾文案按原因分开：`bank` = 题库里没新卡了，
-    // `pool` = 本轮这一批（`lockRoundPool`）里的卡被搁下了——锁定后不再补
-    // 新题，池子空了队列也就空了。这一条是兜底：常规路径上
-    // `graduateInLearning` 数到目标就自己收尾了。
-    if (run === "learning" && this.learningPool.length === 0) {
-      this.finishLearningRound(this.newCount === 0 ? "bank" : "pool");
+    // 学习轮池子空了（队列跟着空）就按「这一轮学完」收尾。
+    //
+    // 正常情况下**走不到这里**：目标 ≤ 这一批的数量（`createMemoryRound`），
+    // 所以学到目标那一下 `graduateInLearning` 就把本轮收了。这里兜的是
+    // 题库中途被改 / 这一批的卡在总览里被标熟 之类的外部变化。
+    if (run === "learning") {
+      if (this.appState.activePool.length === 0) {
+        this.finishLearningRound(this.newCount === 0 ? "bank" : "pool");
+        return;
+      }
+      // 队列空了但池子里还有卡：这一轮还没学完，别判成结束。
+      // 把池子重新排一遍（自愈），否则会停在「首页说有半轮、点进来没题」。
+      this.queue = shuffleArray(
+        this.appState.activePool.map((item) => ({ id: item.id })),
+      );
+      this.selectNext();
       return;
     }
 
@@ -1464,18 +1485,14 @@ export class MemorySession {
     this.showResult = false;
     this.selectedAnswers = [];
     this.queue = [];
-    // 复习轮的到期队列用完就丢掉，同时把学习轮的活动池放回来
-    // （复习期间它暂存在 `learningPool` 里）
+    // 复习轮的到期队列用完就丢掉；学习轮的池子由 `round` 重建，
+    // 所以这里不用（也没有）暂存位要放回来。
     //
     // 今天这一份复习进度**不清**（`state.memory.review`）：它是「今天复习过哪些
     // 卡」这个事实，不是「本轮还在跑」这个状态。清掉的话「答完最后一道 → 收尾
     // 文案里数着刚才那几道 → 进度条却已经归零」，也说不清今天到底复习了几道。
     // 它自己会在跨过凌晨 5 点（学习日变了）被净化掉。
-    this.appState = {
-      ...this.appState,
-      activePool: this.appState.learningPool ?? [],
-      learningPool: undefined,
-    };
+    this.appState = { ...this.appState, activePool: [] };
     this.save();
     this.deps.toast(
       run === "reviewing" ? "本轮复习完成" : "本轮学习完成",
@@ -1559,10 +1576,10 @@ export class MemorySession {
         settings: this.memorySettings,
       },
     });
-    // 本轮计数是会话字段，换掉 appState 不会自动清：留着会让下一轮从旧的
-    // 「已掌握 X / Y」接着数，只学几道就提前结束本轮；复习进度条的两个数同理
-    this.roundMastered = 0;
-    this.roundGoal = 0;
+    // 本轮是会话状态，换掉 appState 不会自动清：留着会让下一轮从旧的
+    // 「已掌握 X / Y」接着数，只学几道就提前结束本轮；复习进度条的两个数同理。
+    // 现在「清一轮」只有一句 `round = null`（以前要记得清四个字段）。
+    this.round = null;
     this.reviewedIds = [];
     this.reviewTotal = 0;
     this.exitSession();
@@ -1719,10 +1736,9 @@ export class MemorySession {
       }),
     );
     // 备份里不带「本轮」的短周期状态（见 AGENTS.md），所以导入后必须按新一轮
-    // 重新开始：否则旧的 roundMastered 会叠到导入的进度上，几道就结束本轮；
+    // 重新开始：否则旧的一轮会叠到导入的进度上，几道就结束本轮；
     // 复习进度条的两个数也是「本轮」状态，一起归零
-    this.roundMastered = 0;
-    this.roundGoal = 0;
+    this.round = null;
     this.reviewedIds = [];
     this.reviewTotal = 0;
     this.exitSession();
@@ -1742,12 +1758,8 @@ export class MemorySession {
       settings: this.appState.settings,
       ui: this.appState.ui,
       memory: this.appState.memory,
-      roundMastered: this.roundMastered,
-      roundGoal: this.roundGoal,
-      // 复习期间暂存的学习轮活动池
-      learningPool: this.appState.learningPool,
-      // 本轮这一批：不带上就等于每次保存都把这一轮解封
-      roundPoolIds: this.appState.roundPoolIds,
+      // 学习轮：目标 / 这一批 / 已掌握一起存（拆开存就会各自漂移）
+      round: this.round ?? undefined,
     });
   }
 
