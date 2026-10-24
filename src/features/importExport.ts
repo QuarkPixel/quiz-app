@@ -403,6 +403,41 @@ function fromBase64url(str: string): Uint8Array {
 
 // ── 公开 API ──────────────────────────────────────────────────────────────────
 
+// ── 两个分支共用的字段编码与收尾 ────────────────────────────────────────────
+
+/**
+ * 按库设置 → 紧凑数组（v8 布局）。
+ *
+ * 两个模式分支都用它：以前各写一份，加一个字段就得记得改两处，
+ * 而漏掉的那一处不会报错——只会在导入之后「设置没回来」。
+ * 对应的解码在 `decodeBankSettings`。
+ */
+function encodeBankSettings(settings: BankSettings): unknown[] {
+  return [
+    settings.activePoolSize,
+    settings.correctStreakToMaster,
+    settings.correctStreakAfterMistake,
+    settings.selectionMode,
+    settings.notifyNewQuestionInPool ? 1 : 0,
+  ];
+}
+
+/** UI 偏好 → 紧凑数组。 */
+function encodeUiPreferences(ui: UiPreferences): unknown[] {
+  return [ui.progressFocused ? 1 : 0, ui.showPool ? 1 : 0];
+}
+
+/** 紧凑数组 → `${hash}.${Base64url(deflate(json))}`：导出的唯一收尾。 */
+async function compressToCode(
+  hash: string,
+  compact: unknown[],
+): Promise<string> {
+  const json = JSON.stringify(compact);
+  const bytes = new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>;
+  const compressed = await deflateRaw(bytes);
+  return `${hash}.${toBase64url(compressed)}`;
+}
+
 /**
  * 将学习进度导出为紧凑编码字符串（异步，因为压缩是异步的）
  * 返回格式：{16字符hash}.{Base64url压缩数据}
@@ -438,26 +473,12 @@ export async function exportProgress(
     encodeActivePool(state.activePool, idToIndex),
     state.currentRound,
     filterCode,
-    [
-      state.settings.activePoolSize,
-      state.settings.correctStreakToMaster,
-      state.settings.correctStreakAfterMistake,
-      state.settings.selectionMode,
-      state.settings.notifyNewQuestionInPool ? 1 : 0,
-    ],
-    [
-      state.ui.progressFocused ? 1 : 0,
-      state.ui.showPool ? 1 : 0,
-    ],
+    encodeBankSettings(state.settings),
+    encodeUiPreferences(state.ui),
     encodeMasteredMistakesBitmap(state, exportedMasteredIds),
   ];
 
-  const json = JSON.stringify(compact);
-  const bytes = new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>;
-  const compressed = await deflateRaw(bytes);
-  const encoded = toBase64url(compressed);
-
-  return `${hash}.${encoded}`;
+  return compressToCode(hash, compact);
 }
 
 /** 记忆模式的紧凑格式（见文件头 v9 说明）。 */
@@ -499,14 +520,8 @@ async function encodeMemoryProgress(
     [],
     state.currentRound,
     0,
-    [
-      state.settings.activePoolSize,
-      state.settings.correctStreakToMaster,
-      state.settings.correctStreakAfterMistake,
-      state.settings.selectionMode,
-      state.settings.notifyNewQuestionInPool ? 1 : 0,
-    ],
-    [state.ui.progressFocused ? 1 : 0, state.ui.showPool ? 1 : 0],
+    encodeBankSettings(state.settings),
+    encodeUiPreferences(state.ui),
     "",
     [
       progress,
@@ -521,12 +536,7 @@ async function encodeMemoryProgress(
     ],
   ];
 
-  const json = JSON.stringify(compact);
-  const bytes = new TextEncoder().encode(json) as Uint8Array<ArrayBuffer>;
-  const compressed = await deflateRaw(bytes);
-  const encoded = toBase64url(compressed);
-
-  return `${hash}.${encoded}`;
+  return compressToCode(hash, compact);
 }
 
 /**
