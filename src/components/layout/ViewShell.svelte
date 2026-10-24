@@ -265,19 +265,33 @@
                     活动池那一列。
 
                     宽度由网格轨道做 0 → 280px 的过渡，内容**靠右钉住**（`ml-auto`）：
-                    轨道比内容窄的时候，多出来的部分被 `overflow-hidden` 从**左边**裁掉，
-                    所以面板看起来是从窗口右缘「推」进来的；反过来若让它靠左，
-                    裁掉的会是右边，面板就成了「凭空长出来的一块」。
+                    轨道比内容窄时，内容会溢出到轨道右边——**这里刻意不写
+                    `overflow-hidden`**。
 
-                    内层宽度就是 280px（含 `pl-8`，box-sizing 是 border-box），
-                    与轨道等宽，不会溢出到列外面去。
+                    写了 `overflow-hidden` 的话，轨道从 0 变宽就等于「窗口慢慢变宽」，
+                    池子是被一条边一点点擦出来的（`width: 0 → 100%` 的闪现感）。
+                    不裁的话池子是一整块在动：轨道变宽把它带着往左走 140px，再叠上
+                    这里那 40px 的自身位移和淡入，相对主列也是「从右边推进来」的。
+
+                    溢出到屏幕外的部分由 `#app` 的 `overflow: hidden` 兜住，
+                    不会撑出横向滚动条；收起时 `pointer-events: none`，免得那块
+                    看不见的区域抢走点击。
                 -->
                 <aside
-                    class="pool-edge-mask flex min-h-0 min-w-0 flex-col overflow-hidden"
+                    class="pool-rail flex min-h-0 min-w-0 flex-col"
+                    style:transform={asideOpen
+                        ? "translateX(0)"
+                        : "translateX(40px)"}
+                    style:opacity={asideOpen ? 1 : 0}
+                    style:pointer-events={asideOpen ? undefined : "none"}
                     aria-hidden={!asideOpen}
                 >
+                    <!-- 渐变 mask 挂在**内层**这 280px 上，不挂在 aside 上：
+                         aside 收起时宽度是 0，`mask-image` 会跟着缩成 0 宽并按
+                         `repeat` 平铺出去，过渡中间会出现条纹。内层宽度恒定，
+                         mask 就恒定。 -->
                     <div
-                        class="ml-auto flex min-h-0 w-[280px] shrink-0 flex-col pl-8"
+                        class="pool-edge-mask ml-auto flex min-h-0 w-[280px] shrink-0 flex-col pl-8"
                     >
                         {@render aside?.()}
                     </div>
@@ -325,8 +339,37 @@
 </div>
 
 <style>
-    /* 宽屏并排时给活动池左侧加渐变 mask，柔化裁切边。
-       窄屏折进滚动区时无需 mask（PoolPanel 自身顶 / 底有渐变）。
+    /*
+     * 池子进出的动效：自身位移 + 淡入淡出，**不做裁剪**。
+     *
+     * 两段运动叠在一起：
+     *   - 轨道变宽（`.session-grid` 的 `grid-template-columns`）把主列让开，
+     *     池子被一起带过去 140px（= 280px 的一半，正好是主列让出的距离）；
+     *   - 这里再叠 40px 的自身位移 + 0 → 1 的透明度。
+     *
+     * 只有第一段的话，池子和主列是「焊在一起」平移的，看起来只是页面在动；
+     * 补上第二段，池子相对主列也在动，才是「从右边推进来」。
+     *
+     * **进出用同一条曲线**（`--ease-emphasized`，先快后慢）：一段运动在最后一刻
+     * 必须是减速的，否则收尾就是「急刹」。展开落位收得住，收起也一样收得住——
+     * 反过来（先慢后快）看着就是慢慢挪、最后猛地冲过去再顿一下。
+     */
+    .pool-rail {
+        transition:
+            transform 450ms var(--ease-emphasized),
+            opacity 300ms var(--ease-emphasized);
+    }
+
+    /* 减弱动效时直接跳到终点（含主列让位那条，它的时长写在 Tailwind 类上） */
+    @media (prefers-reduced-motion: reduce) {
+        .pool-rail,
+        .session-grid {
+            transition-duration: 0ms;
+        }
+    }
+
+    /* 宽版面并排时给活动池左侧加渐变 mask，柔化它与主列的接缝。
+       窄版面没有这一列（换成底部抽屉了），所以只在宽断点里挂。
        64rem 这个断点与 `@/config/layout` 的 DESKTOP_LAYOUT_MIN_WIDTH 是同一个
        （CSS 的 @media 条件里不能引用 CSS 变量，所以只能各写一次）。 */
     @media (min-width: 64rem) {
