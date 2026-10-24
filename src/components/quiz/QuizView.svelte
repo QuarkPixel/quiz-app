@@ -1,18 +1,17 @@
 <script lang="ts">
     import { toastStore } from "@/features/toast.svelte";
-    import { MediaQuery } from "svelte/reactivity";
     import FlashContainer from "./FlashContainer.svelte";
     import ReviewView from "../review/ReviewView.svelte";
     import Settings from "../settings/Settings.svelte";
     import PoolPanel from "./PoolPanel.svelte";
     import ProgressBar from "./ProgressBar.svelte";
-    import QuestionArea from "./QuestionArea.svelte";
+    import QuestionBody from "./QuestionBody.svelte";
+    import QuestionMeta from "./QuestionMeta.svelte";
+    import QuestionActions from "./QuestionActions.svelte";
     import ViewShell from "../layout/ViewShell.svelte";
     import ToolbarIconButton from "../layout/ToolbarIconButton.svelte";
     import ImportProgressDialog from "../settings/ImportProgressDialog.svelte";
 
-    import { cn } from "$lib/utils";
-    import { COMPACT_LAYOUT_QUERY } from "@/config";
     import IconBook2 from "@tabler/icons-svelte/icons/book-2";
     import IconStack2 from "@tabler/icons-svelte/icons/stack-2";
     import IconSettings from "@tabler/icons-svelte/icons/settings";
@@ -29,6 +28,14 @@
     } from "@/features/userActivity.svelte";
     import { createSoundPlayer } from "@/sound";
 
+    /**
+     * 刷题模式的装配层：只做「把哪几块放进 `ViewShell` 的哪个槽」。
+     *
+     * 版面（哪块固定、哪块滚、池子在哪）全在 `ViewShell` 里，题型相关的三块
+     * （`QuestionMeta` / `QuestionBody` / `QuestionActions`）各自只负责自己那一行。
+     * 这个文件以前是「模板 + 版面 + 交互」三合一大杂烩，两个模式各抄一份，
+     * 于是记忆模式漏了遮罩、窄屏的池子高度算了两遍。
+     */
     let { bank }: { bank: QuizBank } = $props();
 
     let flashContainer: FlashContainer;
@@ -48,11 +55,6 @@
     // dialog 开关：纯 UI flag，留在容器局部
     let showReview = $state(false);
     let showSettings = $state(false);
-    /** 窄版面：答题区与活动池改成上下堆叠（口径见 `@/config/layout`） */
-    const compactLayout = new MediaQuery(COMPACT_LAYOUT_QUERY);
-
-    let compactPoolContent = $state<HTMLDivElement | null>(null);
-    let compactPoolHeight = $state(0);
 
     const uiActions = {
         openReview: () => {
@@ -91,23 +93,6 @@
         if (open !== untrack(() => userActivity.overlayOpen)) {
             userActivity.setOverlay(OVERLAY_KEYS.settings, open);
         }
-    });
-
-    // 窄版面时活动池是「折叠展开」而不是「并排」：高度得量出来才能做动画
-    $effect(() => {
-        if (!compactPoolContent) return;
-
-        const content = compactPoolContent;
-        const updateCompactPoolHeight = (): void => {
-            compactPoolHeight = content.scrollHeight;
-        };
-
-        updateCompactPoolHeight();
-
-        const resizeObserver = new ResizeObserver(updateCompactPoolHeight);
-        resizeObserver.observe(content);
-
-        return () => resizeObserver.disconnect();
     });
 </script>
 
@@ -149,9 +134,15 @@
     />
 {/snippet}
 
-{#snippet questionColumn()}
-    <QuestionArea />
+{#snippet header()}
+    <QuestionMeta />
+{/snippet}
 
+{#snippet actions()}
+    <QuestionActions />
+{/snippet}
+
+{#snippet progress()}
     <ProgressBar
         stats={session.stats}
         learningSegments={session.learningSegments}
@@ -160,61 +151,21 @@
     />
 {/snippet}
 
-<ViewShell scrollTopButton left={leftControls} right={rightControls}>
-    {#if compactLayout.current}
-        <div class="my-auto flex w-full flex-col gap-6">
-            <div class="flex min-w-0 flex-col gap-5">
-                {@render questionColumn()}
-            </div>
+{#snippet pool()}
+    <PoolPanel />
+{/snippet}
 
-            <aside
-                class={cn(
-                    "overflow-hidden transition-[max-height,opacity,margin,transform] duration-300 ease-emphasized",
-                    session.appState.ui.showPool
-                        ? "mt-0 opacity-100 translate-y-0"
-                        : "-mt-2 opacity-0 -translate-y-2 pointer-events-none",
-                )}
-                style={`max-height: ${
-                    session.appState.ui.showPool ? compactPoolHeight : 0
-                }px;`}
-                aria-hidden={!session.appState.ui.showPool}
-            >
-                <div bind:this={compactPoolContent} class="flex w-full flex-col">
-                    <PoolPanel />
-                </div>
-            </aside>
-        </div>
-    {:else}
-        <div
-            class={cn(
-                "my-auto grid w-full items-stretch justify-center transition-[grid-template-columns,grid-template-rows,gap] duration-[450ms] ease-emphasized",
-                "grid-cols-[minmax(0,42rem)_0px] grid-rows-[auto_0px] gap-0",
-                session.appState.ui.showPool &&
-                    "grid-cols-[minmax(0,42rem)_280px]",
-            )}
-        >
-            <div class="flex w-full min-w-0 flex-col gap-5">
-                {@render questionColumn()}
-            </div>
-
-            <aside
-                class={cn(
-                    "pool-edge-mask min-w-0 overflow-hidden",
-                    "row-start-1 col-start-2 flex justify-end",
-                )}
-                aria-hidden={!session.appState.ui.showPool}
-            >
-                <div
-                    class={cn(
-                        "flex h-full w-full flex-col",
-                        "h-[min(70vh,520px)] w-[280px] shrink-0 pl-8",
-                    )}
-                >
-                    <PoolPanel />
-                </div>
-            </aside>
-        </div>
-    {/if}
+<ViewShell
+    {header}
+    {actions}
+    {progress}
+    aside={pool}
+    asideOpen={session.appState.ui.showPool}
+    left={leftControls}
+    right={rightControls}
+    scrollTopButton
+>
+    <QuestionBody />
 </ViewShell>
 
 <Settings bind:open={showSettings} hash={bank.hash} bankName={bank.name} />
@@ -231,26 +182,3 @@
     onCancel={() => session.cancelImport()}
     onConfirm={() => session.commitImport()}
 />
-
-<style>
-    /* 大屏左右布局时给活动池左侧加渐变 mask，柔化裁切边。
-       小屏上下布局时无需 mask（PoolPanel 自身顶/底有渐变）。
-       64rem 这个断点与 `@/config/layout` 的 DESKTOP_LAYOUT_MIN_WIDTH 是同一个
-       （CSS 的 @media 条件里不能引用 CSS 变量，所以只能各写一次）。 */
-    @media (min-width: 64rem) {
-        .pool-edge-mask {
-            -webkit-mask-image: linear-gradient(
-                to right,
-                transparent 0,
-                black 32px,
-                black 100%
-            );
-            mask-image: linear-gradient(
-                to right,
-                transparent 0,
-                black 32px,
-                black 100%
-            );
-        }
-    }
-</style>

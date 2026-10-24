@@ -15,7 +15,9 @@
     import type { Bank } from "./source/types";
     import { provideRouter, router } from "./features/routing/context";
     import { watchPageVisibility } from "./features/userActivity.svelte";
-    import { IconFishBoneFilled } from "@tabler/icons-svelte";
+    import SwapFade from "./components/shared/SwapFade.svelte";
+    import { SWAP_MS } from "./config";
+    import IconFishBoneFilled from "@tabler/icons-svelte/icons/fish-bone-filled";
 
     const source = createSource();
     provideQuizSource(source);
@@ -45,36 +47,53 @@
     const memoryBank = $derived(
         activeBank?.mode === "memory" ? activeBank : null,
     );
+
+    /**
+     * 「换一屏」的标识：换题库 / 换模式 / 回到空状态都算。
+     *
+     * 它同时替掉了原来的 `{#key bank.hash}`——key 变了就整棵子树重建（新 session），
+     * 只是现在这次重建是带着缩放 + 淡入淡出的（`SwapFade`），不再硬切。
+     */
+    const viewKey = $derived(
+        activeBank ? `${activeBank.mode}:${activeBank.hash}` : "empty",
+    );
 </script>
 
 {#snippet headerStart()}
     <HeaderSidebarTrigger />
 {/snippet}
 
+{#snippet bankView()}
+    {#if quizBank}
+        <QuizView bank={quizBank} />
+    {:else if memoryBank}
+        <MemoryView bank={memoryBank} />
+    {:else}
+        <main class="flex flex-1 flex-col items-center justify-center px-6">
+            <div class="flex max-w-md flex-col items-center gap-4 text-center">
+                <IconFishBoneFilled
+                    size={64}
+                    class="text-muted-foreground"
+                />
+                <p class="text-foreground text-lg font-medium">还没有题库</p>
+                <p class="text-muted-foreground text-sm leading-relaxed">
+                    点击左侧栏「题库」分组右上角的导入按钮，从 JSON 文件开始。
+                </p>
+            </div>
+        </main>
+    {/if}
+{/snippet}
+
 {#snippet contentBody()}
     <AppShell {headerStart}>
-        {#if quizBank}
-            {#key quizBank.hash}
-                <QuizView bank={quizBank} />
-            {/key}
-        {:else if memoryBank}
-            {#key memoryBank.hash}
-                <MemoryView bank={memoryBank} />
-            {/key}
-        {:else}
-            <main class="flex flex-1 flex-col items-center justify-center px-6">
-                <div class="flex max-w-md flex-col items-center gap-4 text-center">
-                    <IconFishBoneFilled
-                        size={64}
-                        class="text-muted-foreground"
-                    />
-                    <p class="text-foreground text-lg font-medium">还没有题库</p>
-                    <p class="text-muted-foreground text-sm leading-relaxed">
-                        点击左侧栏「题库」分组右上角的导入按钮，从 JSON 文件开始。
-                    </p>
-                </div>
-            </main>
-        {/if}
+        <SwapFade
+            seq={viewKey}
+            duration={SWAP_MS}
+            class="flex min-h-0 flex-1 flex-col"
+            itemClass="flex min-h-0 flex-1 flex-col"
+        >
+            {@render bankView()}
+        </SwapFade>
     </AppShell>
 {/snippet}
 
