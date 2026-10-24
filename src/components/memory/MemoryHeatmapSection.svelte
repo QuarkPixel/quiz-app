@@ -1,6 +1,7 @@
 <script lang="ts">
     import { useMemorySession } from "@/features/memory/context";
     import { reviewProgress } from "@/features/memory/algorithm";
+    import { memoryStatusLabel } from "@/features/memory/status";
     import type { MemoryProgress } from "@/types";
     import SharedHeatmapSection, {
         type HeatmapCell,
@@ -35,9 +36,7 @@
     }
 
     function describe(item: MemoryProgress | undefined): string {
-        if (!item) return "未学习";
-        if (item.state === "mastered") return "已掌握";
-        if (item.state === "learning") return "学习中";
+        if (!item || item.state !== "reviewing") return memoryStatusLabel(item);
         return `复习中 ${item.level - 1}/${threshold}`;
     }
 

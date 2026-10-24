@@ -1,6 +1,7 @@
 <script lang="ts">
     import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import { startOfDay } from "@/features/memory/algorithm";
+    import { memoryStatusLabel } from "@/features/memory/status";
     import type { MemoryProgress } from "@/types";
     import { cn } from "$lib/utils";
 
@@ -32,9 +33,9 @@
      *   不再重复「复习中」这个词，也不显示「3/5」这种轮次进度。
      */
     function describeStatus(progress: MemoryProgress | undefined): string {
-        if (!progress) return "未学习";
-        if (progress.state === "mastered") return "已掌握";
-        if (progress.state === "learning") return "学习中";
+        if (!progress || progress.state !== "reviewing") {
+            return memoryStatusLabel(progress);
+        }
         const days = Math.round((startOfDay(progress.nextDue) - today) / 86_400_000);
         if (days < 0) return `逾期 ${-days} 天`;
         if (days === 0) return "今天复习";
