@@ -7,11 +7,9 @@
  * 副作用（flash / toast）通过构造时注入的 deps 调用，方便单测 mock。
  */
 
-import { writeText } from "clipboard-polyfill";
 import { tick } from "svelte";
 import type {
   ActivePoolItem,
-  GlobalSettings,
   Question,
   QuestionType,
   RuntimeState,
@@ -44,46 +42,24 @@ import {
   shuffle,
   type FilterChangeActivePoolPolicy,
 } from "@/features/quiz";
-import {
-  copyProgressToClipboard,
-  parseImportedProgress,
-  readProgressFromClipboard,
-} from "@/features/quiz/progressActions";
-import {
-  COPY_STATUS_RESET_MS,
-  EXPORT_STATUS_ERROR_RESET_MS,
-  EXPORT_STATUS_SUCCESS_RESET_MS,
-} from "@/config";
 import { QUESTION_TYPES } from "../types/registry";
-import type { QuestionTypeDef } from "../types/types";
 import {
   QuestionCopyPattern,
   type QuestionCopyContext,
   type ShuffledOption,
 } from "../types/types";
-import { maybePlayAnswerSound, maybePlaySuccessSound } from "@/sound";
-import type { SoundPlayer } from "@/sound/types";
-import type { Toast } from "@/features/toast.svelte";
-import {
-  applySoundEnabledPreference,
-  toggleAutoNextPreference,
-} from "@/features/globalSettingsActions";
+import { maybePlayAnswerSound } from "@/sound";
 import type {
   CopyQuestionOptions,
   CopyQuestionResult,
-  CopyQuestionStatus,
 } from "@/quiz/session/types";
+import {
+  ProgressSessionBase,
+  type SessionDeps,
+} from "@/quiz/session/ProgressSessionBase.svelte";
 
-export type ExportStatus = "idle" | "copied" | "error";
-
-export interface QuizSessionDeps {
-  /** 提交答案后触发全屏闪烁 */
-  flash(isCorrect: boolean): void;
-  /** 显示 toast 提示 */
-  toast: Toast;
-  /** 播放音效 */
-  sound: SoundPlayer;
-}
+/** 两个模式共用的 deps 形状，保留旧名字方便调用方按模式引用。 */
+export type QuizSessionDeps = SessionDeps;
 
 const EMPTY_COPY_CONTEXT: QuestionCopyContext = {
   shuffledOptions: [],
@@ -91,7 +67,7 @@ const EMPTY_COPY_CONTEXT: QuestionCopyContext = {
   blankAnswerInputs: [],
 };
 
-export class QuizSession {
+export class QuizSession extends ProgressSessionBase {
   readonly bank: QuizBank;
   // 这些 readonly 字段在 constructor body 中赋值；TS 静态分析认为它们在
   // 下面的 $derived 字段初始化时 "尚未赋值"，但 $derived 表达式是惰性的
@@ -110,12 +86,7 @@ export class QuizSession {
   showResult = $state(false);
   isCorrect = $state(false);
 
-  // === 导入导出 state ===
-  exportStatus: ExportStatus = $state("idle");
-  importConfirmText: string | null = $state(null);
-
-  // === 复制当前题目 state ===
-  copyQuestionStatus: CopyQuestionStatus = $state("idle");
+  // === 筛选变更确认 / 新题预览 state ===
   pendingFilterType: QuestionType | "all" | null = $state(null);
   isPreviewingNewQuestion = $state(false);
 
@@ -131,7 +102,6 @@ export class QuizSession {
    * 不是 $state —— 只是临时引用，不参与 reactivity。
    */
   private preSubmitState: RuntimeState | null = null;
-  private copyQuestionResetTimer: ReturnType<typeof setTimeout> | null = null;
 
   // === derived ===
   stats = $derived(getStats(this.questions, this.appState));
@@ -163,9 +133,10 @@ export class QuizSession {
 
   constructor(
     bank: QuizBank,
-    private readonly deps: QuizSessionDeps,
-    private readonly globalSettingsRef: GlobalSettingsStore = globalSettingsStore,
+    deps: QuizSessionDeps,
+    globalSettingsRef: GlobalSettingsStore = globalSettingsStore,
   ) {
+    super(deps, globalSettingsRef);
     this.bank = bank;
     this.questions = bank.questions;
     this.hash = bank.hash;
@@ -173,9 +144,18 @@ export class QuizSession {
     this.appState = loadRuntimeState(this.questions, this.hash);
   }
 
-  /** 全局设置（跨题库共享，和侧边栏「全局设置」是同一个实例）。 */
-  get globalSettings(): GlobalSettings {
-    return this.globalSettingsRef.value;
+  // ── ProgressSessionBase 的四个挂钩 ──────────────────────────────────
+
+  protected get sessionHash(): string {
+    return this.hash;
+  }
+
+  protected get sessionQuestions(): readonly Question[] {
+    return this.questions;
+  }
+
+  protected get sessionState(): RuntimeState {
+    return this.appState;
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -393,29 +373,7 @@ export class QuizSession {
     this.initialize();
   }
 
-  // ── 全局设置（写入共享 store） ────────────────────────────────────
-
-  toggleAutoNext(): void {
-    toggleAutoNextPreference(this.globalSettingsRef, this.deps.toast);
-  }
-
-  setAutoSubmitOnSelection(next: boolean): void {
-    if (this.globalSettings.autoSubmitOnSelection === next) return;
-    this.globalSettingsRef.update({ autoSubmitOnSelection: next });
-  }
-
-  toggleSound(): void {
-    this.setSoundEnabled(!this.globalSettings.soundEnabled);
-  }
-
-  setSoundEnabled(next: boolean): void {
-    applySoundEnabledPreference(
-      this.globalSettingsRef,
-      next,
-      this.deps.toast,
-      this.deps.sound,
-    );
-  }
+  // ── 模式内 UI 开关（全局设置开关在基类） ────────────────────────────
 
   toggleProgressFocus(): void {
     if (this.stats.learning === 0) return;
@@ -452,13 +410,13 @@ export class QuizSession {
   ): Promise<CopyQuestionResult> {
     if (!this.currentQuestion || !this.currentTypeDef) return "unavailable";
 
-    return this.copyQuestionInternal(
+    return this.copyToClipboard(
       this.currentQuestion,
       this.currentTypeDef,
       this.getCurrentQuestionCopyContext(),
       options,
       pattern ?? this.getCurrentQuestionCopyPattern(),
-      (status) => this.setCopyQuestionStatus(status),
+      true,
     );
   }
 
@@ -472,13 +430,13 @@ export class QuizSession {
     const typeDef = QUESTION_TYPES[question.type];
     if (!typeDef) return "unavailable";
 
-    return this.copyQuestionInternal(
+    return this.copyToClipboard(
       question,
       typeDef,
       EMPTY_COPY_CONTEXT,
       options,
       pattern,
-      (status) => this.setCopyQuestionStatus(status),
+      true,
     );
   }
 
@@ -491,12 +449,13 @@ export class QuizSession {
     const typeDef = QUESTION_TYPES[question.type];
     if (!typeDef) return "unavailable";
 
-    return this.copyQuestionInternal(
+    return this.copyToClipboard(
       question,
       typeDef,
       EMPTY_COPY_CONTEXT,
       options,
       pattern,
+      false,
     );
   }
 
@@ -540,61 +499,8 @@ export class QuizSession {
     this.selectNext();
   }
 
-  async exportProgress(): Promise<void> {
-    if (this.exportStatus !== "idle") return;
-    const result = await copyProgressToClipboard(
-      this.appState,
-      this.hash,
-      this.questions,
-    );
-    if (result.ok) {
-      this.exportStatus = "copied";
-      setTimeout(
-        () => (this.exportStatus = "idle"),
-        EXPORT_STATUS_SUCCESS_RESET_MS,
-      );
-      this.deps.toast(
-        "进度已复制到剪贴板",
-        "粘贴到任意位置即可备份。",
-        "success",
-      );
-      maybePlaySuccessSound(this.globalSettings, this.deps.sound);
-    } else {
-      this.exportStatus = "error";
-      setTimeout(
-        () => (this.exportStatus = "idle"),
-        EXPORT_STATUS_ERROR_RESET_MS,
-      );
-      this.deps.toast("导出失败", result.error, "destructive");
-    }
-  }
-
-  async startImport(): Promise<void> {
-    const result = await readProgressFromClipboard();
-    if (!result.ok) {
-      this.deps.toast("无法导入", result.error, "destructive");
-      return;
-    }
-    this.importConfirmText = result.text;
-  }
-
-  cancelImport(): void {
-    this.importConfirmText = null;
-  }
-
-  async commitImport(): Promise<void> {
-    if (!this.importConfirmText) return;
-    const text = this.importConfirmText;
-    this.importConfirmText = null;
-    const parsed = await parseImportedProgress(text, this.hash, this.questions);
-    if (!parsed.ok) {
-      this.deps.toast("导入失败", parsed.error, "destructive");
-      return;
-    }
-    this.applyImportedState(parsed.state);
-    this.deps.toast("进度已导入", "已覆盖当前进度。", "success");
-    maybePlaySuccessSound(this.globalSettings, this.deps.sound);
-  }
+  // 导入导出（exportProgress / startImport / commitImport）在基类里，
+  // 这里只需要 `applyImportedState`：把备份变成刷题流的运行时状态。
 
   // ────────────────────────────────────────────────────────────────
   // 内部
@@ -610,28 +516,9 @@ export class QuizSession {
     this.save({ updateDefaultSettings: true });
   }
 
-  private resetCopyQuestionStatus(): void {
-    if (this.copyQuestionResetTimer) {
-      clearTimeout(this.copyQuestionResetTimer);
-      this.copyQuestionResetTimer = null;
-    }
-    this.copyQuestionStatus = "idle";
-  }
-
   private clearNewQuestionPreviewState(): void {
     this.isPreviewingNewQuestion = false;
     this.newQuestionQueue = [];
-  }
-
-  private setCopyQuestionStatus(status: CopyQuestionStatus): void {
-    if (this.copyQuestionResetTimer) {
-      clearTimeout(this.copyQuestionResetTimer);
-    }
-    this.copyQuestionStatus = status;
-    this.copyQuestionResetTimer = setTimeout(() => {
-      this.copyQuestionStatus = "idle";
-      this.copyQuestionResetTimer = null;
-    }, COPY_STATUS_RESET_MS);
   }
 
   private getCurrentQuestionCopyContext(): QuestionCopyContext {
@@ -647,40 +534,6 @@ export class QuizSession {
     return this.isCorrect
       ? QuestionCopyPattern.QuestionWithAnswer
       : QuestionCopyPattern.QuestionWithMyAnswerAndAnswer;
-  }
-
-  private async copyQuestionInternal(
-    question: Question,
-    typeDef: QuestionTypeDef,
-    context: QuestionCopyContext,
-    options: CopyQuestionOptions,
-    pattern: QuestionCopyPattern,
-    onStatus?: (status: CopyQuestionStatus) => void,
-  ): Promise<CopyQuestionResult> {
-    const text = typeDef.formatCopyText(question, context, pattern);
-
-    try {
-      await writeText(text);
-      onStatus?.("copied");
-      if (options.announce) {
-        this.deps.toast(
-          "题目已复制到剪贴板",
-          "可直接粘贴到任意位置。",
-          "success",
-        );
-      }
-      return "copied";
-    } catch {
-      onStatus?.("error");
-      if (options.announce) {
-        this.deps.toast(
-          "复制失败",
-          "当前浏览器不允许写入剪贴板。",
-          "destructive",
-        );
-      }
-      return "error";
-    }
   }
 
   private markCurrentQuestionAsShown(): void {

@@ -102,17 +102,29 @@ export function shouldRequeueActivePoolItem(item: ActivePoolItem): boolean {
   return item.consecutiveCorrect === 0 && !item.hasEverMistaken;
 }
 
-/** 创建默认的存储状态 */
-function createDefaultStoredState(): StoredState {
+/**
+ * 创建一个「空」的存储状态。
+ *
+ * 默认值只有这一处：以前 `MemorySession` 里还有一份手抄的（字段一样、默认设置
+ * 取值不同），加字段时两边就得记得一起改。现在统一从这里取。
+ */
+export function createEmptyStoredState(
+  settings: BankSettings = loadDefaultSettings(),
+): StoredState {
   return {
     masteredIds: [],
     masteredMistakes: {},
     activePool: [],
     currentRound: 0,
     filterType: "all",
-    settings: loadDefaultSettings(),
+    settings,
     ui: createDefaultUiPreferences(),
   };
+}
+
+/** 创建默认的存储状态 */
+function createDefaultStoredState(): StoredState {
+  return createEmptyStoredState();
 }
 
 /**

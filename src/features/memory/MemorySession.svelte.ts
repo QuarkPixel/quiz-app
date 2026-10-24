@@ -29,7 +29,6 @@
  */
 
 import type {
-  GlobalSettings,
   MemoryBankSettings,
   MemoryProgress,
   MemoryProgressMap,
@@ -85,7 +84,16 @@ import type {
   CopyQuestionOptions,
   CopyQuestionResult,
 } from "@/quiz/session/types";
-import { buildRuntimeState, loadStoredState, saveState } from "@/store";
+import {
+  ProgressSessionBase,
+  type SessionDeps,
+} from "@/quiz/session/ProgressSessionBase.svelte";
+import {
+  buildRuntimeState,
+  createEmptyStoredState,
+  loadStoredState,
+  saveState,
+} from "@/store";
 import {
   createDefaultBankSettings,
   sanitizeBankSettings,
@@ -100,35 +108,13 @@ import {
   QuestionCopyPattern,
   type QuestionCopyContext,
 } from "@/quiz/types/types";
-import { writeText } from "clipboard-polyfill";
-import {
-  copyProgressToClipboard,
-  parseImportedProgress,
-  readProgressFromClipboard,
-} from "@/features/quiz/progressActions";
-import {
-  COPY_STATUS_RESET_MS,
-  EXPORT_STATUS_ERROR_RESET_MS,
-  EXPORT_STATUS_SUCCESS_RESET_MS,
-} from "@/config";
-import {
-  maybePlayAnswerSound,
-  maybePlaySuccessSound,
-} from "@/sound";
-import {
-  toggleAutoNextPreference,
-  toggleSoundPreference,
-} from "@/features/globalSettingsActions";
-import type { Toast } from "@/features/toast.svelte";
-import type { SoundPlayer } from "@/sound/types";
+import { maybePlayAnswerSound, maybePlaySuccessSound } from "@/sound";
+import { shuffle } from "@/features/quiz";
 
 export type MemoryRun = "idle" | "learning" | "reviewing";
 
-export interface MemorySessionDeps {
-  flash(isCorrect: boolean): void;
-  toast: Toast;
-  sound: SoundPlayer;
-}
+/** 两个模式共用的 deps 形状，保留旧名字方便调用方按模式引用。 */
+export type MemorySessionDeps = SessionDeps;
 
 /** 队列里的一项。 */
 interface MemoryQueueItem {
@@ -136,14 +122,12 @@ interface MemoryQueueItem {
 }
 
 
-export class MemorySession {
+export class MemorySession extends ProgressSessionBase {
   readonly bank: MemoryBank;
   readonly questions: MemoryQuestion[];
 
   /** 当前会话：首页 / 学习 / 复习 */
   run: MemoryRun = $state("idle");
-  /** 同一批里已经出现过的题（用于显示连对进度） */
-  shownIds = $state<string[]>([]);
   /**
    * 出题序号：每次 `selectNext()` 都 +1。
    *
@@ -194,20 +178,8 @@ export class MemorySession {
    * 「模糊」退掉的那一级也会立刻被加回来。
    */
   failedThisRound = $state<string[]>([]);
-  /** 进度备份：和 QuizSession 同一套状态 */
-  exportStatus: "idle" | "copied" | "error" = $state("idle");
-  /**
-   * 进度备份导入：待二次确认的文本（`null` = 没有待确认的导入）。
-   *
-   * 与 `QuizSession` 同名同语义——导入会覆盖全部进度，必须先问一次；
-   * 弹窗由 `ImportProgressDialog` 渲染。
-   */
-  importConfirmText: string | null = $state(null);
   /** 临时调试：当前快进的天数（响应式，供 UI 与 now() 使用） */
   debugOffset = $state(0);
-  /** 「复制题目」按钮的状态（和 QuizSession 同名同语义） */
-  copyQuestionStatus: "idle" | "copied" | "error" = $state("idle");
-  private copyQuestionResetTimer: ReturnType<typeof setTimeout> | null = null;
   // ── 与 QuestionArea 对齐的会话状态 ─────────────────────────────────
   currentQuestion: Question | null = $state(null);
   showResult = $state(false);
@@ -223,8 +195,6 @@ export class MemorySession {
   appState: RuntimeState = $state(buildRuntimeState([], createEmptyState()));
 
   private readonly hash: string;
-  private readonly globalSettingsRef: GlobalSettingsStore;
-  private readonly deps: MemorySessionDeps;
   /**
    * 固定时间源（只有测试会传）。
    *
@@ -243,11 +213,10 @@ export class MemorySession {
     globalSettingsRef: GlobalSettingsStore = globalSettingsStore,
     options: { now?: () => number } = {},
   ) {
+    super(deps, globalSettingsRef);
     this.bank = bank;
     this.hash = bank.hash;
     this.questions = bank.questions;
-    this.deps = deps;
-    this.globalSettingsRef = globalSettingsRef;
     this.debugOffset = devDayOffset();
     this.fixedNow = options.now ?? null;
     const stored = loadStoredState(bank.hash);
@@ -256,6 +225,20 @@ export class MemorySession {
     this.round = this.appState.round ?? null;
     this.normalizeQuestionTypes();
     this.syncQueueToPool();
+  }
+
+  // ── ProgressSessionBase 的四个挂钩 ──────────────────────────────────
+
+  protected get sessionHash(): string {
+    return this.hash;
+  }
+
+  protected get sessionQuestions(): readonly Question[] {
+    return this.questions;
+  }
+
+  protected get sessionState(): RuntimeState {
+    return this.appState;
   }
 
   currentTypeDef = $derived(
@@ -463,11 +446,6 @@ export class MemorySession {
     }
   }
 
-  /** 全局设置（跨题库共享，和侧边栏「全局设置」是同一个实例）。 */
-  get globalSettings(): GlobalSettings {
-    return this.globalSettingsRef.value;
-  }
-
   // ── 会话入口 ────────────────────────────────────────────────────────
 
   /**
@@ -501,9 +479,8 @@ export class MemorySession {
 
     this.run = "learning";
     this.completed = 0;
-    this.shownIds = [];
     this.reviewTarget = {};
-    this.queue = shuffleArray(
+    this.queue = shuffle(
       this.appState.activePool.map((item) => ({ id: item.id })),
     );
     // 开轮这一步也要落盘：这一批是谁、目标几道，都是刚定下的，不写下去
@@ -581,7 +558,6 @@ export class MemorySession {
 
     this.run = "reviewing";
     this.completed = 0;
-    this.shownIds = [];
     this.reviewTarget = { ...retryTargets };
     // 进度条的两个数：
     //   分子 = 今天已经复习过的（跨会话保留，退出再进来接着数）
@@ -598,7 +574,7 @@ export class MemorySession {
     // 带待办的卡都是本轮答错过的：重新进来后完成连对时同样不许推进掌握阶梯
     // （阶梯已经归零并定在「明天」，推进了就会变成和一次答对一样的间隔）
     this.failedThisRound = Object.keys(retryTargets);
-    const shuffled = shuffleArray(queueQuestions);
+    const shuffled = shuffle(queueQuestions);
     this.appState = {
       ...this.appState,
       // 复习轮借 `activePool` 当到期队列用。学习轮不需要另存一份：
@@ -685,7 +661,6 @@ export class MemorySession {
     this.currentQuestion = null;
     this.showResult = false;
     this.selectedAnswers = [];
-    this.shownIds = [];
     // 这一轮整个留着（`round` 不动）：下次「学习新的题目」接着这一轮继续。
     // 池子不用特意放回 `activePool`——`startLearning` 会按 `round` 重建。
     this.save();
@@ -728,7 +703,6 @@ export class MemorySession {
     });
 
     this.queue = this.queue.filter((item) => item.id !== id);
-    this.shownIds = this.shownIds.filter((shown) => shown !== id);
     this.failedThisRound = this.failedThisRound.filter((other) => other !== id);
     if (id in this.reviewTarget) {
       const rest = { ...this.reviewTarget };
@@ -776,7 +750,6 @@ export class MemorySession {
     this.currentQuestion = null;
     this.showResult = false;
     this.selectedAnswers = [];
-    this.shownIds = [];
     this.reviewTarget = {};
     this.round = null;
     this.run = "idle";
@@ -941,7 +914,7 @@ export class MemorySession {
     );
     this.queue = [
       ...this.queue,
-      ...shuffleArray(picked.map((q) => ({ id: q.id }))),
+      ...shuffle(picked.map((q) => ({ id: q.id }))),
     ];
   }
 
@@ -957,7 +930,7 @@ export class MemorySession {
     );
     return this.appState.settings.selectionMode === "sequential"
       ? candidates
-      : shuffleArray(candidates);
+      : shuffle(candidates);
   }
 
   /**
@@ -994,7 +967,6 @@ export class MemorySession {
     this.selectedAnswers = [];
     this.preSubmitState = null;
     this.resetCopyQuestionStatus();
-    this.markAsShown(question.id);
   }
 
   /** 记忆题型的「提交」= 用自评结果（知道 / 模糊 / 忘记）结算这一道卡。 */
@@ -1128,7 +1100,6 @@ export class MemorySession {
     if (this.round) {
       this.round = markMemoryRoundMastered(this.round, id);
     }
-    this.shownIds = this.shownIds.filter((x) => x !== id);
     this.completed += 1;
 
     // 出队 + 把队列里已经离开活动池的题清掉
@@ -1483,7 +1454,7 @@ export class MemorySession {
         this.finishLearningRound("bank");
         return;
       }
-      this.queue = shuffleArray(alive.map((item) => ({ id: item.id })));
+      this.queue = shuffle(alive.map((item) => ({ id: item.id })));
       this.selectNext();
       return;
     }
@@ -1512,24 +1483,12 @@ export class MemorySession {
     maybePlaySuccessSound(this.globalSettings, this.deps.sound);
   }
 
-  private resetCopyQuestionStatus(): void {
-    if (this.copyQuestionResetTimer) {
-      clearTimeout(this.copyQuestionResetTimer);
-      this.copyQuestionResetTimer = null;
-    }
-    this.copyQuestionStatus = "idle";
-  }
-
-  private markAsShown(id: string): void {
-    if (this.shownIds.includes(id)) return;
-    this.shownIds = [...this.shownIds, id];
-  }
 
   private syncQueueToPool(): void {
     this.queue = this.appState.activePool.map((item) => ({ id: item.id }));
   }
 
-  // ── 设置 / 全局设置 ─────────────────────────────────────────────────
+  // ── 设置（全局设置开关在基类） ──────────────────────────────────────
 
   /** 记忆模式的复习阶梯设置。 */
   updateMemorySettings(patch: Partial<MemoryBankSettings>): void {
@@ -1554,18 +1513,6 @@ export class MemorySession {
       settings: sanitizeBankSettings({ ...this.appState.settings, ...patch }),
     };
     this.save();
-  }
-
-  toggleSound(): void {
-    toggleSoundPreference(
-      this.globalSettingsRef,
-      this.deps.toast,
-      this.deps.sound,
-    );
-  }
-
-  toggleAutoNext(): void {
-    toggleAutoNextPreference(this.globalSettingsRef, this.deps.toast);
   }
 
   /** 本轮是否正在进行（首页为 false）。键盘层用它决定 Esc / 题目级按键是否生效。 */
@@ -1611,6 +1558,8 @@ export class MemorySession {
    * 这样两个 session 都能直接喂给 `QuestionCopyStatusStore`。
    * `options.announce` 为真时（快捷键触发）才弹 toast；按钮触发靠
    * `copyQuestionStatus` 表现，和刷题模式一致。
+   *
+   * 记忆模式没有选项打乱 / 填空输入，复制上下文只带选中的选项。
    */
   async copyQuestion(
     question: Question,
@@ -1626,41 +1575,14 @@ export class MemorySession {
       blankAnswerInputs: [],
     };
 
-    try {
-      await writeText(typeDef.formatCopyText(question, context, pattern));
-      this.copyQuestionStatus = "copied";
-      this.resetCopyQuestionStatusLater();
-      if (options.announce) {
-        this.deps.toast(
-          "题目已复制到剪贴板",
-          "可直接粘贴到任意位置。",
-          "success",
-        );
-      }
-      return "copied";
-    } catch {
-      this.copyQuestionStatus = "error";
-      this.resetCopyQuestionStatusLater();
-      if (options.announce) {
-        this.deps.toast(
-          "复制失败",
-          "当前浏览器不允许写入剪贴板。",
-          "destructive",
-        );
-      }
-      return "error";
-    }
-  }
-
-  /** 和刷题模式一样：复制状态展示 1.8 秒后回到 idle。 */
-  private resetCopyQuestionStatusLater(): void {
-    if (this.copyQuestionResetTimer) {
-      clearTimeout(this.copyQuestionResetTimer);
-    }
-    this.copyQuestionResetTimer = setTimeout(() => {
-      this.copyQuestionStatus = "idle";
-      this.copyQuestionResetTimer = null;
-    }, COPY_STATUS_RESET_MS);
+    return this.copyToClipboard(
+      question,
+      typeDef,
+      context,
+      options,
+      pattern,
+      true,
+    );
   }
 
   // ── 临时调试（删掉 devClock 时一并删除这三行 + 顶部 import） ────────
@@ -1683,61 +1605,14 @@ export class MemorySession {
   }
 
   // ── 进度备份（和刷题模式共用同一套编解码） ──────────────────────────
+  // 导出 / 读剪贴板 / 二次确认都在基类，这里只回答「导入的状态怎么落到
+  // 记忆模式的运行时状态上」。
 
-  async exportProgress(): Promise<void> {
-    if (this.exportStatus !== "idle") return;
-    const result = await copyProgressToClipboard(
-      this.appState,
-      this.hash,
-      this.questions,
-    );
-    if (result.ok) {
-      this.exportStatus = "copied";
-      setTimeout(
-        () => (this.exportStatus = "idle"),
-        EXPORT_STATUS_SUCCESS_RESET_MS,
-      );
-      this.deps.toast("进度已复制到剪贴板", "粘贴到任意位置即可备份。", "success");
-      maybePlaySuccessSound(this.globalSettings, this.deps.sound);
-    } else {
-      this.exportStatus = "error";
-      setTimeout(
-        () => (this.exportStatus = "idle"),
-        EXPORT_STATUS_ERROR_RESET_MS,
-      );
-      this.deps.toast("导出失败", result.error, "destructive");
-    }
-  }
-
-  async startImport(): Promise<void> {
-    const result = await readProgressFromClipboard();
-    if (!result.ok) {
-      this.deps.toast("无法导入", result.error, "destructive");
-      return;
-    }
-    // 先不落盘：等 UI 二次确认（覆盖全部进度且不可撤销）。
-    // 与 `QuizSession` 走同一套流程，弹窗本身也是同一个组件。
-    this.importConfirmText = result.text;
-  }
-
-  cancelImport(): void {
-    this.importConfirmText = null;
-  }
-
-  async commitImport(): Promise<void> {
-    const text = this.importConfirmText;
-    if (!text) return;
-    this.importConfirmText = null;
-
-    const parsed = await parseImportedProgress(text, this.hash, this.questions);
-    if (!parsed.ok) {
-      this.deps.toast("导入失败", parsed.error, "destructive");
-      return;
-    }
+  protected applyImportedState(state: StoredState): void {
     this.appState = this.withSyncedMasteredIds(
       buildRuntimeState(this.questions, {
-        ...parsed.state,
-        memory: parsed.state.memory ?? {
+        ...state,
+        memory: state.memory ?? {
           progress: {},
           settings: this.memorySettings,
         },
@@ -1750,23 +1625,18 @@ export class MemorySession {
     this.reviewedIds = [];
     this.reviewTotal = 0;
     this.exitSession();
-    this.deps.toast("进度已导入", "已覆盖当前进度。", "success");
-    maybePlaySuccessSound(this.globalSettings, this.deps.sound);
   }
 
   // ── 持久化 ──────────────────────────────────────────────────────────
 
   private save(): void {
+    // 整份交给 `saveState`：它内部有 `persistedState` 白名单（`pendingIds` 这类
+    // 运行期字段不会落盘），这里再手抄一遍字段清单只会多一处漏改点。
+    // 唯一需要覆盖的是 `round`：本轮是**会话状态**，`appState.round` 只在
+    // 载入 / 导入时写过一次，之后一直由 `this.round` 领先（见类头注释）。
     saveState(this.hash, {
-      masteredIds: this.appState.masteredIds,
+      ...this.appState,
       masteredMistakes: this.appState.masteredMistakes ?? {},
-      activePool: this.appState.activePool,
-      currentRound: this.appState.currentRound,
-      filterType: this.appState.filterType,
-      settings: this.appState.settings,
-      ui: this.appState.ui,
-      memory: this.appState.memory,
-      // 学习轮：目标 / 这一批 / 已掌握一起存（拆开存就会各自漂移）
       round: this.round ?? undefined,
     });
   }
@@ -1798,24 +1668,7 @@ export class MemorySession {
 }
 
 function createEmptyState(): StoredState {
-  return {
-    masteredIds: [],
-    masteredMistakes: {},
-    activePool: [],
-    currentRound: 0,
-    filterType: "all",
-    settings: createDefaultBankSettings(),
-    ui: { progressFocused: false, showPool: false },
-  };
-}
-
-function shuffleArray<T>(items: readonly T[]): T[] {
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
+  return createEmptyStoredState(createDefaultBankSettings());
 }
 
 /** 复习间隔（天），供 UI 文案使用。 */
