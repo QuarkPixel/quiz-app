@@ -33,7 +33,12 @@ pnpm verify                    # check + test + build
 
 跑单个测试：`pnpm vitest run tests/answerMatcher.test.ts -t '<name>'`。
 
-**pnpm 由 Homebrew 统一管理**（`brew upgrade pnpm`，当前 12.4.1，Rust 重写的 "pacquet"）。
+**pnpm 由 Homebrew 统一管理**（升级走 `brew upgrade pnpm`；12.x 是 Rust 重写的 "pacquet"）。
+
+- **`brew upgrade` 在 agent 沙箱里跑不了**：Homebrew 解压 bottle 时会 `sandbox-exec`，
+  而 macOS 不允许在已被沙箱的父进程里再套一层，报 `sandbox-exec: sandbox_apply: Operation
+  not permitted`（`HOMEBREW_NO_SANDBOX=1` 也没用，这条路径不看它）。升级 pnpm 这类操作
+  请让用户在自己的终端里跑，不要反复重试。
 
 - **`package.json` 里不要写 `packageManager` 字段。** pnpm 12 读到它就会去自动下载 / 切换到那个版本
   （落在 `~/Library/pnpm/.tools/pnpm/<版本>/`），哪怕它和本机装的版本一致也照切——于是 `pnpm --version`
