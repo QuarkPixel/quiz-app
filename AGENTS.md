@@ -33,15 +33,22 @@ pnpm verify                    # check + test + build
 
 跑单个测试：`pnpm vitest run tests/answerMatcher.test.ts -t '<name>'`。
 
-**`pnpm` 在本机卡死过（连 `--version` 都没输出），与项目代码无关**：PATH 里的
-`/opt/homebrew/bin/pnpm` 是 Homebrew 的 pnpm 12（Rust 重写的 "pacquet"），它启动时会按
-`package.json` 的 `packageManager` 自动切换版本，在这条路径上死锁（`sample` 显示主线程
-`_pthread_join` 等一个卡在 `__psynch_cvwait` 的线程）。隔离验证：空目录正常、只放
-`package.json` 就卡、删掉 `packageManager` 字段就正常、`npm_config_manage_package_manager_versions=false`
-也正常。现在的修法是 `~/Library/pnpm/bin/pnpm` 放了个 wrapper（该目录在 PATH 里更靠前），直接
-`exec node …/.tools/pnpm/11.5.2/node_modules/pnpm/bin/pnpm.mjs "$@"`；**不要** exec
-`~/Library/pnpm/pnpm`（指向 10.32.1，会与它的版本切换逻辑递归卡死）。wrapper 硬编码 11.5.2，
-升级 pnpm 要同步改；彻底方案是 `brew uninstall pnpm`。
+**pnpm 由 Homebrew 统一管理**（`brew upgrade pnpm`，当前 12.4.1，Rust 重写的 "pacquet"）。
+
+- **`package.json` 里不要写 `packageManager` 字段。** pnpm 12 读到它就会去自动下载 / 切换到那个版本
+  （落在 `~/Library/pnpm/.tools/pnpm/<版本>/`），哪怕它和本机装的版本一致也照切——于是 `pnpm --version`
+  报的可能是旧版，而你以为是新版。删掉字段后 brew 装的二进制是唯一来源。
+- 那条自动切换路径在本机**死锁过**：连 `pnpm --version` 都没有任何输出，`sample` 显示主线程卡在
+  `_pthread_join` 等一个停在 `__psynch_cvwait` 的线程。隔离验证：空目录正常、只放 `package.json` 就卡、
+  删掉 `packageManager` 字段就正常。
+- 它还会往 `pnpm-lock.yaml` 里写一段 `packageManagerDependencies`（+158 行 `@pnpm/exe.android-arm64`
+  这类 pnpm 自己的二进制条目，与真实依赖无关）。字段删掉后锁文件保持干净——已实测。
+- **别指望 `.npmrc` 里的 `manage-package-manager-versions=false` 兜底**：pnpm 12 不认这个键
+  （项目 `.npmrc` 确实被读到了，但 `pnpm config list` 里根本没有它，设成 `false` 后 `pnpm --version`
+  仍会去解析 `packageManager` 指的版本）。唯一可靠的办法是不要那个字段。
+- 排查历史：曾用一个 `~/Library/pnpm/bin/pnpm` wrapper 硬编码 11.5.2 绕过死锁，现已全部撤掉，
+  `~/Library/pnpm/pnpm` 只剩一个 `exec /opt/homebrew/bin/pnpm "$@"` 的转发脚本（它在 PATH 里排在
+  `/opt/homebrew/bin` 之后，不抢）。
 
 ## 架构
 
