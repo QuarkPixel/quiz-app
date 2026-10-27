@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import SharedListHarness from "./SharedListHarness.svelte";
 import type { FilterGroupDef } from "../src/components/shared/FilterBar.svelte";
-import type { QuestionGroup } from "../src/components/review/virtualList/types";
+import type { QuestionGroup } from "../src/components/overview/list/types";
 import type { Question } from "../src/types";
 
 /**

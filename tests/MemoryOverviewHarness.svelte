@@ -9,7 +9,7 @@
      * 才能验证「关掉总览会重置搜索与筛选」。
      */
     import * as Tooltip from "$lib/components/ui/tooltip";
-    import MemoryOverview from "@/components/memory/MemoryOverview.svelte";
+    import MemoryOverview from "@/components/overview/MemoryOverview.svelte";
     import { provideMemorySession } from "@/features/memory/context";
     import { provideQuizSource } from "@/source/context";
     import type { MemorySession } from "@/features/memory/MemorySession.svelte";

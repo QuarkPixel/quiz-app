@@ -9,12 +9,12 @@ import {
   findQuestionTop,
   getVisibleRange,
   type ResolveHeight,
-} from "../src/components/review/virtualList/layout";
+} from "../src/components/overview/list/layout";
 import type {
   QuestionGroup,
   Section,
   SectionLayout,
-} from "../src/components/review/virtualList/types";
+} from "../src/components/overview/list/types";
 import type { Question } from "../src/types";
 
 function q(id: string, type: Question["type"] = "judgment"): Question {

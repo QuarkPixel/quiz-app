@@ -196,21 +196,7 @@
     }
 }
 
-/* ── 热力图（刷题模式与记忆模式共用同一套布局 class） ───────────────── */
-.heatmap-grid {
-    grid-template-columns: repeat(auto-fill, 1rem);
-}
-.heatmap-collapsible {
-    display: grid;
-    grid-template-rows: 0fr;
-    transition: grid-template-rows 0.2s ease;
-}
-.heatmap-collapsible.expanded {
-    grid-template-rows: 1fr;
-}
-.heatmap-collapsible-inner {
-    overflow: hidden;
-}
+/* ── 总览的折叠面板（筛选栏展开 / 收起） ───────────────────────────── */
 .filter-collapsible {
     display: grid;
     grid-template-rows: 0fr;

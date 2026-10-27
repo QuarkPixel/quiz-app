@@ -1,7 +1,7 @@
 <script lang="ts">
     import { toastStore } from "@/features/toast.svelte";
     import FlashContainer from "./FlashContainer.svelte";
-    import ReviewView from "../review/ReviewView.svelte";
+    import QuizOverview from "@/components/overview/QuizOverview.svelte";
     import Settings from "../settings/Settings.svelte";
     import PoolPanel from "./PoolPanel.svelte";
     import ProgressBar from "./ProgressBar.svelte";
@@ -228,11 +228,9 @@
 
 <Settings bind:open={showSettings} hash={bank.hash} bankName={bank.name} />
 
-<ReviewView
+<QuizOverview
     open={showReview}
     onOpenChange={(o) => (showReview = o)}
-    onToast={(title, description, variant) =>
-        toastStore.show(title, description, variant)}
 />
 
 <ImportProgressDialog

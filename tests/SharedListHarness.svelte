@@ -11,8 +11,8 @@
     import FilterBar, {
         type FilterGroupDef,
     } from "@/components/shared/FilterBar.svelte";
-    import QuestionListSection from "@/components/review/QuestionListSection.svelte";
-    import type { QuestionGroup } from "@/components/review/virtualList/types";
+    import QuestionListSection from "@/components/overview/OverviewList.svelte";
+    import type { QuestionGroup } from "@/components/overview/list/types";
 
     interface Props {
         kind: "filter" | "list";

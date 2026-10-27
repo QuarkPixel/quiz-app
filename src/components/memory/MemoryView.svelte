@@ -11,7 +11,7 @@
     import MemoryQuestionActions from "./MemoryQuestionActions.svelte";
     import MemoryRoundActions from "./MemoryRoundActions.svelte";
     import MemorySettings from "../settings/MemorySettings.svelte";
-    import MemoryOverview from "./MemoryOverview.svelte";
+    import MemoryOverview from "@/components/overview/MemoryOverview.svelte";
     import MemoryProgressBar from "./MemoryProgressBar.svelte";
     import ViewShell from "../layout/ViewShell.svelte";
     import SwapFade from "../shared/SwapFade.svelte";
