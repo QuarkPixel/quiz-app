@@ -289,9 +289,16 @@
                     <!-- 渐变 mask 挂在**内层**这 280px 上，不挂在 aside 上：
                          aside 收起时宽度是 0，`mask-image` 会跟着缩成 0 宽并按
                          `repeat` 平铺出去，过渡中间会出现条纹。内层宽度恒定，
-                         mask 就恒定。 -->
+                         mask 就恒定。
+
+                         `flex-1`（不是 `shrink-0`）：主轴是垂直的，`flex-1` 让这层
+                         占满 aside 的高度，`PoolPanel` 的 `lg:flex-1` 才拿得到确定的
+                         高度、`overflow-y-auto` 才有东西可滚。写 `shrink-0` 的话高度
+                         由内容决定，池子会一路撑出可视区——以前靠 aside 的
+                         `overflow-hidden` 把溢出裁掉，看起来「不能滚」；现在不裁了，
+                         更得靠这条把高度收在列里。 -->
                     <div
-                        class="pool-edge-mask ml-auto flex min-h-0 w-[280px] shrink-0 flex-col pl-8"
+                        class="pool-edge-mask ml-auto flex min-h-0 w-[280px] flex-1 flex-col pl-8"
                     >
                         {@render aside?.()}
                     </div>
