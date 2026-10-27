@@ -805,8 +805,13 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   （`cards` snippet），外壳不认识「统计卡」「热力图」这些概念
 - `OverviewRail.svelte` + `rail.svelte.ts` — 横向滚动带。**没有左右箭头**（那套翻页数学
   `railMath.ts` 已删）：它和滚轮抢同一件事，一次跳大半屏在触控板上也突兀。可滚动的提示只剩
-  一层 28px 的边缘渐变遮罩（`w-7`，只在还能滚时出现）。滚轮映射的规矩见下；
-  内容不满一屏时 `justify-between` 把卡片铺开（首页那排、窄屏之外都会走到这条）
+  一层 28px 的边缘渐变遮罩（`w-7`）。遮罩**常驻 DOM**，只在 `canScrollLeft/Right` 之间切
+  `opacity` + `transition-opacity duration-200`（与 `ViewShell` 的上下遮罩同一套写法）——
+  用 `{#if}` 挂载 / 卸载会让那 28px 在滚动开始与结束的瞬间「啪」地出现，比遮罩本身还显眼。
+  遮罩颜色由 `surface` 决定（`popover` = 弹窗里、`background` = 记忆首页）：它是「从这层底色
+  渐变到透明」，**必须与 rail 底下那一层同色**。一律写 `from-card` 时浅色看不出，深色下
+  `--card`/`--popover`（0.205）比 `--background`（0.145）亮一档，首页边上就是一条灰带。
+  滚轮映射的规矩见下；内容不满一屏时 `justify-between` 把卡片铺开（首页那排、窄屏之外都会走到这条）
 - `OverviewCard.svelte` — **所有卡片的共同外壳**：透一档的底色、无描边、`h-full`（与 rail 等高）、
   标题行、水印装饰层。宽度由调用方给（`w-44` / `w-54` / `min-w-44`）
 - `MemoryOverviewCards.svelte` / `QuizOverviewCards.svelte` — 每个模式**一整个文件就是一排卡片**：
@@ -816,16 +821,32 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   首页用的就是总览那一排，连热力图一起，一个像素都不差（只少一个 `onJump`，首页没有列表可跳）
 - `HeatmapCard.svelte` — 卡片内热力图（壳来自 `OverviewCard`）。格子**列优先**（每列 `OVERVIEW_CELL_ROWS` 格），
   宽度随题量增长 → 正好交给 rail 去滚；只渲染视口附近的列（视口信息经 `railContext` 注入）；
-  首帧只画占位，下一帧之后才算颜色
+  首帧只画占位，下一帧之后才算颜色。**占位与真格子是同一批 DOM**，只换 class / style，不重建节点
+- 热力图的渲染模型（改动前先读这一条，几个决定互相咬着）：
+  - **一格一个 `div`**，没有 `button`、没有内外两层。以前每格是 `<button>` 套 `<div>`：300 个格子
+    就是 300 个 Tab 停靠点（键盘根本穿不过去），而且一个 `button` 带着整套 UA 样式与焦点环当色块用太重
+  - **命中靠坐标**：`pointermove` / `click` 挂在网格上，`floor(offset / OVERVIEW_CELL_STRIDE)` 算格子。
+    事件从 300 个降到 1 个，**4px 缝也是活的**（鼠标落在两个方块中间照样命中最近那格）。
+    tooltip 用格子中心算（`grid.left + col×stride + stride/2`、`grid.top + row×stride − 6`），
+    **钉在格子正上方**，不跟鼠标跑
+  - **调色板变量化**：颜色值去重后挂成网格上的 `--heat-1..N`，格子只写 `background-color: var(--heat-k)`。
+    去重**每次从数据现算**，不要假设「只有 1..7 档」——档位数来自 `graduateLevel` / 连对目标，用户随时能改
+  - **hover 只有一块高亮元素**（`animate-heat-pop`）：格子身上没有 `transition` / `hover:` 规则，
+    `{#key}` 让高亮块换格子时重新挂载、重放一次动画。300 个节点各挂一条 transition 变成 1 个
+  - 每列挂 `contain: layout paint style`，视口外的列浏览器可以直接跳过（虚拟化之外的第二道）
+  - 网格是 `role="img"` + 一句 `aria-label`（读屏当它是一张图）；点击/指针事件在非交互元素上，
+    三个 a11y 提示是**有意 ignore** 的，别当 bug 去"修"
 - `OverviewFilterBar.svelte` / `OverviewList.svelte` — 两个模式共用的筛选栏与虚拟列表（`list/` 下是布局数学）
 - `QuizOverview.svelte` / `MemoryOverview.svelte` — 适配器：数字怎么算、格子怎么上色、每行画什么
 
 几条硬约束：
 
 - 版面常量只在 `config/overview.ts`：rail 高度、格子尺寸、间距、每列几格**必须一起重算**
-  （高度 = 上下内边距 + 标题行 + 间距 + `rows × 尺寸 + (rows-1) × 间距`，否则格子到左右与到下的留白对不上）
-- 热力图的插值色写进 `--cell-color`（`bg-(--cell-color)` 取用），**不要**拼 `background-color: color-mix(…)`——
-  后者会被样式解析器判成非法值整条丢掉
+  （高度 = 上下内边距 + 标题行 + 间距 + `rows × 尺寸 + (rows-1) × 间距`，否则格子到左右与到下的留白对不上）。
+  格子的几何写进 `CELL_STYLE` 内联样式（`size` + 半个 `gap` 的外边距），**不要**改成 `size-3 m-0.5`
+  这类类名——那几个数得跟着常量走，写死在类名里就会悄悄对不上
+- 热力图的插值色：`color-mix(…)` **不能**直接拼进 `background-color`（样式解析器会判成非法值整条丢掉），
+  但 `background-color: var(--heat-k)` 可以。所以颜色以 `--heat-1..N` 声明在网格上，格子只写 `var()` 引用
 - 格子的 tooltip 必须 portal 到 `body` + `position: fixed`：rail 是 `overflow-x: auto`，留在原地一定被裁
 - **卡片标题是 `sticky left-8` 的**（= rail 的 `px-5` + 卡片的 `px-3`，与标题没滚动时的位置一致，
   贴边那一刻不跳）：卡片比视口宽时（热力图），滚到右半边标题要贴住视口左边停住，
@@ -1252,8 +1273,9 @@ memoryPayload = [progress[][], memorySettings[], trailing]
   `role="progressbar"` 数值、`label` / `rightValue` 覆盖、完成时的庆祝动效，以及记忆模式适配器的夹取
 - `tests/globalSettingsActions.test.ts` — 音效 / 自动下一题的统一实现：落盘、提示文案、试听，
   且**两个 session 的可观察结果逐字一致**
-- `tests/heatmapCard.test.ts` — 卡片内热力图：首帧只画占位（不算颜色）、列优先 5 格一列、
-  `aria-label` 里 id 只出现一次、点击跳转、插值色走 `--cell-color`（`color-mix` 会被样式解析丢掉）
+- `tests/heatmapCard.test.ts` — 卡片内热力图：首帧只画占位（不算颜色）、占位与真格子是同一批节点、
+  一格一个 `div`（没有 `button`）、列优先 5 格一列、调色板 `--heat-N` 去重且档位数现算、
+  命中按坐标（缝里也算）、tooltip 钉在格子正上方且不跟鼠标跑、触摸不触发 hover、点击跳转
 - `tests/overviewRail.test.ts` / `tests/overviewModels.test.ts` — rail 的滚轮判定
   （触控板的连续小数增量不算「鼠标滚轮」）+ 热力图版面常量自洽，以及两个模式的热力图「状态 → 颜色」
 - `tests/importProgressDialog.test.ts` / `tests/memoryOverview.test.ts` / `tests/memoryFilters.test.ts` —
