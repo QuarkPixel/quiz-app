@@ -88,7 +88,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 - `src/lib/validateQuestions.ts` — 刷题模式 `questions` 数组的校验（`validateQuizQuestions`）
 - `src/quiz/modes/` — 题库模式注册表
   - `types.ts`：`BankModeDef`（`validateQuestions` + `buildOverview`）
-  - `quiz.ts`：刷题模式实现（`buildOverview` 返回 `null`，沿用 `ReviewView` 的「按题型分组」）；`memory.ts`：记忆模式实现（校验走 `validateMemoryQuestions`，`buildOverview` 同样返回 `null`——总览由 `MemoryOverview.svelte` 自己渲染）；`index.ts`：`BANK_MODES`
+  - `quiz.ts`：刷题模式实现（`buildOverview` 返回 `null`，总览走 `components/overview/QuizOverview.svelte` 的「按题型分组」）；`memory.ts`：记忆模式实现（校验走 `validateMemoryQuestions`，`buildOverview` 同样返回 `null`——总览走 `components/overview/MemoryOverview.svelte`）；`index.ts`：`BANK_MODES`
 - `src/quiz/types/` — 题型注册表（新增 `memory/` 题型）
   - `registry-logic.ts`：`QUIZ_QUESTION_TYPES_LOGIC`（刷题四型）、`QUESTION_TYPES_LOGIC`（含 memory）、`QUESTION_TYPE_ORDER`（只列刷题四型，供筛选 / 分组）
   - `memory/`：`logic.ts`（校验 + 判分（只有「知道」算答对）+ 三选自评编码 `MEMORY_ANSWER_CODE` + 答案页降级矩阵 `memoryAnswerDowngrades` + 快捷键：`Space`·`Enter` 知道 / `'` 模糊 / `;` 忘记）、`Input.svelte`（答案卡片）、`Review.svelte`（总览里的答案展示）、`index.ts`
@@ -373,8 +373,10 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     分别对应顶栏（题号 + 掌握指示）、滚动区（题干 + 答案卡）、底栏（知道 / 模糊 / 忘记）、
     本轮操作（退出 / 结束本轮）。拆开的理由与刷题模式那三个一样：以前 `MemoryQuestionArea`
     把版面、交互、动效写在一个文件里，换版面时两个模式各改一遍
-  - `MemoryHome.svelte`：首页，两个入口 + 统计卡，全部用现有 `Button` / `Card`；每种状态各配水印图标
-  - `MemoryOverview.svelte`：总览对话框，与 `ReviewView` 同构（顶部三张 `Card` + `ToggleGroup` 筛选 + `QuestionPreview` 列表）
+  - `MemoryHome.svelte`：首页，两个入口 + 一排卡片。那排卡片**就是总览那一排**
+    （`components/overview/MemoryOverviewCards.svelte`，连热力图一起；只不传 `onJump`，
+    首页没有列表可跳），外面套 `OverviewRail` 所以窄屏也能横向滚；每种状态各配水印图标
+  - 总览对话框**已迁出**：`src/components/overview/MemoryOverview.svelte`（两个模式共用同一套外壳，见「总览窗口」一节）
   - `MemoryMasteryButton.svelte`：卡片右侧那句状态文字，**它同时是「标熟」按钮**（点两下确认，
     形态照刷题模式的 `StreakIndicator`）。只出现在总览里——答题区不给记忆模式掌握入口
   - `MemoryProgressBar.svelte`：**只是 `ProgressBar` 的适配器**（把「本轮已完成 / 总数」映射成
@@ -793,6 +795,55 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - 拆出 `ViewShell` 的动机：以前 `QuestionArea` / `MemoryQuestionArea` 把「版面 + 交互 + 动效」写在
   一个文件里、两个模式各抄一份，于是记忆模式漏了遮罩、窄屏池子高度算了两遍。
 
+### 总览窗口（`src/components/overview/`）
+
+两个模式的「总览」是同一套外壳，差别全在两个适配器里：
+
+- `OverviewDialog.svelte` — 弹窗外壳。版面只有上下两块：上面一条横向 rail（整排卡片，等高），
+  下面「展示题目 / 展示卡片」标题 + 筛选栏 + 虚拟列表。**窗口自己 `overflow-hidden`，只有列表可滚**——
+  以前一个窗口里有两个滚动区，触摸屏上根本分不清手指划的是哪一块。顶部那排卡片整段由调用方给
+  （`cards` snippet），外壳不认识「统计卡」「热力图」这些概念
+- `OverviewRail.svelte` + `rail.svelte.ts` — 横向滚动带。**没有左右箭头**（那套翻页数学
+  `railMath.ts` 已删）：它和滚轮抢同一件事，一次跳大半屏在触控板上也突兀。可滚动的提示只剩
+  一层 28px 的边缘渐变遮罩（`w-7`，只在还能滚时出现）。滚轮映射的规矩见下；
+  内容不满一屏时 `justify-between` 把卡片铺开（首页那排、窄屏之外都会走到这条）
+- `OverviewCard.svelte` — **所有卡片的共同外壳**：透一档的底色、无描边、`h-full`（与 rail 等高）、
+  标题行、水印装饰层。宽度由调用方给（`w-44` / `w-54` / `min-w-44`）
+- `MemoryOverviewCards.svelte` / `QuizOverviewCards.svelte` — 每个模式**一整个文件就是一排卡片**：
+  「未学习 / 学习中 / 已掌握 + 今日待复习 + 卡片热力图」「已掌握 / 活动题池 / 未学习 + 正确率 + 答题次数 +
+  答题热力图」。卡片里的 DOM 一张一张手写（不走「每张卡一个对象 + 一个模板」，那样字号与间距会走形）。
+  卡片**自己取数据**（`useMemorySession` / `useQuizSession`），所以没有「传不传热力图」这种分支：
+  首页用的就是总览那一排，连热力图一起，一个像素都不差（只少一个 `onJump`，首页没有列表可跳）
+- `HeatmapCard.svelte` — 卡片内热力图（壳来自 `OverviewCard`）。格子**列优先**（每列 `OVERVIEW_CELL_ROWS` 格），
+  宽度随题量增长 → 正好交给 rail 去滚；只渲染视口附近的列（视口信息经 `railContext` 注入）；
+  首帧只画占位，下一帧之后才算颜色
+- `OverviewFilterBar.svelte` / `OverviewList.svelte` — 两个模式共用的筛选栏与虚拟列表（`list/` 下是布局数学）
+- `QuizOverview.svelte` / `MemoryOverview.svelte` — 适配器：数字怎么算、格子怎么上色、每行画什么
+
+几条硬约束：
+
+- 版面常量只在 `config/overview.ts`：rail 高度、格子尺寸、间距、每列几格**必须一起重算**
+  （高度 = 上下内边距 + 标题行 + 间距 + `rows × 尺寸 + (rows-1) × 间距`，否则格子到左右与到下的留白对不上）
+- 热力图的插值色写进 `--cell-color`（`bg-(--cell-color)` 取用），**不要**拼 `background-color: color-mix(…)`——
+  后者会被样式解析器判成非法值整条丢掉
+- 格子的 tooltip 必须 portal 到 `body` + `position: fixed`：rail 是 `overflow-x: auto`，留在原地一定被裁
+- **卡片标题是 `sticky left-8` 的**（= rail 的 `px-5` + 卡片的 `px-3`，与标题没滚动时的位置一致，
+  贴边那一刻不跳）：卡片比视口宽时（热力图），滚到右半边标题要贴住视口左边停住，
+  别让它跟着内容跑出去。sticky 有两个前提，少一个就静默失效：
+  1. 卡片自己**不能** `overflow-hidden`——`Card.Root` 默认带，必须在 `OverviewCard` 里用
+     `overflow-visible` 盖掉（`overflow: hidden` 会被当成一个不会滚的滚动容器，sticky 贴它等于没写）
+  2. 中间不能有别的 `overflow` 祖先；水印图标的裁切因此单独放在 `decor` 那层
+     `absolute inset-0 overflow-hidden rounded-md` 里（它不包标题，不影响 sticky）
+- **滚轮只拦鼠标滚轮**（`rail.svelte.ts` 的 `wheel` / `shouldScrollRail`）：
+  - `deltaX ≠ 0` 一律 return。触控板斜着滑时 `deltaX`、`deltaY` 同时非零，浏览器按
+    `deltaX` 原生滚一次、我们又按 `deltaY` 滚一次，两个量互相拉扯——这就是「抽搐」的根因
+  - 纵向滑动是否映射成横向，看**这次手势**里有没有出现过斜滑（`deltaX`、`deltaY` 同时非零
+    只可能是触控板，鼠标拨轮只给 `deltaX`）。出现过 → 这次手势的纵向滑动不翻这一排
+  - 「认定」只活在一次手势里：两次 wheel 间隔超过 `GESTURE_GAP_MS`（300ms）就重来。
+    **不要**把它存成实例级 / 会话级变量——触控板和鼠标经常来回换，认死一个会让换回来的那个失效
+  - 也别按 `deltaY` 的「整数 / 小数」分辨设备：平滑滚动鼠标给的也是小数，会被当成触控板，
+    滚轮直接失效
+
 ### 填空题的下划线（`BlankField`）
 
 `src/components/quiz/BlankField.svelte` 是**唯一**的填空输入位，`src/quiz/types/blank/Input.svelte`
@@ -867,7 +918,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 水印图标用 `-z-1` 想「垫在文字下面、但在卡片底色之上」。卡片自己**没有层叠上下文**时，负 z-index
 会一路穿到祖先（`#app` / `Inset` 那层 `bg-background`）后面，平时根本看不见；只有在换屏过渡那一刻，
 动画层带 `opacity < 1` 凭空生成了一个层叠上下文，它才突然冒出来——症状就是「小图标只在过渡动画播放
-时显示」。修法是给卡片的 `Card.Content` 加 `isolate`（`MemoryStatsCards` / `ReviewView` 共六处）。
+时显示」。修法是给卡片加 `isolate`（总览那排卡片统一在 `OverviewCard` 里做，一处管全部）。
 
 ## 题库格式
 
@@ -1050,7 +1101,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 ### UI
 
 - `src/App.svelte` 按 `activeBank.mode === "memory"` 渲染 `MemoryView`
-- **对话框焦点**：总览（`ReviewView` / `MemoryOverview`）用 `onOpenAutoFocus` 阻止默认行为后聚焦搜索框，且 `isCoarsePointer` 时（触屏）不聚焦，免得弹键盘；**设置面板（`Settings` / `MemorySettings`）只 `preventDefault()`**——默认行为会把焦点丢给第一个可聚焦元素，也就是「修改名称」输入框，打开设置不该直接进输入态
+- **对话框焦点**：总览（`QuizOverview` / `MemoryOverview`）用 `onOpenAutoFocus` 阻止默认行为后聚焦搜索框，且 `isCoarsePointer` 时（触屏）不聚焦，免得弹键盘；**设置面板（`Settings` / `MemorySettings`）只 `preventDefault()`**——默认行为会把焦点丢给第一个可聚焦元素，也就是「修改名称」输入框，打开设置不该直接进输入态
 - `src/components/memory/`：
   - `MemoryView`：版面与 `QuizView` 一致（同一个 `ViewShell`：三块固定 + 一块滚动 + 底部工具栏：左设置、右总览）；窗口级快捷键（复制 / 导入 / 导出 / 设置 / 总览 / Esc 退出本轮）也在这里。**`ViewShell` 本身不参与换屏过渡**，只有滚动区那层内容进 `SwapFade`（否则底部工具栏会跟着缩放淡出，看着像「图标抖了一下」）；三块固定内容各自只写 `in:swapIn`、**不写 `out`**——退场时若淡出，这两百毫秒里它们还占着高度，收起来时刚居中的首页内容又得跳一下
   - **答题区那一行**（`MemoryRoundActions`，`data-slot="memory-round-actions"`）：左边「退出本轮」（`IconArrowLeft`，`exitSession`：回首页、这一轮留着），中间一条半透明分割线，右边「结束本轮」（`ConfirmActionButton` + `hand-stop`，点两下确认 → `endRound()`：本轮作废，**同样回首页**，下次点「学习新的题目」是新的一轮；第一下只把文案换成「确认结束」，字数一样所以宽度不跳）。两个词不能混：退出留着这一轮，结束把它作废
@@ -1084,20 +1135,20 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     顶栏是题型图标 + 题号 + 复制 + `StreakIndicator`（**传 `readonly`**：刷题模式那个「双击标记为已掌握」
     在记忆模式没有对应语义——掌握只能靠连对够次数毕业，接了 `onMaster` 只会把卡从本轮队列里静默丢掉）。
     滚动区里**没有选项**，题干在「只展示题干」时放大、进入答案页回到常规字号（动效见下面「答题区的动效」）
-  - `MemoryStatsCards`：首页与总览共用的三张统计卡（第一张是四类数字 **未学习 / 学习中 / 复习中 / 已掌握**，加起来等于「共 N 张卡片」；另外两张是「今日待复习」=`reviewableCount`、「目前」= 学习中 + 复习中）
+  - `MemoryStatsCards`：首页与总览共用的三张统计卡（第一张是四类数字 **未学习 / 学习中 / 复习中 / 已掌握**，加起来等于「共 N 张卡片」；另外两张是「今日待复习」=`reviewableCount`、「目前」= 学习中 + 复习中）。**DOM 是手写的三份**，不是「每张卡一个对象 + 一个共用模板」——后者一抽就走形（字号 / 间距全变）。卡片只负责底色与 `h-full`，宽度交给调用方（首页网格 / 总览 rail 的 `min-w-52`）
   - `MemoryProgressBar`：**只是 `ProgressBar` 的适配器**——把「本轮已完成 / 本轮总数」映射成
     `stats`（已完成 → `mastered`、剩下的算 `learning`），并传 `interactive={false}`（记忆模式不做聚焦放大）
     与 `rightValue`（记忆口径的右数字是总数，刷题是「进度范围末端」）。数字滚动动画、完成时的庆祝高亮、
     细条样式全部来自那一份 `ProgressBar`；学习轮用 `label` 传「3/5」，复习轮留空显示百分比
-  - `MemoryHeatmapSection`：记忆模式热力图，**只是 `components/shared/HeatmapSection.svelte` 的包装**——
-    它只负责「状态 → 颜色」（`未学习`+`学习中` = 灰、`复习中` = 橙→绿按 `(level-1)/graduateLevel` 插值、
-    `已掌握` = 绿），折叠 / 网格 / tooltip / `aria-label` 都在共享外壳里（刷题模式那份包装同理）。
-    `cells` 是函数而不是数组，为的是保留「收起时不计算」的懒加载
-  - `MemoryFilterBar`：总览筛选栏，与 `ReviewFilterBar` 同构（图标 + 「展示卡片」+ 点线 + 搜索框 + 筛选按钮，展开后成组 ToggleGroup）；分组是「学习进度」与「复习进度」，筛选状态在 `src/features/memory/filters.ts`
-  - `MemoryOverview`：总览，与 `ReviewView` 同构（标题左对齐 + 只有关闭按钮 / 三张统计卡 + 热力图 + `MemoryFilterBar` + **同一套虚拟列表**）；每行是「题干 + 复制按钮 + 一句话状态 + 题号」，**不放连对圆点指示器**（状态用文字表达），点热力图小方块会滚到对应卡片。那句状态文字本身是 `MemoryMasteryButton`（点两下「标熟」）
-    - 列表直接复用 `components/review/QuestionListSection.svelte`：`withHeaders={false}`（记忆模式只有一种题型，不要那条 sticky 分组头）+ 一个 `row` snippet 画自己的行。**自定义行的根节点必须自己打 `data-review-question-id`**（虚拟滚动的跳转收敛靠它认「已挂载的行」）；用了 `row` 时列表不会去取 `QuizSession`（记忆模式没有 provide 它，硬取会抛错）
+  - 热力图：**两个模式共用 `components/overview/HeatmapCard.svelte`**（卡片内标题 + 列优先网格 + 按列虚拟化 + tooltip），
+    模式差异只剩「状态 → 颜色」：记忆模式在 `features/memory/overview.ts`（`未学习`+`学习中` = 灰、
+    `复习中` = 橙→绿按 `(level-1)/graduateLevel` 插值、`已掌握` = 绿），刷题模式在 `features/quiz/overview.ts`。
+    `cells` 是函数而不是数组：首帧只画占位，下一帧之后才算颜色（打开总览先看见窗口）
+  - 筛选栏：**两个模式共用 `components/overview/OverviewFilterBar.svelte`**（图标 + 「展示卡片」+ 点线 + 搜索框 + 筛选按钮，展开后成组 ToggleGroup）；分组与文案由调用方给，记忆模式的分组是「学习进度」与「复习进度」，筛选状态在 `src/features/memory/filters.ts`
+  - `MemoryOverview`（在 `src/components/overview/`）：总览，与刷题模式的 `QuizOverview` 共用同一套外壳（见「总览窗口」一节）；每行是「题干 + 复制按钮 + 一句话状态 + 题号」，**不放连对圆点指示器**（状态用文字表达），点热力图小方块会滚到对应卡片。那句状态文字本身是 `MemoryMasteryButton`（点两下「标熟」）
+    - 列表直接复用 `components/overview/OverviewList.svelte`：`withHeaders={false}`（记忆模式只有一种题型，不要那条 sticky 分组头）+ 一个 `row` snippet 画自己的行。**自定义行的根节点必须自己打 `data-review-question-id`**（虚拟滚动的跳转收敛靠它认「已挂载的行」）；用了 `row` 时列表不会去取 `QuizSession`（记忆模式没有 provide 它，硬取会抛错）
     - `QuestionGroup[].type` 在无头模式下没人读，但仍要给（`"memory"`）；结果为空时传 `[]`，列表据此显示 `emptyText`
-    - 关闭总览要重置搜索词与筛选（与 `ReviewView` 同一段 `$effect`），否则下次打开会看到一份「少了半题库」的列表
+    - 关闭总览要重置搜索词与筛选（与 `QuizOverview` 同一段 `$effect`），否则下次打开会看到一份「少了半题库」的列表
 - 总览列表每张卡只显示**一句话**状态：`未学习` / `学习中` / `已掌握`，复习中的直接写「今天复习」「明天复习」「N 天后复习」「逾期 N 天」，不再出现「复习中」这个词，也不显示轮次进度；最右侧显示题号（与刷题模式的 `QuestionCard` 一致）
 - **总览里的状态文字是「标熟」按钮**（`MemoryMasteryButton`）：第一下只是确认态（绿底 `bg-success` + `text-success-foreground` 白字「标熟」，原状态文字 `invisible` 留在原地，「标熟」绝对定位盖上去——连点两下时按钮宽度不变），第二下才 `session.masterQuestion(id)`。已掌握的卡不给这个入口（终态，只留一句绿色的「已掌握」）。**这个功能只在总览里有**，答题区、热力图、设置面板都不放第二个入口
 - **算「还有几天到期」必须用 `session.now`**（它带上调试的时间偏移），不要直接 `Date.now()`；同理 `this.now` 是 getter 而不是函数，生产路径每次现算 `Date.now() + debugOffset`，这样调试里「加一天」能对已挂载的会话立刻生效（不要把偏移捕获进闭包）
@@ -1163,7 +1214,7 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - `tests/syncRefreshGuard.test.ts` / `tests/userActivity.test.ts` — **刷新前先看「能不能打断」**：
   拉别的题库不刷、当前题库挂起并在停手后补上、空闲立刻刷、冲突与删除的边界。
 - `tests/ViewHarness.svelte` / `tests/ViewShellHarness.svelte` / `tests/SharedListHarness.svelte` /
-  `tests/HeatmapHarness.svelte` / `tests/SettingsPrimitivesHarness.svelte` /
+  `tests/SettingsPrimitivesHarness.svelte` /
   `tests/MemoryOverviewHarness.svelte` / `tests/ToolbarIconButtonHarness.svelte` /
   `tests/ProgressBarHarness.svelte` — 组件测试外壳。写新的组件测试时照着抄：
   bits-ui 的 Tooltip / Dialog 需要 `Tooltip.Provider`，弹窗断言要在 `document.body` 上找。
@@ -1201,8 +1252,10 @@ memoryPayload = [progress[][], memorySettings[], trailing]
   `role="progressbar"` 数值、`label` / `rightValue` 覆盖、完成时的庆祝动效，以及记忆模式适配器的夹取
 - `tests/globalSettingsActions.test.ts` — 音效 / 自动下一题的统一实现：落盘、提示文案、试听，
   且**两个 session 的可观察结果逐字一致**
-- `tests/heatmapSection.test.ts` — 热力图：收起时不算格子（懒加载）、两个模式的状态 → 颜色映射、
-  `aria-label` 里 id 只出现一次、点击跳转
+- `tests/heatmapCard.test.ts` — 卡片内热力图：首帧只画占位（不算颜色）、列优先 5 格一列、
+  `aria-label` 里 id 只出现一次、点击跳转、插值色走 `--cell-color`（`color-mix` 会被样式解析丢掉）
+- `tests/overviewRail.test.ts` / `tests/overviewModels.test.ts` — rail 的滚轮判定
+  （触控板的连续小数增量不算「鼠标滚轮」）+ 热力图版面常量自洽，以及两个模式的热力图「状态 → 颜色」
 - `tests/importProgressDialog.test.ts` / `tests/memoryOverview.test.ts` / `tests/memoryFilters.test.ts` —
   导入确认弹窗；记忆总览的「导出为新题库」（含只导出筛选结果）与「关闭后重置搜索 / 筛选」
 
