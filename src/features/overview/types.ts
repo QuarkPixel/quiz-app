@@ -19,16 +19,23 @@
 /** 热力图的一个小方块。 */
 export interface HeatmapCell {
     id: string;
-    /** 状态描述（**不要**自己带 id 前缀，无障碍标签由组件统一拼） */
+    /** 状态描述（**不要**自己带 id 前缀，tooltip 里由组件统一拼成「id · 状态」） */
     status: string;
     /** 纯色格子用它（Tailwind 类，如 `bg-success`） */
     className?: string;
     /**
      * 需要插值的格子用它：**只给颜色值**（如 `color-mix(…)`），不要写成
-     * `background-color: …`。组件会把它塞进 `--cell-color` 再由
-     * `bg-(--cell-color)` 取用——这样格子的背景色与其他样式互不干扰，
-     * 也不会在 `style` 属性被重新序列化时丢掉（`color-mix` 会被某些
-     * 样式解析器判成非法值而整条丢弃）。
+     * `background-color: …`。
+     *
+     * 组件会把**所有出现过的颜色值去重**、编号成网格上的 `--heat-1..N`，
+     * 格子自己只写 `background-color: var(--heat-k)`。于是 300 个格子共用
+     * 那几条声明，而不是每人一条几十字符的 `color-mix(…)`；去重是每次从数据
+     * 现算的，档位数（记忆模式的 `graduateLevel`、刷题模式的连对目标）改了
+     * 立刻跟着变。
+     *
+     * 为什么不让格子直接写 `background-color: color-mix(…)`：`style` 属性会被
+     * 样式解析器重新序列化，`color-mix()` 会被某些实现判成非法值整条丢掉。
+     * `var()` 没有这个问题。
      */
     color?: string;
 }

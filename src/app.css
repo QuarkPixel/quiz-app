@@ -150,6 +150,15 @@
     --animate-breathe: breathe 1.4s ease-in-out infinite;
     /* 手动点完那一下「亮一下」（`animate-wink`，时长与 AppShell 的 CLICK_FLASH_MS 对齐） */
     --animate-wink: wink 700ms cubic-bezier(0.32, 0, 0.41, 1) forwards;
+    /*
+     * 热力图格子的 hover「弹一下」（`animate-heat-pop`）。
+     *
+     * 跑这一条的**只有一块高亮元素**，不是每个格子：格子自己不带 transition，
+     * 鼠标进到哪一格就把这块挪过去、重新挂载一次（见 `HeatmapCard`）。
+     * 时长 / 曲线对齐改造前的 `transition-transform group-hover:scale-125`，
+     * 观感不变，样式计算的对象从 300 个降到 1 个。
+     */
+    --animate-heat-pop: heat-pop 150ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
 /* 呼吸灯：明暗 + 轻轻缩放，像在吸气呼气 */
@@ -193,6 +202,17 @@
     }
     100% {
         transform: scale(1);
+    }
+}
+
+/* 热力图格子被指到：从原尺寸弹到 1.25 倍，停在那儿（`forwards`）。
+   高亮块每次换格子都会重新挂载，所以每进一格都会重放一次。 */
+@keyframes heat-pop {
+    from {
+        transform: scale(1);
+    }
+    to {
+        transform: scale(1.25);
     }
 }
 

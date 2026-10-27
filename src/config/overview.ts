@@ -7,18 +7,17 @@
  */
 
 /**
- * 热力图小方块的边长（像素）——**看得见的那块**。
+ * 热力图小方块的边长（像素）——**看得见的那块**，也就是格子里那个 `div`。
  *
- * 鼠标的 hitbox 不是这个数：每个格子外面还套着一圈 `padding`（见
- * `OVERVIEW_CELL_GAP`），按钮本体是 `OVERVIEW_CELL_STRIDE` 见方，整片格子
- * 之间没有缝隙，鼠标挪到两个方块中间也能命中最近的那个。
+ * 鼠标的 hitbox 不是这个数：命中是按坐标算的（`floor(offset / stride)`），
+ * 所以整片网格都是活的，鼠标落在两个方块中间也能命中最近的那一格。
  */
 export const OVERVIEW_CELL_SIZE = 12;
 
-/** 热力图小方块四周的留白（像素）：视觉上是间距，实际是按钮的内边距。 */
+/** 热力图小方块四周的留白（像素）：视觉上是间距，实际是格子的外边距。 */
 export const OVERVIEW_CELL_GAP = 4;
 
-/** 一个格子（含四周留白）占的方形边长：按钮本体，也是列与列的步长。 */
+/** 一个格子（含四周留白）占的方形边长：命中判定的步长，也是列与列的步长。 */
 export const OVERVIEW_CELL_STRIDE = OVERVIEW_CELL_SIZE + OVERVIEW_CELL_GAP;
 
 /**
