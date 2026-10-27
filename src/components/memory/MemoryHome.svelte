@@ -181,9 +181,11 @@
     <!-- 与总览**同一排卡片**（`MemoryOverviewCards`，连热力图一起）：宽度不够时
          横向滚动（渐变遮罩来自 rail），够宽时靠 `justify-between` 铺开。
          这里不传 `onJump`——首页没有列表可跳，格子点了不响应。
-         `-mx-4` 抵消页面自己的内边距，让 rail 的 px-5 与上面的标题大致对齐。 -->
+         `-mx-4` 抵消页面自己的内边距，让 rail 的 px-5 与上面的标题大致对齐。
+         `surface="background"`：首页底下是页面底色，不是弹窗的 popover——遮罩
+         必须同色，否则深色模式下会看到一条比背景亮的带子。 -->
     <div class="-mx-4">
-        <OverviewRail label="统计卡片">
+        <OverviewRail label="统计卡片" surface="background">
             <MemoryOverviewCards />
         </OverviewRail>
     </div>
