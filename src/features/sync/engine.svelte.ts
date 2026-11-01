@@ -33,6 +33,37 @@
  *        在后台时，这一下刷新会把内存里的会话整个抹掉（答到一半的题、刚挑好的
  *        活动池、复习进度条）。挂起的那笔等停手后自己补上，期间只是内存里的视图
  *        停在旧内容上。
+ *
+ * ── 状态怎么表示 ───────────────────────────────────────────────────────────
+ *
+ * 以前「同步现在处于什么状况」是 `status.phase` 加上**四个独立布尔**拼的：
+ *
+ *   `pendingChanges` / `targetMissing` / `storageBlocked` / `localChangeFallback`
+ *
+ * 四个布尔能拼出 16 种组合，而真实存在的只有几种：探针只会给出一种存储结论，
+ * 所以「存储写不进去」和「钩子不通知」不可能同时成立；「正在 push」和「目标已
+ * 删除」同时说，读的人不知道该信哪句。此前全靠调用方的 `&&` 兜着——`inSync`
+ * 里那条 `!storageBlocked &&` 就是在防「存储坏了还显示已同步」。
+ *
+ * 现在真相收在三个小联合里（见 `./indicator`）：`delta`（本地差多少，三态）、
+ * `target`（目标还在不在，三态）、`storage`（存储能不能写，三态互斥）。
+ * 对外那四个字段变成它们的**只读投影**，名字 / 类型 / 语义一个没变
+ * （`pendingChanges` / `targetMissing` 另留了 setter：外部会直接给引擎摆姿势，
+ * 写进来也只是换个联合值，仍然是同一份真相）：
+ *
+ *   pendingChanges  ← delta !== "clean"      （`unknown` 也算，宁可说还没同步）
+ *   targetMissing   ← target === "missing"
+ *   storageBlocked  ← storage === "blocked"
+ *   localChangeFallback ← storage === "hook-silent"
+ *
+ * 再加一个 `indicator` getter，把「指示点为什么是这个颜色」压成一支判别联合，
+ * `inSync` 就是它的 `kind === "synced"`——颜色只在一个地方算，UI 不必再排一遍
+ * 优先级，也就不会排出「红点配着已同步文案」这种组合。
+ *
+ * `status` 仍是独立的一份**操作记录**（phase / message / at / lastSyncAt /
+ * 三个计数 / conflicts），没有并进联合：它记的是「上一次操作干了什么」，
+ * 而上面那三个联合记的是「世界现在是什么样」，两者生命周期不同
+ * （自检也会写 `status`，却不改 delta / target 的判定基准）。
  */
 
 import { STORAGE_KEY_GENERAL } from "@/config";
@@ -69,6 +100,21 @@ import {
   toConflict,
   writeBankLocally,
 } from "./localwrite";
+import {
+  deltaAfterCheck,
+  indicatorOf,
+  inSyncOf,
+  localChangeFallbackOf,
+  pendingChangesOf,
+  storageBlockedOf,
+  storageHealthFromProbe,
+  targetAfterProbe,
+  targetMissingOf,
+  type LocalDelta,
+  type StorageHealth,
+  type SyncIndicator,
+  type TargetState,
+} from "./indicator";
 import { decodePayload, encodePayload } from "./payload";
 import { describeSyncResult, type SyncTransferSummary } from "./summary";
 import {
@@ -168,36 +214,101 @@ export class SyncEngine {
   });
 
   /**
+   * 本地和「上次同步成功的基准」差多少（`pendingChanges` 的真相）。
+   *
+   * 默认 `unknown`：没验证过之前一律说「还没同步」，绝不上来就报「已同步」。
+   * 本地一写入就置 `dirty`（便宜），每次同步成功后按真实数据重算
+   * （`computePendingChanges`）。**唯一的写入口是 `markDelta`**。
+   */
+  private delta: LocalDelta = $state("unknown");
+
+  /**
+   * 目标仓库还在不在（`targetMissing` 的真相）。
+   *
+   * `unverified` 不是「还在」：换了目标 / 清空记账之后我们并不知道那条 Gist
+   * 是否还存在，只是没有证据说它没了。**唯一的写入口是 `markTarget`**。
+   */
+  private target: TargetState = $state("unverified");
+
+  /**
+   * 本机存储能不能写（`storageBlocked` 与 `localChangeFallback` 的真相）。
+   *
+   * 三态互斥：探针只会给出一种结论，「既写不进去又只是钩子不生效」在类型上
+   * 就不成立。**唯一的写入口是 `markStorage`**（只在 `init` 的探针那里调）。
+   */
+  private storage: StorageHealth = $state("ok");
+
+  /**
    * 本地有没有还没推上去的东西（头部那个指示点靠它区分黄/绿）。
    *
-   * 默认 `true`：没验证过之前一律说「还没同步」，绝不上来就报「已同步」。
-   * 本地一写入就置 `true`（便宜），每次同步成功后按真实数据重算
-   * （`computePendingChanges`）。
+   * 只读投影：真相是 `delta`。`set` 留着是因为**外部会直接把它摆成某个值**
+   * （测试按「刚打开页面 / 上次同步成功」给引擎摆姿势）——写进来也只是换个
+   * `delta`，仍然只有一份真相，不存在「字段和状态各说各话」。
    */
-  pendingChanges: boolean = $state(true);
+  get pendingChanges(): boolean {
+    return pendingChangesOf(this.delta);
+  }
+
+  set pendingChanges(value: boolean) {
+    this.markDelta(value ? "dirty" : "clean");
+  }
 
   /**
    * 目标那条例代码片段已经不在了（被删 / 令牌换了账号）。
    *
    * 面板靠它把那条 id 划掉、旁边标「（已被删除）」——**不写一段说明文字**。
+   * 同上：只读投影，`set` 只给外部摆姿势用（`targetMissing = true` 等价于
+   * 「已确认它没了」）。
    */
-  targetMissing: boolean = $state(false);
+  get targetMissing(): boolean {
+    return targetMissingOf(this.target);
+  }
+
+  set targetMissing(value: boolean) {
+    this.markTarget(value ? "missing" : "unverified");
+  }
 
   /**
    * 这台设备的本地存储写不进去（隐私模式 / 系统拦截）。
    *
    * 那不是「同步坏了」而是「进度根本存不下来」，必须让用户看见，
-   * 所以指示点会因此标红（见 `inSync` 与 `AppShell`）。
+   * 所以指示点会因此标红（见 `indicator` 与 `AppShell`）。
+   * **没有 setter**：它是探针的结论，外部改不了（改了也没有意义）。
    */
-  storageBlocked: boolean = $state(false);
+  get storageBlocked(): boolean {
+    return storageBlockedOf(this.storage);
+  }
 
   /**
    * 是否在用「定时比对本地改动」的兜底（正常设备上永远是 false）。
    *
    * iOS 上见过覆盖 `localStorage.setItem` 不生效：写入照常落盘、但钩子一声不响，
    * 于是指示点永远不变黄、也不会自动上传。这时改用 `SYNC_LOCAL_POLL_MS` 定时比内容。
+   * 它和 `storageBlocked` 是同一根探针的两个互斥结论，所以共用 `storage`。
    */
-  localChangeFallback: boolean = $state(false);
+  get localChangeFallback(): boolean {
+    return localChangeFallbackOf(this.storage);
+  }
+
+  // ── 三个联合的写入口 ──────────────────────────────────────────────────────
+  //
+  // 集中在这里，是为了让「这个字段还能被谁改」只有一个答案。它们都不做判断，
+  // 只负责写——判断留给调用点（探针 / 比对 / 自检），因为只有那里知道依据是什么。
+
+  /** 记下「本地和基准差多少」。 */
+  private markDelta(next: LocalDelta): void {
+    this.delta = next;
+  }
+
+  /** 记下「目标仓库还在不在」。 */
+  private markTarget(next: TargetState): void {
+    this.target = next;
+  }
+
+  /** 记下「本机存储能不能写」（只在 `init` 的探针那里调用）。 */
+  private markStorage(next: StorageHealth): void {
+    this.storage = next;
+  }
 
   private localPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -253,7 +364,7 @@ export class SyncEngine {
     // 探针要在注册自己的监听**之前**跑：它自己会写一次探针键，
     // 否则会被当成「本地改动」。
     const health = probeStorageHealth();
-    this.storageBlocked = health === "blocked";
+    this.markStorage(storageHealthFromProbe(health));
     if (health === "silent") this.watchLocalChangesByPolling();
     if (health === "blocked") {
       console.warn(
@@ -275,7 +386,7 @@ export class SyncEngine {
       onLocalChange(() => {
         // 本地一有写入就先标成「还没同步」（这里不做全量比对：每次答题都会
         // 走到这儿，扫一遍所有题库太贵）。同步成功之后再按真实数据重算。
-        this.pendingChanges = true;
+        this.markDelta("dirty");
         this.schedulePush();
       }),
     );
@@ -307,7 +418,7 @@ export class SyncEngine {
     this.setStatus("idle", this.idleMessage());
     // 装在钩子之后按真实数据算一次：应用启动时那几次写入（配置规范化 / 迁移）
     // 不该被当成「有改动没同步」——比的是内容，不是 mtime。
-    this.pendingChanges = this.computePendingChanges();
+    this.markDelta(deltaAfterCheck(this.computePendingChanges()));
 
     // 打开 / 刷新页面就先对一次账（这就是「每次打开网页都会自动检查」）。
     // 只在真的配好了（令牌 + 自动同步）时才跑，免得白白发请求。
@@ -330,15 +441,31 @@ export class SyncEngine {
   }
 
   /**
+   * 指示点为什么是这个颜色——把上面那三个联合 + `status` 压成**一支**。
+   *
+   * 优先级在 `indicatorOf` 里定（红 → 黄 → 绿），这里只负责把事实递过去。
+   * 之所以做成投影而不是再存一份：任何一份副本都要回答「什么时候同步它」，
+   * 而那正是原来四个布尔各说各话的来源。
+   */
+  get indicator(): SyncIndicator {
+    return indicatorOf({
+      phase: this.status.phase,
+      message: this.status.message,
+      conflicts: this.status.conflicts,
+      delta: this.delta,
+      target: this.target,
+      storage: this.storage,
+    });
+  }
+
+  /**
    * 「现在和云端一致吗」——头部指示点用。
    *
-   * 两个条件都要满足：上一次同步是正常收尾的（`idle`，而不是正在跑 / 报错 /
-   * 离线 / 有冲突），而且本地没有还没推上去的改动。
+   * 只有 `indicator` 落在 `synced` 这一支才算：正在跑 / 报错 / 离线 / 有冲突 /
+   * 目标没了 / 存储写不进去 / 还有没推上去的改动，各是一支，谁也盖不住谁。
    */
   get inSync(): boolean {
-    // 存储写不进去时永远不算「已同步」——那时候本地数据随时会丢
-    if (this.storageBlocked) return false;
-    return this.status.phase === "idle" && !this.pendingChanges;
+    return inSyncOf(this.indicator);
   }
 
   /** 订阅同步结果（UI 用来弹提示）。 */
@@ -444,7 +571,8 @@ export class SyncEngine {
    */
   selectGist(gistId: string, gistUrl = ""): void {
     this.config.update({ gistId: gistId.trim(), gistUrl: gistUrl.trim() });
-    this.targetMissing = false;
+    // 换了目标 = 还没验过这条新 Gist 在不在（不是「确认它还在」）
+    this.markTarget("unverified");
     clearSyncMeta();
     this.status = {
       phase: "idle",
@@ -472,7 +600,7 @@ export class SyncEngine {
    * 进度一概不动**——这里只清「上次同步到哪」这本账。
    */
   clearSyncState(message: string): void {
-    this.targetMissing = false;
+    this.markTarget("unverified");
     // 「第一次看到冲突」的记录就在这本记账里，跟着一起删掉了
     clearSyncMeta();
     this.status = {
@@ -539,7 +667,9 @@ export class SyncEngine {
 
     // 只有「查当前目标」的那种自检才有资格改这个状态位：
     // 草稿自检压根没看目标，不能把它清掉
-    if (draft === undefined) this.targetMissing = result.missingTarget === true;
+    if (draft === undefined) {
+      this.markTarget(targetAfterProbe(result.missingTarget !== true));
+    }
 
     if (result.ok && result.gist) {
       // 顺手数一下云端有几个题库（同一份响应里就有全部文件内容，不用再请求）
@@ -682,7 +812,8 @@ export class SyncEngine {
 
   /** 关掉总开关：把内存里的同步状态清空（盘上的基准线不动）。 */
   private clearDisabledState(): void {
-    this.targetMissing = false;
+    // 关掉之后不再声称「目标没了」：这条判断属于同步，而同步已经停了
+    this.markTarget("unverified");
     if (this.pushTimer !== null) {
       clearTimeout(this.pushTimer);
       this.pushTimer = null;
@@ -712,7 +843,8 @@ export class SyncEngine {
    * `silent` 时装上，见 `SYNC_LOCAL_POLL_MS` 的说明。
    */
   private watchLocalChangesByPolling(): void {
-    this.localChangeFallback = true;
+    // 这里不再记 `localChangeFallback = true`：探针的结论在 `init` 里已经一次
+    // 记进 `storage`（`hook-silent`），再写一遍就成了两个可以各写各的字段。
     if (this.localPollTimer !== null) return;
     console.warn(
       "[sync] localStorage 钩子不生效，改用定时比对本地改动（iOS 上踩过）",
@@ -727,7 +859,7 @@ export class SyncEngine {
     if (!this.isOn()) return;
     if (document.visibilityState !== "visible") return;
     if (!this.computePendingChanges()) return;
-    this.pendingChanges = true;
+    this.markDelta("dirty");
     // 已经按内容哈希确认过脏了，绕开 mtime 那道门（见 `schedulePush`）
     this.schedulePush({ force: true });
   }
@@ -817,7 +949,8 @@ export class SyncEngine {
         }
         const files = filesOfState(local);
         const gist = await client.createGist(await this.encodeAll(files));
-        this.targetMissing = false;
+        // 刚建出来的这条当然还在
+        this.markTarget("alive");
         this.patchConfig({ gistId: gist.id, gistUrl: gist.htmlUrl });
         // 基准线写失败要出声：云端已经建好了，但账本没记上，下一轮会以为
         // "还是第一次同步"——轻则白建一条 Gist，重则两边的题库列表对不上。
@@ -846,11 +979,11 @@ export class SyncEngine {
       const gist = await client.getGist();
       if (!gist) {
         // 目标没了：卡片上会把那条 id 划掉标「已被删除」，这里只留一句给通知用的话
-        this.targetMissing = true;
+        this.markTarget("missing");
         this.setStatus("error", "目标仓库不存在");
         return IDLE_OUTCOME;
       }
-      this.targetMissing = false;
+      this.markTarget("alive");
       // 老版本只存过 id，顺手把网页地址补上（避免自己拼用户名拼错）
       if (!this.config.value.gistUrl && gist.htmlUrl) {
         this.patchConfig({ gistUrl: gist.htmlUrl });
@@ -1121,7 +1254,7 @@ export class SyncEngine {
     if (outcome.conflicts.length > 0) return; // reportConflict 已经写过状态
 
     // 走到这里说明这一轮正常收尾了：按真实数据重算「还有没有没推上去的东西」
-    this.pendingChanges = this.computePendingChanges();
+    this.markDelta(deltaAfterCheck(this.computePendingChanges()));
 
     const summary = describeSyncResult(outcome);
 
