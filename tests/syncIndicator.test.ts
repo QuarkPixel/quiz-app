@@ -112,6 +112,11 @@ beforeEach(() => {
   globalSettingsDialog.open = false;
   // 引擎是模块级单例，会跨用例留着状态：按「刚打开页面」重置一次
   syncEngine.pendingChanges = true;
+  // 「目标还在不在」也要一起重置：上一个用例可能跑过一轮「目标 Gist 不存在」
+  // 的同步，把引擎里那份记成了 `missing`。指示点现在把这一支算作红点（目标
+  // 没了确实要用户去换一条），不重置的话它会漏到下一个用例，让「刚打开页面」
+  // 一开始就是红的。
+  syncEngine.targetMissing = false;
   syncEngine.status = {
     phase: "idle",
     message: "还没同步过",
