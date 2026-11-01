@@ -15,6 +15,22 @@
  *   - 学习流：知道 = 对，忘记 = 错（连对到门槛就毕业进入复习）
  *   - 复习流：知道 = 对，忘记 = 错（对 → 阶梯 +1，错 → 阶梯归零）
  *
+ * ── 三份状态，各有各的主人 ──────────────────────────────────────────────────
+ *
+ * 这个类里有三种生命周期完全不同的状态，以前它们都是平行的字段，谁也说不清
+ * 哪个该跟谁一起清：
+ *
+ *   1. **题库级（落盘）**：`appState`（进度 / 设置 / 活动池）+ `round`
+ *      （学习轮：目标、这一批、已掌握）。退出会话、去复习、刷新页面都留着。
+ *   2. **会话级（`this.flow`）**：正在跑哪一档、队列、屏上那张卡与它的作答阶段。
+ *      见 `@/features/memory/flow`——**所有转移都走那里的纯函数**，
+ *      对外只留只读 getter（`run` / `currentQuestion` / `showResult` / …）。
+ *   3. **表单级**：`selectedAnswers`（用户刚点的自评）。换卡时清空。
+ *
+ * 复习轮的记账（进度条两个数、本轮连对目标、本轮降级过谁）长在 `flow` 的
+ * 「复习」这一支上——它们只在复习时有意义，不再是一堆平时恒为空、
+ * 复习时才有人读的平行字段。
+ *
  * ── 「一轮」只有一份真相 ────────────────────────────────────────────────────
  *
  * 学习轮的全部状态装在 `this.round`（`MemoryRoundState`）里：目标、这一批、
@@ -60,6 +76,38 @@ import {
   memoryRoundRemaining,
   pruneMemoryRound,
 } from "@/features/memory/round";
+import {
+  IDLE_FLOW,
+  addFailed,
+  addReviewed,
+  answerCard,
+  appendQueue,
+  cardIdOf,
+  clearReviewTarget,
+  completedOf,
+  countCompletion,
+  dropFromQueue,
+  dropQueueHead,
+  finishRun,
+  isAnswered,
+  queueOf,
+  ratingOf,
+  reAnswer,
+  removeFailed,
+  replaceQueue,
+  retainInQueue,
+  reviewOf,
+  rotateQueue,
+  runKindOf,
+  setReviewTarget,
+  showCard,
+  startLearning as beginLearningRun,
+  startReview as beginReviewRun,
+  correctnessOf,
+  type MemoryFlow,
+  type MemoryReviewRun,
+  type MemoryRun,
+} from "@/features/memory/flow";
 import { nextRev, revOf } from "@/lib/rev";
 import {
   normalizeMemoryProgressMap,
@@ -102,6 +150,7 @@ import { STORAGE_PREFIX_QUESTIONS } from "@/config";
 import { QUESTION_TYPES } from "@/quiz/types/registry";
 import {
   memoryAnswerKind,
+  MEMORY_ANSWER_CODE,
   type MemoryAnswerKind,
 } from "@/quiz/types/memory/logic";
 import {
@@ -111,23 +160,22 @@ import {
 import { maybePlayAnswerSound, maybePlaySuccessSound } from "@/sound";
 import { shuffle } from "@/features/quiz";
 
-export type MemoryRun = "idle" | "learning" | "reviewing";
+export type MemoryRunKind = MemoryRun["kind"];
 
 /** 两个模式共用的 deps 形状，保留旧名字方便调用方按模式引用。 */
 export type MemorySessionDeps = SessionDeps;
-
-/** 队列里的一项。 */
-interface MemoryQueueItem {
-  id: string;
-}
-
 
 export class MemorySession extends ProgressSessionBase {
   readonly bank: MemoryBank;
   readonly questions: MemoryQuestion[];
 
-  /** 当前会话：首页 / 学习 / 复习 */
-  run: MemoryRun = $state("idle");
+  /**
+   * 会话流（首页 / 学习 / 复习 + 屏上那张卡）。
+   *
+   * 唯一的写入口是 `@/features/memory/flow` 里那几个纯函数；这里对外只暴露
+   * 只读投影（`run` / `currentQuestion` / `showResult` / `answerKind` / …）。
+   */
+  private flow: MemoryFlow = $state(IDLE_FLOW);
   /**
    * 出题序号：每次 `selectNext()` 都 +1。
    *
@@ -142,55 +190,14 @@ export class MemorySession extends ProgressSessionBase {
    * **本轮的唯一真相**：目标、这一批、已掌握都在这里，池子是它的投影。
    * 落盘为 `StoredState.round`，学到一半退出 / 刷新都能续上；
    * 「结束本轮」= 置 `null`。
+   *
+   * 它**不在 `flow` 里**：学习轮是题库级状态，去复习时也留着（回到学习要接着学）。
    */
   round: MemoryRoundState | null = $state(null);
-  /**
-   * 本轮「复习完成」还需要连对几次（key = 题 id）。
-   * 默认 1（答对一次就完成本轮）；答错后提到 `correctStreakToMaster`（默认 3）。
-   * 这是**轮内**状态，不影响复习阶梯（阶梯只由答错重置、由答对推进）。
-   *
-   * 同一个值还会落盘一份（`state.memory.retry`）：中途退出 / 刷新后重新进复习时，
-   * 这些卡即使不在「今天到期」里也要继续回到本轮，直到补完连对次数。
-   */
-  reviewTarget = $state<Record<string, number>>({});
-  /** 本轮完成数量（用于结束文案） */
-  completed = $state(0);
-  /**
-   * 复习：今天这一轮的总题数（进度条分母）。
-   *
-   * 与 `reviewedIds` 一起**落盘**（`state.memory.review`）：复习轮同样可以中断续做，
-   * 中途退出 / 刷新后重新进来，进度条该接着数而不是从 0 / N 重来。
-   * 开轮时定下，中途不变——答错补进来的卡不该把分母撑大。
-   */
-  reviewTotal = $state(0);
-  /**
-   * 复习：今天已经复习完的题（每过一题就加进来，进度条靠它变绿）。
-   *
-   * 落盘的那一份在 `state.memory.review.reviewedIds`，跨过凌晨 5 点自动作废。
-   */
-  reviewedIds = $state<string[]>([]);
-  /**
-   * 本轮复习里被降级过的题（「忘记」→ 阶梯归零；「模糊」→ 阶梯退一级）。
-   *
-   * 「这一轮完成」≠「掌握了」：降级说明没记住，阶梯已经被调低。
-   * 所以本轮连对达标时，只要这道在本轮降级过，就**不允许**再推进阶梯，
-   * 否则答错那道会和一次答对那道拿到同样的间隔（之前的 bug），
-   * 「模糊」退掉的那一级也会立刻被加回来。
-   */
-  failedThisRound = $state<string[]>([]);
+  /** 用户刚点的自评（表单草稿；换卡时清空）。 */
+  selectedAnswers: number[] = $state([]);
   /** 临时调试：当前快进的天数（响应式，供 UI 与 now() 使用） */
   debugOffset = $state(0);
-  // ── 与 QuestionArea 对齐的会话状态 ─────────────────────────────────
-  currentQuestion: Question | null = $state(null);
-  showResult = $state(false);
-  /**
-   * 当前这道卡这一轮的自评结果（知道 / 模糊 / 忘记）。
-   * 答案页的「记错了 / 模糊」会改写它，按钮组合也按它决定。
-   */
-  answerKind: MemoryAnswerKind = $state("know");
-  /** 最终判定（「知道 / 模糊」算没答错；「记错了」会把 isCorrect 翻回 false） */
-  isCorrect = $state(false);
-  selectedAnswers: number[] = $state([]);
 
   appState: RuntimeState = $state(buildRuntimeState([], createEmptyState()));
 
@@ -203,9 +210,6 @@ export class MemorySession extends ProgressSessionBase {
    * 导致加天数对当前会话无效（总览里的「N 天后复习」永远不变）。
    */
   private readonly fixedNow: (() => number) | null = null;
-  private queue: MemoryQueueItem[] = $state([]);
-  /** submit 前的快照，供「记错了」回退 */
-  private preSubmitState: RuntimeState | null = null;
 
   constructor(
     bank: MemoryBank,
@@ -224,7 +228,6 @@ export class MemorySession extends ProgressSessionBase {
     // 进行中的一轮（如果有）：目标 / 这一批 / 已掌握整份读回来
     this.round = this.appState.round ?? null;
     this.normalizeQuestionTypes();
-    this.syncQueueToPool();
   }
 
   // ── ProgressSessionBase 的四个挂钩 ──────────────────────────────────
@@ -241,9 +244,121 @@ export class MemorySession extends ProgressSessionBase {
     return this.appState;
   }
 
+  // ── 会话流（只读投影） ──────────────────────────────────────────────
+
+  /** 当前会话：首页 / 学习 / 复习 */
+  get run(): MemoryRunKind {
+    return runKindOf(this.flow);
+  }
+
+  /** 本轮是否正在进行（首页为 false）。键盘层用它决定 Esc 是否生效。 */
+  get isSessionActive(): boolean {
+    return runKindOf(this.flow) !== "idle";
+  }
+
+  /**
+   * 屏上那张卡（首页 / 队列空时为 `null`）。
+   *
+   * **必须排在 `currentTypeDef` 前面**：`$derived` 字段按书写顺序初始化，
+   * 反过来的话后者读前者会命中「used before its initialization」。
+   */
+  currentQuestion: Question | null = $derived(
+    this.lookupQuestion(cardIdOf(this.flow)),
+  );
+
+  /** 当前这道卡的题型定义（题干区靠它选渲染分支）。 */
   currentTypeDef = $derived(
     this.currentQuestion ? QUESTION_TYPES[this.currentQuestion.type] : null,
   );
+
+  /** 是否已经亮出答案。 */
+  get showResult(): boolean {
+    return isAnswered(this.flow);
+  }
+
+  /** 当前这道卡这一轮的自评结果（知道 / 模糊 / 忘记）；题干页恒为「知道」。 */
+  get answerKind(): MemoryAnswerKind {
+    return ratingOf(this.flow) ?? "know";
+  }
+
+  /** 最终判定（「知道 / 模糊」算没答错；「记错了」会把 isCorrect 翻回 false） */
+  get isCorrect(): boolean {
+    return correctnessOf(this.flow);
+  }
+
+  /** 本轮完成数量（学习 = 学会几道；复习 = 复习完几道） */
+  get completed(): number {
+    return completedOf(this.flow);
+  }
+
+  /**
+   * 本轮「复习完成」还需要连对几次（key = 题 id）。
+   * 默认 1（答对一次就完成本轮）；答错后提到 `correctStreakToMaster`（默认 3）。
+   *
+   * 只在复习时才有值——它长在会话流的「复习」那一支上，首页 / 学习时读它得到
+   * 空对象，不会出现「上一轮复习的待办漏到这一轮」。
+   */
+  get reviewTarget(): Readonly<Record<string, number>> {
+    return reviewOf(this.flow)?.target ?? EMPTY_REVIEW_TARGET;
+  }
+
+  /**
+   * 复习：今天这一轮的总题数（进度条分母）。
+   *
+   * 与 `reviewedIds` 一起**落盘**（`state.memory.review`）：复习轮同样可以中断续做，
+   * 中途退出 / 刷新后重新进来，进度条该接着数而不是从 0 / N 重来。
+   * 开轮时定下，中途不变——答错补进来的卡不该把分母撑大。
+   */
+  get reviewTotal(): number {
+    return this.reviewedToday().total;
+  }
+
+  /**
+   * 复习：今天已经复习完的题（每过一题就加进来，进度条靠它变绿）。
+   *
+   * 落盘的那一份在 `state.memory.review.reviewedIds`，跨过凌晨 5 点自动作废。
+   */
+  get reviewedIds(): readonly string[] {
+    return this.reviewedToday().reviewed;
+  }
+
+  /**
+   * 「今天复习了哪几道 / 一共几道」——**两个主人在同一份事实上接力**。
+   *
+   * - 复习轮跑着时，实时值长在会话流上（`flow.run.review`），跟着流一起走；
+   * - 轮收尾（「退出本轮」/ 队列走完）后流回到 `idle`，那份就没了，
+   *   但「今天复习过这几道」是**事实**，不会因为退出而变回没复习。
+   *   它还留在盘上（`state.memory.review`），隔天由 `normalizeMemoryReview` 净化。
+   *
+   * 所以投影统一走这里：会话里有就读会话，没有就读盘上今天的那份。
+   * 少了这一层兜底，进度条会在「答完最后一道」那一瞬间从 `5 / 5` 掉回 `0 / 0`。
+   *
+   * 注意 `reviewTarget` **不走**这条路：它是「本轮还没补完的连对」，属于正在跑的
+   * 这一轮，轮结束就该归零（否则上一轮的待办会漏到下一次复习）。
+   */
+  private reviewedToday(): {
+    reviewed: readonly string[];
+    total: number;
+  } {
+    const live = reviewOf(this.flow);
+    if (live) return { reviewed: live.reviewed, total: live.total };
+    const stored = this.storedReviewToday();
+    return stored
+      ? { reviewed: stored.reviewedIds, total: stored.total }
+      : { reviewed: EMPTY_IDS, total: 0 };
+  }
+
+  /**
+   * 本轮复习里被降级过的题（「忘记」→ 阶梯归零；「模糊」→ 阶梯退一级）。
+   *
+   * 「这一轮完成」≠「掌握了」：降级说明没记住，阶梯已经被调低。
+   * 所以本轮连对达标时，只要这道在本轮降级过，就**不允许**再推进阶梯，
+   * 否则答错那道会和一次答对那道拿到同样的间隔（之前的 bug），
+   * 「模糊」退掉的那一级也会立刻被加回来。
+   */
+  get failedThisRound(): readonly string[] {
+    return reviewOf(this.flow)?.failed ?? EMPTY_IDS;
+  }
 
   // ── 记忆模式自己的进度与设置 ────────────────────────────────────────
 
@@ -372,17 +487,14 @@ export class MemorySession extends ProgressSessionBase {
     return Math.min(this.roundMastered, this.targetPerRound);
   }
 
-  /** 复习进度：今天要复习的总题数（没有会话时用当前到期数） */
+  /** 复习进度：今天已经复习了几道 */
   get reviewDoneCount(): number {
     return this.reviewedIds.length;
   }
 
   /** 首页「学习新的题目」这次会学几道 */
   get nextBatchSize(): number {
-    return Math.min(
-      this.learnableCount,
-      this.targetPerRound,
-    );
+    return Math.min(this.learnableCount, this.targetPerRound);
   }
 
   /**
@@ -417,6 +529,11 @@ export class MemorySession extends ProgressSessionBase {
   /** 「学习新的题目」还能学几道：没学过的 + 学到一半的 */
   get learnableCount(): number {
     return this.newCount + this.learningCount;
+  }
+
+  private lookupQuestion(id: string | null): Question | null {
+    if (id === null) return null;
+    return this.questions.find((q) => q.id === id) ?? null;
   }
 
   /**
@@ -477,12 +594,10 @@ export class MemorySession extends ProgressSessionBase {
       return;
     }
 
-    this.run = "learning";
-    this.completed = 0;
-    this.reviewTarget = {};
-    this.queue = shuffle(
-      this.appState.activePool.map((item) => ({ id: item.id })),
+    this.flow = beginLearningRun(
+      shuffle(this.appState.activePool.map((item) => item.id)),
     );
+    this.selectedAnswers = [];
     // 开轮这一步也要落盘：这一批是谁、目标几道，都是刚定下的，不写下去
     // 的话「开轮后立刻刷新 / 切题库」会读回上一份状态
     this.save();
@@ -556,9 +671,6 @@ export class MemorySession extends ProgressSessionBase {
     const stored = this.storedReviewToday();
     const reviewedBefore = stored?.reviewedIds ?? [];
 
-    this.run = "reviewing";
-    this.completed = 0;
-    this.reviewTarget = { ...retryTargets };
     // 进度条的两个数：
     //   分子 = 今天已经复习过的（跨会话保留，退出再进来接着数）
     //   分母 = 今天这一轮总共要过几道。**开轮时就按当前队列定下并落盘**，
@@ -566,15 +678,24 @@ export class MemorySession extends ProgressSessionBase {
     //          重进时取「存下来的 total」与「这一轮实际要过的题」的较大值——
     //          到期数变了（例如今天又到期了新卡）时分母跟着长，不会画出「6 / 5」
     const queueIds = new Set(queueQuestions.map((q) => q.id));
-    this.reviewedIds = [...reviewedBefore];
-    this.reviewTotal = Math.max(
-      stored?.total ?? 0,
-      new Set([...reviewedBefore, ...queueIds]).size,
-    );
-    // 带待办的卡都是本轮答错过的：重新进来后完成连对时同样不许推进掌握阶梯
-    // （阶梯已经归零并定在「明天」，推进了就会变成和一次答对一样的间隔）
-    this.failedThisRound = Object.keys(retryTargets);
+    const review: MemoryReviewRun = {
+      target: { ...retryTargets },
+      reviewed: [...reviewedBefore],
+      total: Math.max(
+        stored?.total ?? 0,
+        new Set([...reviewedBefore, ...queueIds]).size,
+      ),
+      // 带待办的卡都是本轮答错过的：重新进来后完成连对时同样不许推进掌握阶梯
+      // （阶梯已经归零并定在「明天」，推进了就会变成和一次答对一样的间隔）
+      failed: Object.keys(retryTargets),
+    };
+
     const shuffled = shuffle(queueQuestions);
+    this.flow = beginReviewRun(
+      shuffled.map((q) => q.id),
+      review,
+    );
+    this.selectedAnswers = [];
     this.appState = {
       ...this.appState,
       // 复习轮借 `activePool` 当到期队列用。学习轮不需要另存一份：
@@ -589,7 +710,6 @@ export class MemorySession extends ProgressSessionBase {
       })),
     };
     this.save();
-    this.syncQueueToPool();
     this.selectNext();
   }
 
@@ -611,24 +731,20 @@ export class MemorySession extends ProgressSessionBase {
    * 判分流要的是**快照**而不是直接改 `appState`：它随后会用 `writeProgress` /
    * `writeRetryTarget` 重建整个 `memory` 段，从 `base` 展开——先改 `appState`
    * 会被那一步覆盖（真踩过：答错后退出，`memory.review` 整个丢了，重进来
-   * 进度条又变 0 / N）。所以这里只动 `reviewedIds`，清单由调用方写进那一次
+   * 进度条又变 0 / N）。所以这里只动会话流，清单由调用方写进那一次
    * `memory` 段里（`withReview`）。
    *
    * 不走判分流的路径（「下一题」结算、总览里标熟）用 `markReviewedAndSave()`
    * ——那里没有别的东西要一起写，直接落进 `appState` 更省事。
    */
   private reviewSnapshot(id: string): MemoryReviewState | undefined {
-    if (!this.reviewedIds.includes(id)) {
-      this.reviewedIds = [...this.reviewedIds, id];
-    }
+    this.flow = addReviewed(this.flow, id);
     return this.reviewSectionFor(this.reviewedIds);
   }
 
   /** 记一道已复习，并**直接写进 `appState`**（调用方之后照常 `save()`）。 */
   private markReviewedAndSave(id: string): void {
-    this.reviewedIds = this.reviewedIds.includes(id)
-      ? this.reviewedIds
-      : [...this.reviewedIds, id];
+    this.flow = addReviewed(this.flow, id);
     this.appState = {
       ...this.appState,
       memory: this.memorySection(this.appState, {
@@ -644,7 +760,7 @@ export class MemorySession extends ProgressSessionBase {
    * 隔天 / 结构非法的数据由 `normalizeMemoryReview` 在载入时丢掉。
    */
   private reviewSectionFor(
-    reviewedIds: string[],
+    reviewedIds: readonly string[],
   ): MemoryReviewState | undefined {
     if (reviewedIds.length === 0) return undefined;
     return {
@@ -656,10 +772,7 @@ export class MemorySession extends ProgressSessionBase {
 
   /** 回到首页。 */
   exitSession(): void {
-    this.run = "idle";
-    this.queue = [];
-    this.currentQuestion = null;
-    this.showResult = false;
+    this.flow = finishRun();
     this.selectedAnswers = [];
     // 这一轮整个留着（`round` 不动）：下次「学习新的题目」接着这一轮继续。
     // 池子不用特意放回 `activePool`——`startLearning` 会按 `round` 重建。
@@ -702,13 +815,10 @@ export class MemorySession extends ProgressSessionBase {
       }),
     });
 
-    this.queue = this.queue.filter((item) => item.id !== id);
-    this.failedThisRound = this.failedThisRound.filter((other) => other !== id);
-    if (id in this.reviewTarget) {
-      const rest = { ...this.reviewTarget };
-      delete rest[id];
-      this.reviewTarget = rest;
-    }
+    // 本轮里关于这张卡的三处记账一起清掉（队列 / 连对要求 / 降级记录）
+    this.flow = dropFromQueue(this.flow, id);
+    this.flow = removeFailed(this.flow, id);
+    this.flow = clearReviewTarget(this.flow, id);
     this.clearRetryTarget(id);
     if (this.run === "reviewing" && inRound) this.markReviewedAndSave(id);
 
@@ -746,13 +856,9 @@ export class MemorySession extends ProgressSessionBase {
   endRound(): void {
     if (this.run !== "learning") return;
 
-    this.queue = [];
-    this.currentQuestion = null;
-    this.showResult = false;
+    this.flow = finishRun();
     this.selectedAnswers = [];
-    this.reviewTarget = {};
     this.round = null;
-    this.run = "idle";
     this.appState = {
       ...this.appState,
       activePool: [],
@@ -912,10 +1018,10 @@ export class MemorySession extends ProgressSessionBase {
       round,
       picked.map((q) => q.id),
     );
-    this.queue = [
-      ...this.queue,
-      ...shuffle(picked.map((q) => ({ id: q.id }))),
-    ];
+    this.flow = appendQueue(
+      this.flow,
+      shuffle(picked.map((q) => q.id)),
+    );
   }
 
   /**
@@ -940,58 +1046,60 @@ export class MemorySession extends ProgressSessionBase {
    * activePool，所以这里跳过已经不在池子里的题，避免刚毕业的卡又被抽出来。
    */
   selectNext(): void {
-    const next = this.queue[0];
-    if (!next) {
+    const next = queueOf(this.flow)[0];
+    if (next === undefined) {
       this.finishSession();
       return;
     }
 
-    const inPool = this.appState.activePool.some(
-      (item) => item.id === next.id,
-    );
-    const question = inPool
-      ? (this.questions.find((q) => q.id === next.id) ?? null)
-      : null;
+    const inPool = this.appState.activePool.some((item) => item.id === next);
+    const question = inPool ? this.lookupQuestion(next) : null;
 
     if (!question) {
-      this.queue = this.queue.slice(1);
+      this.flow = dropQueueHead(this.flow);
       this.selectNext();
       return;
     }
 
-    this.currentQuestion = question;
+    this.flow = showCard(this.flow, question.id);
     this.presentationSeq += 1;
-    this.showResult = false;
-    this.answerKind = "know";
-    this.isCorrect = false;
     this.selectedAnswers = [];
-    this.preSubmitState = null;
     this.resetCopyQuestionStatus();
+  }
+
+  /**
+   * 点一个自评（知道 / 模糊 / 忘记）并结算。
+   *
+   * UI 走这条；`selectedAnswers` 仍是那条「表单草稿」的公开入口（测试与键盘层
+   * 也用它），两者最终都落到 `submit()` 的同一条转移上。
+   */
+  pick(rating: MemoryAnswerKind): void {
+    if (this.showResult) return;
+    this.selectedAnswers = [MEMORY_ANSWER_CODE[rating]];
+    this.submit();
   }
 
   /** 记忆题型的「提交」= 用自评结果（知道 / 模糊 / 忘记）结算这一道卡。 */
   submit(): void {
+    // 只有「题干页」收自评：答案页重复提交、首页提交都是空操作
+    if (this.flow.card?.kind !== "asking") return;
     const question = this.currentQuestion;
-    if (!question || this.showResult || this.selectedAnswers.length === 0) {
-      return;
-    }
+    if (!question || this.selectedAnswers.length === 0) return;
 
     const kind = memoryAnswerKind(this.selectedAnswers[0]);
-    this.answerKind = kind;
     // 「模糊」不算答错：答案卡片保持正常配色，反馈音 / 闪烁也按「没答错」处理
-    this.isCorrect = kind !== "forget";
-    this.showResult = true;
-
-    this.preSubmitState = this.appState;
+    const correct = kind !== "forget";
+    // 快照要在改 appState **之前**取：答案页的改判以它为起点重算
+    this.flow = answerCard(this.flow, kind, correct, this.appState);
     this.appState = this.applyMemoryAnswer(question, kind);
     this.save();
 
-    this.deps.flash(this.isCorrect);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, this.isCorrect);
+    this.deps.flash(correct);
+    maybePlayAnswerSound(this.globalSettings, this.deps.sound, correct);
 
     // 「答对自动下一题」是全局设置（⌘N 切换）：刷题模式在 submit 末尾做同一件事，
     // 记忆模式的「答对」= 自评「知道」。
-    if (this.globalSettings.autoNextOnCorrect && this.isCorrect) {
+    if (this.globalSettings.autoNextOnCorrect && correct) {
       this.advanceQuestionFlow();
     }
   }
@@ -1003,18 +1111,19 @@ export class MemorySession extends ProgressSessionBase {
    *   - 刷题模式：答错 → 点它 → 改成答对
    *   - 记忆模式：点「知道」显示答案后发现自己没记住 → 点「模糊」/「记错了」
    *
-   * 两者都基于 `preSubmitState`（提交前的状态）重算，所以反复改判不会叠加。
+   * 两者都基于判分前的快照重算，所以反复改判不会叠加。
    */
   private downgradeAnswer(kind: MemoryAnswerKind): void {
+    const rewind = this.flow.card?.kind === "answered" ? this.flow.card.rewind : null;
     const question = this.currentQuestion;
-    if (!question || !this.showResult || !this.preSubmitState) return;
+    if (!rewind || !question) return;
 
-    this.answerKind = kind;
-    this.isCorrect = kind !== "forget";
-    this.appState = this.applyMemoryAnswer(question, kind, this.preSubmitState);
+    const correct = kind !== "forget";
+    this.flow = reAnswer(this.flow, kind, correct, rewind);
+    this.appState = this.applyMemoryAnswer(question, kind, rewind);
     this.save();
-    this.deps.flash(this.isCorrect);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, this.isCorrect);
+    this.deps.flash(correct);
+    maybePlayAnswerSound(this.globalSettings, this.deps.sound, correct);
   }
 
   /** 「记错了」：改判成忘记（原来答「知道」或「模糊」时才可用）。 */
@@ -1043,7 +1152,7 @@ export class MemorySession extends ProgressSessionBase {
       // 连对够了的卡片在 submit 时就已经毕业、离开了 activePool，
       // 所以 `item === undefined` 就是「这道学会了」，正好只出现一次。
       if (item !== undefined && item.consecutiveCorrect < this.streakToLearn) {
-        this.requeue(question.id);
+        this.requeue();
         return;
       }
       this.graduateInLearning(question.id);
@@ -1055,7 +1164,7 @@ export class MemorySession extends ProgressSessionBase {
     const target = this.reviewTarget[question.id] ?? 1;
     const streak = progress?.streak ?? 0;
     if (streak < target) {
-      this.requeue(question.id);
+      this.requeue();
       return;
     }
 
@@ -1079,7 +1188,7 @@ export class MemorySession extends ProgressSessionBase {
         };
       }
     }
-    delete this.reviewTarget[question.id];
+    this.flow = clearReviewTarget(this.flow, question.id);
     // 这一道的本轮要求补完了：清掉落盘的待办，并立刻把阶梯 / streak 写下去
     // （「下一题」之后再关页面不该丢掉这次推进）
     this.clearRetryTarget(question.id);
@@ -1100,14 +1209,14 @@ export class MemorySession extends ProgressSessionBase {
     if (this.round) {
       this.round = markMemoryRoundMastered(this.round, id);
     }
-    this.completed += 1;
+    this.flow = countCompletion(this.flow);
 
     // 出队 + 把队列里已经离开活动池的题清掉
-    this.queue = this.queue
-      .slice(1)
-      .filter((item) =>
-        this.appState.activePool.some((poolItem) => poolItem.id === item.id),
-      );
+    this.flow = dropQueueHead(this.flow);
+    this.flow = retainInQueue(
+      this.flow,
+      new Set(this.appState.activePool.map((item) => item.id)),
+    );
 
     // 补卡（「每掌握一题就补一题」时才会补）：新卡进池子，同时排进本轮队列
     // （`refillRound` 自己会把新卡排到队尾）
@@ -1140,10 +1249,7 @@ export class MemorySession extends ProgressSessionBase {
     const mastered = this.roundMastered;
     const target = this.targetPerRound;
     this.round = null;
-    this.run = "idle";
-    this.currentQuestion = null;
-    this.queue = [];
-    this.showResult = false;
+    this.flow = finishRun();
     this.selectedAnswers = [];
     this.appState = {
       ...this.appState,
@@ -1175,9 +1281,14 @@ export class MemorySession extends ProgressSessionBase {
     maybePlaySuccessSound(this.globalSettings, this.deps.sound);
   }
 
-  /** 排到队尾（学习流没连对够时用）。 */
-  private requeue(id: string): void {
-    this.queue = [...this.queue.slice(1), { id }];
+  /**
+   * 把当前这道排到队尾（学习流没连对够、复习流没补完连对时用）。
+   *
+   * 不收 id：要转的**永远是队头**，而队头就是屏上这一张（`card` 只可能指向
+   * 队头）。以前收一个 id 却从不读它，等于留了个「传谁都行」的假参数。
+   */
+  private requeue(): void {
+    this.flow = rotateQueue(this.flow);
     this.selectNext();
   }
 
@@ -1201,15 +1312,15 @@ export class MemorySession extends ProgressSessionBase {
 
   /** 出队并计入本轮完成数。 */
   private dropCurrent(): void {
-    this.queue = this.queue.slice(1);
-    this.completed += 1;
+    this.flow = countCompletion(this.flow);
+    this.flow = dropQueueHead(this.flow);
     this.selectNext();
   }
 
   // ── 状态变迁 ────────────────────────────────────────────────────────
 
   /**
-   * 把一次自评写进 `RuntimeState`。
+   * 把一次自评写进 `RuntimeState`（并顺手改会话流里的复习记账）。
    *
    * - 学习流：知道 → 连对 +1，连对到 N 次就转「复习中」；忘记 → 连对清零
    * - 复习流：知道 → 只累加本轮连对次数（不动阶梯）；忘记 → 阶梯归零 + 本轮目标提到 N
@@ -1240,47 +1351,12 @@ export class MemorySession extends ProgressSessionBase {
     if (this.run === "reviewing") {
       const item = current ?? createReviewProgress(this.now);
 
-      if (kind === "fuzzy") {
-        // 模糊：掌握阶梯退一级（不清零），本轮照「忘记」处理——目标提到 N、
-        // 计入本轮已复习、完成时也不推进阶梯（否则退掉的这一级立刻又被加回来）
-        this.reviewTarget = {
-          ...this.reviewTarget,
-          [question.id]: this.streakToLearn,
-        };
-        if (!this.failedThisRound.includes(question.id)) {
-          this.failedThisRound = [...this.failedThisRound, question.id];
-        }
-        const review = this.reviewSnapshot(question.id);
-        return {
-          ...base,
-          activePool,
-          memory: this.withReview(
-            this.writeRetryTarget(
-              this.writeProgress(
-                base,
-                question.id,
-                fuzzyReview(item, this.now),
-              ),
-              question.id,
-              this.streakToLearn,
-            ),
-            review,
-          ),
-          currentRound: base.currentRound + 1,
-        };
-      }
-
-      if (kind === "forget") {
-        // 忘记了：掌握阶梯归零（明天从 1 天重来），本轮连对清零，
-        // 并且这道卡在本轮需要连对 N 次才算复习完——这个要求同时落盘，
-        // 中途退出 / 刷新后重新进复习时它还会回到本轮（见 `retryTargetsToday`）。
-        this.reviewTarget = {
-          ...this.reviewTarget,
-          [question.id]: this.streakToLearn,
-        };
-        if (!this.failedThisRound.includes(question.id)) {
-          this.failedThisRound = [...this.failedThisRound, question.id];
-        }
+      if (kind === "fuzzy" || kind === "forget") {
+        // 模糊：掌握阶梯退一级（不清零）；忘记：阶梯归零（明天从 1 天重来）。
+        // 两者本轮都按「没记住」处理——目标提到 N、计入本轮已复习、
+        // 完成时也不推进阶梯（否则退掉的那一级立刻又被加回来）
+        this.flow = setReviewTarget(this.flow, question.id, this.streakToLearn);
+        this.flow = addFailed(this.flow, question.id);
         // 这道今天已经处理过了（之后还会再出现几次也不算新的一题），
         // 进度条与「今日已复习」都要认它
         const review = this.reviewSnapshot(question.id);
@@ -1292,7 +1368,9 @@ export class MemorySession extends ProgressSessionBase {
               this.writeProgress(
                 base,
                 question.id,
-                resetReview(item, this.now),
+                kind === "fuzzy"
+                  ? fuzzyReview(item, this.now)
+                  : resetReview(item, this.now),
               ),
               question.id,
               this.streakToLearn,
@@ -1454,16 +1532,16 @@ export class MemorySession extends ProgressSessionBase {
         this.finishLearningRound("bank");
         return;
       }
-      this.queue = shuffle(alive.map((item) => ({ id: item.id })));
+      this.flow = replaceQueue(
+        this.flow,
+        shuffle(alive.map((item) => item.id)),
+      );
       this.selectNext();
       return;
     }
 
-    this.run = "idle";
-    this.currentQuestion = null;
-    this.showResult = false;
+    this.flow = finishRun();
     this.selectedAnswers = [];
-    this.queue = [];
     // 复习轮的到期队列用完就丢掉；学习轮的池子由 `round` 重建，
     // 所以这里不用（也没有）暂存位要放回来。
     //
@@ -1481,11 +1559,6 @@ export class MemorySession extends ProgressSessionBase {
       "success",
     );
     maybePlaySuccessSound(this.globalSettings, this.deps.sound);
-  }
-
-
-  private syncQueueToPool(): void {
-    this.queue = this.appState.activePool.map((item) => ({ id: item.id }));
   }
 
   // ── 设置（全局设置开关在基类） ──────────────────────────────────────
@@ -1515,11 +1588,6 @@ export class MemorySession extends ProgressSessionBase {
     this.save();
   }
 
-  /** 本轮是否正在进行（首页为 false）。键盘层用它决定 Esc / 题目级按键是否生效。 */
-  get isSessionActive(): boolean {
-    return this.run !== "idle";
-  }
-
   /** 重置记忆模式进度（保留设置）；调试用的时间偏移一并清零。 */
   reset(): void {
     if (this.debugOffset !== 0) this.debugResetDays();
@@ -1531,12 +1599,10 @@ export class MemorySession extends ProgressSessionBase {
         settings: this.memorySettings,
       },
     });
-    // 本轮是会话状态，换掉 appState 不会自动清：留着会让下一轮从旧的
-    // 「已掌握 X / Y」接着数，只学几道就提前结束本轮；复习进度条的两个数同理。
+    // 本轮是题库级状态，换掉 appState 不会自动清：留着会让下一轮从旧的
+    // 「已掌握 X / Y」接着数，只学几道就提前结束本轮。
     // 现在「清一轮」只有一句 `round = null`（以前要记得清四个字段）。
     this.round = null;
-    this.reviewedIds = [];
-    this.reviewTotal = 0;
     this.exitSession();
     this.save();
   }
@@ -1622,8 +1688,6 @@ export class MemorySession extends ProgressSessionBase {
     // 重新开始：否则旧的一轮会叠到导入的进度上，几道就结束本轮；
     // 复习进度条的两个数也是「本轮」状态，一起归零
     this.round = null;
-    this.reviewedIds = [];
-    this.reviewTotal = 0;
     this.exitSession();
   }
 
@@ -1632,7 +1696,7 @@ export class MemorySession extends ProgressSessionBase {
   private save(): void {
     // 整份交给 `saveState`：它内部有 `persistedState` 白名单（`pendingIds` 这类
     // 运行期字段不会落盘），这里再手抄一遍字段清单只会多一处漏改点。
-    // 唯一需要覆盖的是 `round`：本轮是**会话状态**，`appState.round` 只在
+    // 唯一需要覆盖的是 `round`：本轮是题库级状态，`appState.round` 只在
     // 载入 / 导入时写过一次，之后一直由 `this.round` 领先（见类头注释）。
     saveState(this.hash, {
       ...this.appState,
@@ -1666,6 +1730,10 @@ export class MemorySession extends ProgressSessionBase {
     );
   }
 }
+
+/** 空复习记账的共享常量（避免每次读 getter 都新建对象）。 */
+const EMPTY_IDS: readonly string[] = [];
+const EMPTY_REVIEW_TARGET: Readonly<Record<string, number>> = {};
 
 function createEmptyState(): StoredState {
   return createEmptyStoredState(createDefaultBankSettings());

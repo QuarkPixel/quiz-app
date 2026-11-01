@@ -2,7 +2,6 @@
     import { Button } from "$lib/components/ui/button";
     import { useMemorySession } from "@/features/memory/context";
     import {
-        MEMORY_ANSWER_CODE,
         memoryAnswerDowngrades,
         type MemoryAnswerKind,
     } from "@/quiz/types/memory/logic";
@@ -24,9 +23,7 @@
     const downgrades = $derived(memoryAnswerDowngrades(session.answerKind));
 
     function pick(kind: MemoryAnswerKind): void {
-        if (session.showResult) return;
-        session.selectedAnswers = [MEMORY_ANSWER_CODE[kind]];
-        session.submit();
+        session.pick(kind);
     }
 </script>
 
