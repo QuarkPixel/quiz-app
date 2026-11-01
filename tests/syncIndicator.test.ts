@@ -159,7 +159,7 @@ describe("头部的云同步指示点", () => {
       render();
       expect(toneColorVar(), "还没同步过应该是黄的").toBe("--warning");
       expectToneDot();
-      expect(indicator()?.getAttribute("aria-label")).toContain("还没同步");
+      expect(indicator()?.getAttribute("aria-label")).toContain("暂未同步");
 
       await syncEngine.sync();
       flushSync();

@@ -9,6 +9,11 @@
     import { globalSettingsStore } from "@/features/globalSettings.svelte";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import { syncEngine } from "@/features/sync/engine.svelte";
+    import {
+        labelOf,
+        toneOf,
+        type SyncTone,
+    } from "@/features/sync/indicator";
     import { handleSyncNowShortcut } from "@/features/sync/shortcut";
     import { createSoundPlayer, maybePlaySyncSuccessSound } from "@/sound";
     import { modKeyLabel } from "$lib/platform";
@@ -25,43 +30,23 @@
 
     /** 云同步关掉时整个指示点都不出现。 */
     const syncEnabled = $derived(syncConfigStore.value.enabled);
-    /** 绿 = 和云端一致；黄 = 还有没同步上去的东西（或正在跑 / 离线）。 */
-    const inSync = $derived(syncEngine.inSync);
     const syncing = $derived(syncEngine.status.phase === "syncing");
     /** 上一次求值时的 `syncing`（`$effect` 里判「跑完了」那个下降沿用）。 */
     let prevSyncing = false;
-    const conflicts = $derived(syncEngine.status.conflicts.length);
-    const hasConflicts = $derived(conflicts > 0);
+
     /**
-     * 出错了（令牌失效、Gist 被删、限流……）。
+     * 指示点该是什么颜色、该说什么话。
      *
-     * 「离线」不算：那不是数据问题，联网后下一次同步自己就好了，标红只会让人白紧张。
+     * **两样都只向引擎要，这里不再自己判一遍。** 以前这一段是第二份优先级链
+     * （`hasConflicts || failed || storageBlocked` 才红、`inSync` 才绿、其余黄），
+     * 和 `indicatorOf` 平行存在：同一件事两处各算一遍，改一处忘一处就会出现
+     * 「红点配着『已同步』」这种画面。现在引擎把「为什么是这个颜色」压成一支
+     * 判别联合，这里只做翻译（`toneOf` / `labelOf`），不重新判断。
      */
-    const failed = $derived(syncEngine.status.phase === "error");
-    /**
-     * 这台设备根本写不了 localStorage（iOS 隐私模式 / 系统拦截）。
-     * 那比同步失败更严重：做题进度随时会丢，必须让用户看见。
-     */
-    const storageBlocked = $derived(syncEngine.storageBlocked);
+    const settledTone = $derived(toneOf(syncEngine.indicator));
 
-    /** 指示点的三种状态。 */
-    type Tone = "ok" | "pending" | "danger";
-
-    /**
-     * 指示点的三种状态：
-     *   - `ok`（绿）  和云端一致
-     *   - `pending`（黄）还有没同步上去的东西 / 离线
-     *   - `danger`（红）**需要用户操心**：有冲突等着拍板、同步报错了，
-     *     或者这台设备根本写不了本地存储
-     */
-    function settledToneNow(): Tone {
-        return hasConflicts || failed || storageBlocked
-            ? "danger"
-            : inSync
-              ? "ok"
-              : "pending";
-    }
-    const settledTone = $derived(settledToneNow());
+    /** 指示点的三种颜色（`SyncTone` 的别名，模板里仍在用 `Tone` 这个名字）。 */
+    type Tone = SyncTone;
 
     /**
      * 正在同步时**保留跑之前那个颜色**，只用圆点脉冲表示「在跑」。
@@ -70,7 +55,7 @@
      * `phase === "syncing"`，而黄的意思是「有没传上去的改动」——那会儿其实没有，
      * 看着就像刚点就出问题了。红的同理：报错后重试期间也该一直是红的。
      */
-    let toneWhileRunning = $state<Tone>(settledToneNow());
+    let toneWhileRunning = $state<Tone>(settledTone);
     $effect(() => {
         if (!syncing) toneWhileRunning = settledTone;
     });
@@ -116,21 +101,14 @@
      */
     const CLICK_FLASH_MS = 700;
 
-    const indicatorLabel = $derived(
-        syncing
-            ? "正在同步"
-            : hasConflicts
-              ? `${conflicts} 个题库存在冲突`
-              : storageBlocked
-                ? "本地存储不可写"
-                : failed
-                  ? `${syncEngine.status.message}`
-                  : syncEngine.status.phase === "offline"
-                    ? "云同步：当前离线"
-                    : inSync
-                      ? "已同步"
-                      : "还没同步",
-    );
+    /**
+     * 指示点说什么话。
+     *
+     * 和颜色同源：`labelOf` 读的是同一支 `indicator`，所以「红点说已同步」
+     * 这种自相矛盾的组合在结构上就不存在。文案本身在 `indicator.ts` 里，
+     * 那里是唯一一处措辞（改词只改那儿）。
+     */
+    const indicatorLabel = $derived(labelOf(syncEngine.indicator));
 
     /**
      * 悬浮提示 / 无障碍文案：状态说明后面挂上快捷键，省得这个键只活在说明面板里。
@@ -207,17 +185,22 @@
 
     /**
      * 点一下：
-     *   - **红色**（有冲突 / 报错）：把人送到全局设置。冲突要在那儿选保留哪一边；
-     *     报错（令牌失效、Gist 被删……）也是在那儿修——这两件事再同步一次都解决不了。
-     *   - 黄 / 绿（还没同步 / 已同步 / 离线）：手动同步一次（跟设置面板里的
+     *   - **红色**（有冲突 / 目标没了 / 报错 / 存储写不进去）：把人送到全局设置。
+     *     冲突要在那儿选保留哪一边；报错（令牌失效、Gist 被删……）也是在那儿修
+     *     ——这些事再同步一次都解决不了。
+     *   - 黄 / 绿（暂未同步 / 已同步 / 离线）：手动同步一次（跟设置面板里的
      *     「立即同步」同一个入口）。
+     *
+     * 「是不是红点」直接问颜色，**不再自己列一遍条件**：颜色已经由 `toneOf`
+     * 从 `indicator` 算出来了，这里再写一遍 `hasConflicts || failed || …`
+     * 就等于把同一套判断维护两遍，迟早有一处漏掉新状态。
      *
      * **刻意不弹任何提示**：成功了它自己就变绿、亮一下并响一声「答对」；出错就变红
      * 并保持，悬浮看一眼标题就知道是什么错（那时只亮不响）。
      */
     function onClick(): void {
         if (!clickable) return;
-        if (hasConflicts || failed || storageBlocked) {
+        if (settledTone === "danger") {
             globalSettingsDialog.show();
             return;
         }

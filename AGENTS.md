@@ -272,14 +272,20 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   `onMount(watchPageVisibility)` 把「页面在后台」也算成「不能打断」（云同步的挂起刷新靠它）
 - `src/components/layout/AppShell.svelte` — 外壳（页头 / 内容区）。页头右侧那颗**云同步指示点**，
   只在云同步开着时出现，三种状态（`tone`）各自一套底色 + 光晕（主题变量）：
-  | tone | 条件 | 颜色 | 可点 | 点了干什么 |
+  | tone | 来自 `indicator` 的哪几支 | 颜色 | 可点 | 点了干什么 |
   |---|---|---|---|---|
-  | `ok` | `syncEngine.inSync` | 绿 `--success` | ✅ | 手动同步一次 |
-  | `pending` | 还没同步 / **离线** | 黄 `--warning` | ✅ | 手动同步一次 |
-  | `danger` | 有冲突 **或** `phase === "error"` **或** `storageBlocked` | 红 `--destructive` | ✅ | **打开全局设置** |
-  - 红色 = 「需要你操心」，所以两类都算：**冲突**要在设置里选保留哪一边，**报错**
-    （令牌失效、Gist 被删、限流……）也是在那儿修——这两件事再同步一次都解决不了。
-    **离线不算红**：那不是数据问题，联网后下一次同步自己会好，标红只会让人白紧张。
+  | `ok` | `synced` | 绿 `--success` | ✅ | 手动同步一次 |
+  | `pending` | `disabled` / `busy` / `offline` / `unknown` / `pending` | 黄 `--warning` | ✅ | 手动同步一次 |
+  | `danger` | `conflict` / `target-missing` / `failed` / `blocked` | 红 `--destructive` | ✅ | **打开全局设置** |
+  - **颜色与文案都不在这里判断**：引擎把「为什么是这个颜色」压成一支判别联合
+    （`syncEngine.indicator`，见 `sync/indicator.ts`），`toneOf` / `labelOf` 只做翻译。
+    以前这里另排了一遍 `hasConflicts || failed || storageBlocked ? 红 : inSync ? 绿 : 黄`，
+    与引擎里那份平行存在——改一处忘一处就会出现「红点配着『已同步』」，而且 `checking`
+    那一段谁都没认领，最后被兜底说成「还没同步」。**新增同步状态时只改 `indicator.ts`。**
+  - 红色 = 「需要你操心」，所以这些都算：**冲突**要在设置里选保留哪一边，**目标仓库没了**
+    （Gist 被删 / 换了账号）得重新选一条，**报错**（令牌失效、限流……）也是在那儿修
+    ——它们再同步一次都解决不了。**离线不算红**：那不是数据问题，联网后下一次同步自己会好，
+    标红只会让人白紧张。
   - 三种 tone 都可点（`clickable = enabled && !syncing`）：**绿也点得动**——已经一致时
     主动同步一次是常见需求（想把云端改动拉下来）。不可点（正在同步）时用
     `aria-disabled` 而不是 `disabled`——后者会让原生 `title` 提示失效；同时 hover
@@ -328,13 +334,13 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     - 判定用 `syncing` 的下降沿 + 一个一次性的 `manualSync` 标记（`onClick` 里置位）；
       「算不算成功」看下降沿那一刻的 `settledTone === "ok"`；
       清 `flashTone` 的定时器比动画**晚 60ms**，否则动画会被从半路掐断
-  - 点了**不弹任何提示**：成功了它自己变绿就是反馈；失败就还是黄的，
+  - 点了**不弹任何提示**：成功了它自己变绿就是反馈；报错会变红并保持，
     悬浮看标题（标题里带着错误信息和「点击重试」）。所以这个组件里不碰 toast。
   - hover 不用背景色：圆点 `group-hover:brightness-125 group-hover:size-2`
     （`group` 挂在按钮上）+ 光晕从 6px 加到 12px；正在同步（不可点）时这些 class 不加上去。
   - 命中区域（`size-8`，正好填满页头那格 2rem）和圆点（`size-1.5`）是分开的两个尺寸：
     点起来够大，看着仍是小圆点。
-  - 颜色取自 `syncEngine.inSync`（见「云同步」章节），不是「打开页面那一刻的快照」
+  - 颜色取自 `toneOf(syncEngine.indicator)`（见「云同步」章节），不是「打开页面那一刻的快照」
   - **⌘Y（Ctrl+Y）就是「点一下这颗点」**（`sync/shortcut.ts`）：动作与点击共用同一个 `onClick`，
     所以红点同样是去设置；云同步关着时它跟着指示点一起消失（⌘Y 完全不碰，留给浏览器）。
     悬浮标题 / `aria-label` 里也带上这个键（只在真的按得动、即 `clickable` 时挂）
@@ -637,16 +643,20 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   所以 `init()` 里先跑一次探针（写一个 `quiz_app_state___probe__` 再删掉，看有没有通知）：
   - `ok`     正常，什么都不用做；
   - `silent` 装 `SYNC_LOCAL_POLL_MS`（5 秒）的兜底轮询：按**内容哈希**比一遍本地有没有没同步的改动，
-             脏了就标黄并排队上传（`localChangeFallback = true`，只在页面可见且同步开着时跑）；
-  - `blocked` `storageBlocked = true` → `inSync` 永远 false，指示点标红、侧边栏点红、
+             脏了就标黄并排队上传（`storage = "hook-silent"`，只在页面可见且同步开着时跑）；
+  - `blocked` `storage = "blocked"` → 指示点标红（`indicator` 落在 `blocked` 支）、侧边栏点红、
              设置面板顶部直接写「写不了本地存储，进度不会保存」。
-  探针必须在引擎注册自己的监听**之前**跑，否则它会顺带把 `pendingChanges` 标脏。
-- **指示点的黄/绿 = `syncEngine.inSync`**：`phase === "idle"` **且** `pendingChanges === false`。
-  `pendingChanges` 的语义是「本地和上次同步成功的基准对不上」——本地一写入就置 `true`（在
-  `onLocalChange` 里，便宜），每次同步正常收尾后由 `computePendingChanges()` 按**内容哈希**
-  重算（比 mtime 准：应用启动会把配置原样重写一遍，mtime 永远新鲜，只看 mtime 会一直黄着）。
-  它默认 `true`：没验证过之前绝不上来就报「已同步」。冲突 / 报错 / 离线 / 正在跑时 `phase`
-  就不是 `idle`，指示点自然也是黄的。
+  探针必须在引擎注册自己的监听**之前**跑，否则它会顺带把 `delta` 标脏。
+  两个结论是**互斥**的，所以它们共用 `storage` 这一个三态，而不是两个布尔
+  （`storageBlocked` / `localChangeFallback` 只是它的只读投影）。
+- **指示点的颜色 = `syncEngine.indicator`**，不是几条 `&&` 拼出来的判断。引擎把
+  「本地差多少（`delta`）/ 目标还在不在（`target`）/ 存储能不能写（`storage`）」三份事实
+  压成一支判别联合（`sync/indicator.ts` 的 `indicatorOf`），`inSync` 就是「这一支是不是
+  `synced`」。`delta` 的语义是「本地和上次同步成功的基准对不上」——本地一写入就置
+  `dirty`（在 `onLocalChange` 里，便宜），每次同步正常收尾后由 `computePendingChanges()`
+  按**内容哈希**重算（比 mtime 准：应用启动会把配置原样重写一遍，mtime 永远新鲜，
+  只看 mtime 会一直黄着）。它默认 `unknown`：没验证过之前绝不上来就报「已同步」。
+  冲突 / 报错 / 离线 / 正在跑各有自己的一支，谁也盖不住谁。
 - **拉取不写 mtime**（`applyRemoteValue` 只写内容）：拉下来的内容不是这台设备改的，
   记成「本地改动」会让下一轮白推一遍甚至撞成冲突。拉取还会顺手清掉该题库的 mtime。
   连带的：`schedulePush()` 先看一眼「本地到底动过没有」（`mtime > 0`），拉取不排队上传。
