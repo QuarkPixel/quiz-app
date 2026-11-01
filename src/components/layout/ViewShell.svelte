@@ -5,6 +5,13 @@
     import { cn } from "$lib/utils";
     import { COMPACT_LAYOUT_QUERY, SCROLL_TOP_THRESHOLD_PX } from "@/config";
     import IconArrowBigUpLines from "@tabler/icons-svelte/icons/arrow-big-up-lines";
+    import {
+        pinnedToBottom,
+        pinnedToTop,
+        readScroll,
+        scrollOffset,
+        type ScrollReading,
+    } from "./scrollMetrics";
 
     /**
      * 答题视图的公共外壳 —— **两个模式共用同一份版面**。
@@ -38,6 +45,13 @@
      *  3. **底部工具栏不再是浮层**。以前它绝对定位压在滚动区上、还要一条渐变把
      *     底下滚过去的内容糊掉；现在它是正常的 flex 行，内容在它上面就被裁住，
      *     于是「footer 让位」「滚轮转发」这些补丁全都不需要了。
+     *
+     * 还有一条不在版面上，在**状态**上：滚动那几个字段已经收敛成「一次读数」。
+     * 以前 `isScrollable` / `scrollTop` / `atTop` / `atBottom` 各存一份，可它们
+     * 全是 `scrollTop` 与 `scrollHeight - clientHeight` 的函数，分开存就等于允许
+     * 「内容明显超出容器、却同时贴着顶和底」这种画面存在——只能靠「每次记得
+     * 四个一起赋值」保证不出现。现在组件里只留一个 `reading`（见
+     * `./scrollMetrics.ts`），其余由纯函数派生，拼错的组合在类型上就写不出来。
      */
     interface Props {
         /** 顶部固定行（题型图标 / 题号 / 掌握进度）。不给就不占高度（首页）。 */
@@ -82,16 +96,31 @@
     let scrollViewport: HTMLDivElement | null = $state(null);
     let layoutContent: HTMLDivElement | null = $state(null);
 
+    /**
+     * 滚动区此刻的样子 —— **唯一**一份滚动状态，一次 DOM 读数换一个值。
+     *
+     * `still`（滚不动）/ `scrollable`（能滚，带位置与余量）两态穷尽，
+     * 遮罩与按钮要的「能不能滚 / 贴不贴顶 / 贴不贴底」都由它派生，
+     * 不存在「只改了位置、忘了改贴边」这种中间态。
+     */
+    let reading = $state<ScrollReading>({ kind: "still" });
+
+    /**
+     * 「回到顶部」那段平滑滚动的二态。
+     *
+     * 它是**位置之外**的一件事：光看 `reading` 分不出「正在往顶滚」和
+     * 「用户自己滚到这儿停下」。所以它不派生，只显式记着；只在滚到顶时结束。
+     */
+    let returning = $state<"idle" | "returning">("idle");
+
     /** 内容超出容器 → 开遮罩、工具栏中间那颗「回到顶部」才有意义 */
-    let isScrollable = $state(false);
-    let scrollTop = $state(0);
-    let scrolling = $state(false);
+    const scrollable = $derived(reading.kind === "scrollable");
     /** 贴着顶 / 贴着底：对应的那条遮罩就该收起来（没有东西可遮） */
-    let atTop = $state(true);
-    let atBottom = $state(true);
+    const topPinned = $derived(pinnedToTop(reading));
+    const bottomPinned = $derived(pinnedToBottom(reading));
 
     const scrollTopAble = $derived(
-        scrollTop > SCROLL_TOP_THRESHOLD_PX && !scrolling,
+        scrollOffset(reading) > SCROLL_TOP_THRESHOLD_PX && returning === "idle",
     );
 
     $effect(() => {
@@ -101,14 +130,15 @@
         const content = layoutContent;
 
         const updateViewportState = (): void => {
-            const max = viewport.scrollHeight - viewport.clientHeight;
-            scrollTop = viewport.scrollTop;
-            isScrollable = max > 1;
-            atTop = scrollTop <= 2;
-            atBottom = scrollTop >= max - 2;
+            // 先落到局部变量再写回：`$effect` 里读 `$state` 会把它算作依赖，
+            // 边写边读就成了「自己触发自己」，每次滚动都会重建观察器。
+            const next = readScroll(viewport);
+            reading = next;
 
-            if (scrollTop === 0) {
-                scrolling = false;
+            // 落到顶上就说明这段平滑滚动结束了。判据取「贴顶」而不是「严格等于 0」：
+            // 亚像素残差（`scrollTop` 剩 0.5）会让标志永远挂着，按钮再也不出现。
+            if (pinnedToTop(next)) {
+                returning = "idle";
             }
         };
 
@@ -141,7 +171,7 @@
     });
 
     function scrollToTop(): void {
-        scrolling = true;
+        returning = "returning";
         scrollViewport?.scrollTo({ top: 0, behavior: "smooth" });
     }
 
@@ -164,7 +194,7 @@
 
 <div
     class="view-shell relative flex min-h-0 flex-1 flex-col"
-    data-shell-scrollable={isScrollable ? "true" : "false"}
+    data-shell-scrollable={scrollable ? "true" : "false"}
 >
     <div class="flex min-h-0 flex-1 flex-col pt-(--app-shell-content-top)">
         <div
@@ -209,7 +239,7 @@
                         </div>
 
                         <!--
-                            上下两条裁切边遮罩。内容够长时才亮（`isScrollable`），
+                            上下两条裁切边遮罩。内容够长时才亮（`scrollable`），
                             而且贴到顶 / 贴到底时各自收起来——那头已经没有「被切掉的内容」了。
                         -->
                         <div
@@ -218,7 +248,7 @@
                             class={cn(
                                 "pointer-events-none absolute inset-x-0 top-0 h-8 transition-opacity duration-200",
                                 "bg-gradient-to-b from-background to-background/0",
-                                isScrollable && !atTop
+                                scrollable && !topPinned
                                     ? "opacity-100"
                                     : "opacity-0",
                             )}
@@ -229,7 +259,7 @@
                             class={cn(
                                 "pointer-events-none absolute inset-x-0 bottom-0 h-8 transition-opacity duration-200",
                                 "bg-gradient-to-t from-background to-background/0",
-                                isScrollable && !atBottom
+                                scrollable && !bottomPinned
                                     ? "opacity-100"
                                     : "opacity-0",
                             )}
@@ -327,7 +357,7 @@
                             scrollTopAble
                                 ? "translate-y-0 opacity-100"
                                 : "translate-y-4 opacity-0 pointer-events-none",
-                            scrolling &&
+                            returning === "returning" &&
                                 "scale-120 ease-[cubic-bezier(0.13,-0.54,0.71,-0.84)] duration-500",
                         )}
                         aria-label="回到顶部"
