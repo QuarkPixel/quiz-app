@@ -257,7 +257,9 @@ describe("markCurrentAsMastered", () => {
     const session = new QuizSession(makeBank(), deps);
     session.initialize();
     session.appState.settings.notifyNewQuestionInPool = true;
-    session.newQuestionQueue = [session.questions.find((q) => q.id !== session.currentQuestion!.id)!];
+    session.queueNewQuestions([
+      session.questions.find((q) => q.id !== session.currentQuestion!.id)!,
+    ]);
 
     session.markCurrentAsMastered();
 
@@ -652,14 +654,16 @@ describe("新题预览流程", () => {
     const session = new QuizSession(makeBank(questions), deps);
     session.appState.settings.selectionMode = "sequential";
     session.initialize();
-    session.showResult = true;
-    session.newQuestionQueue = [questions[1]];
+    // 答题流的一条正式转移：有新题入池，排进「待提示」队列
+    session.queueNewQuestions([questions[1]]);
 
     session.advanceQuestionFlow();
 
     expect(session.isPreviewingNewQuestion).toBe(true);
     expect(session.currentNewQuestion?.id).toBe("preview");
-    expect(session.currentQuestion?.id).toBe("current");
+    // 预告态屏上就是那道新题（`currentQuestion` 跟着它走）
+    expect(session.currentQuestion?.id).toBe("preview");
+    expect(session.showResult).toBe(true);
 
     session.advanceQuestionFlow();
 
@@ -679,8 +683,8 @@ describe("新题预览流程", () => {
     const session = new QuizSession(makeBank(questions), deps);
     session.appState.settings.selectionMode = "sequential";
     session.initialize();
-    session.newQuestionQueue = [questions[1]];
-    session.isPreviewingNewQuestion = true;
+    session.queueNewQuestions([questions[1]]);
+    session.advanceQuestionFlow();
 
     session.markPreviewQuestionAsMastered();
 

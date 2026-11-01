@@ -5,6 +5,18 @@
  * 子组件通过 useQuizSession() 拿到实例，避免 prop drilling。
  *
  * 副作用（flash / toast）通过构造时注入的 deps 调用，方便单测 mock。
+ *
+ * ── 「屏上现在是什么」只有一份真相 ──────────────────────────────────────────
+ *
+ * 出题 / 判分 / 新题预告这一串以前是四个独立字段（`currentQuestion` /
+ * `showResult` / `isCorrect` / `isPreviewingNewQuestion`）拼出来的，能拼出
+ * 一大堆不存在的画面，于是每个读它的地方都得自己再判一次。现在整屏状态是
+ * `this.flow`（`QuizFlow`，见 `./quizFlow`）——**所有转移都走那里的纯函数**，
+ * 对外只留只读 getter（`currentQuestion` / `showResult` / `isCorrect` /
+ * `isPreviewingNewQuestion` / `currentNewQuestion`），子组件的写法不用改。
+ *
+ * 作答草稿（`selectedAnswers` / `blankAnswerInputs` / `shuffledOptions`）不在
+ * 那台机器里：它们是用户正在填的表单，换题时由 `selectNext()` 清空。
  */
 
 import { tick } from "svelte";
@@ -58,6 +70,22 @@ import {
   ProgressSessionBase,
   type SessionDeps,
 } from "@/quiz/session/ProgressSessionBase.svelte";
+import {
+  EMPTY_QUIZ_FLOW,
+  advance,
+  answerIsCorrect,
+  ask,
+  dropPreview,
+  enqueue,
+  judge,
+  markCorrect,
+  nextQueuedOf,
+  questionOf,
+  resetFlow,
+  rewindOf,
+  showsAnswer,
+  type QuizFlow,
+} from "./quizFlow";
 
 /** 两个模式共用的 deps 形状，保留旧名字方便调用方按模式引用。 */
 export type QuizSessionDeps = SessionDeps;
@@ -80,12 +108,19 @@ export class QuizSession extends ProgressSessionBase {
 
   // === 答题流 state ===
   appState: RuntimeState = $state(null as unknown as RuntimeState);
-  currentQuestion: Question | null = $state(null);
+  /** 屏上的状态机（出题中 / 已判分 / 新题预告 / 空）。 */
+  private flow: QuizFlow = $state(EMPTY_QUIZ_FLOW);
+  /**
+   * 上一次**真正出过**的题（加权选题用它避开刚答完的那一道）。
+   *
+   * 不能拿 `currentQuestion` 代替：预告态屏上是刚入池的新题，而这里要避开的是
+   * 「用户刚刚作答过的那道」——它已经不在屏上了，却仍然是下一题最不该出现的。
+   */
+  private lastAskedId: string | null = null;
+  /** 作答草稿：用户正在填的表单，换题时清空（不属于状态机）。 */
   shuffledOptions: ShuffledOption[] = $state([]);
   selectedAnswers: number[] = $state([]);
   blankAnswerInputs: string[] = $state([]);
-  showResult = $state(false);
-  isCorrect = $state(false);
 
   /**
    * 出题序号：每次 `selectNext()` 都 +1，UI 用它做换题过渡的 `{#key}`。
@@ -95,22 +130,8 @@ export class QuizSession extends ProgressSessionBase {
    */
   presentationSeq = $state(0);
 
-  // === 筛选变更确认 / 新题预览 state ===
+  // === 筛选变更确认 state ===
   pendingFilterType: QuestionType | "all" | null = $state(null);
-  isPreviewingNewQuestion = $state(false);
-
-  /**
-   * 答题过程中新进入活动池、待提示的题目队列（FIFO）。
-   * 仅在 notifyNewQuestionInPool 开启时填充。答题流里一次最多入池一题，
-   * 所以这其实总是 0/1 条；用队列只是为了语义上稳健。
-   */
-  newQuestionQueue: Question[] = $state([]);
-
-  /**
-   * submit 前的 appState 快照，用于「当作正确」时 rewind。
-   * 不是 $state —— 只是临时引用，不参与 reactivity。
-   */
-  private preSubmitState: RuntimeState | null = null;
 
   // === derived ===
   stats = $derived(getStats(this.questions, this.appState));
@@ -135,10 +156,33 @@ export class QuizSession extends ProgressSessionBase {
     const masteredSet = new Set(this.appState.masteredIds);
     return this.questions.every((q) => masteredSet.has(q.id));
   });
-  /** 当前要展示的新题（队首），无则 null */
-  currentNewQuestion: Question | null = $derived(
-    this.newQuestionQueue[0] ?? null,
-  );
+
+  // === 屏上状态（只读投影，写法与旧字段一致） ===
+
+  /** 屏上那道题；空状态 / 预告态之外的任何时候都有值。 */
+  get currentQuestion(): Question | null {
+    return questionOf(this.flow);
+  }
+
+  /** 是否已经亮出答案（判分后 / 新题预告）。 */
+  get showResult(): boolean {
+    return showsAnswer(this.flow);
+  }
+
+  /** 画面上的对错（预告态恒为 true：它展示的就是「已掌握」那一档）。 */
+  get isCorrect(): boolean {
+    return answerIsCorrect(this.flow);
+  }
+
+  /** 屏上是不是「刚入池的新题预告」。 */
+  get isPreviewingNewQuestion(): boolean {
+    return this.flow.kind === "preview";
+  }
+
+  /** 队首的新题（预告态就是屏上那道）。 */
+  get currentNewQuestion(): Question | null {
+    return nextQueuedOf(this.flow);
+  }
 
   constructor(
     bank: QuizBank,
@@ -173,25 +217,32 @@ export class QuizSession extends ProgressSessionBase {
 
   /** 入口：补齐活动池 + 选第一道题 */
   initialize(): void {
-    this.clearNewQuestionPreviewState();
+    this.flow = resetFlow();
     this.appState = fillActivePool(this.appState);
     this.save();
     this.selectNext();
   }
 
-  /** 选下一题，重置作答相关 state */
+  /**
+   * 选下一题，重置作答草稿。
+   *
+   * **待提示队列在这里清空**：出下一题意味着「新题预告」这件事结束了；
+   * 队列只在同一次判分与它之后的那次推进之间有效。
+   */
   selectNext(): void {
-    this.isPreviewingNewQuestion = false;
-    this.currentQuestion = selectNextFromPool(
+    const next = selectNextFromPool(
       this.questions,
       this.appState,
-      this.currentQuestion?.id,
+      this.lastAskedId ?? undefined,
     );
+
+    this.flow = next ? ask(next) : resetFlow();
+    this.lastAskedId = next?.id ?? null;
     this.presentationSeq += 1;
     this.markCurrentQuestionAsShown();
 
-    if (this.currentQuestion?.options) {
-      const optionsWithIndex = this.currentQuestion.options.map((opt, idx) => ({
+    if (next?.options) {
+      const optionsWithIndex = next.options.map((opt, idx) => ({
         ...opt,
         originalIndex: idx,
       }));
@@ -201,24 +252,23 @@ export class QuizSession extends ProgressSessionBase {
     }
 
     this.selectedAnswers = [];
-    const answerCount = Array.isArray(this.currentQuestion?.answer)
-      ? (this.currentQuestion.answer as string[]).length
+    const answerCount = Array.isArray(next?.answer)
+      ? (next.answer as string[]).length
       : 1;
     this.blankAnswerInputs = Array(answerCount).fill("");
 
-    this.showResult = false;
-    this.isCorrect = false;
-    this.preSubmitState = null;
     this.resetCopyQuestionStatus();
     this.focusBlankInputIfNeeded();
   }
 
   /** 提交当前作答 */
   submit(): void {
+    // 只有「出题中」才收提交：预告态 / 判分后重复提交都是空操作
+    if (this.flow.kind !== "asking") return;
+    const question = this.flow.question;
     if (
-      !this.currentQuestion ||
       !canSubmitCurrentAnswer(
-        this.currentQuestion,
+        question,
         this.selectedAnswers,
         this.blankAnswerInputs,
       )
@@ -227,22 +277,17 @@ export class QuizSession extends ProgressSessionBase {
     }
 
     const nextIsCorrect = evaluateAnswer(
-      this.currentQuestion,
+      question,
       this.selectedAnswers,
       this.blankAnswerInputs,
     );
 
-    this.preSubmitState = this.appState;
-    this.showResult = true;
-    this.isCorrect = nextIsCorrect;
+    // 快照要在改 appState **之前**取：「视作正确」以它为起点重算
+    this.flow = judge(this.flow, nextIsCorrect, this.appState);
     this.deps.flash(nextIsCorrect);
     maybePlayAnswerSound(this.globalSettings, this.deps.sound, nextIsCorrect);
     const poolIdsBeforeAnswer = this.activePoolIdSet();
-    this.appState = applyAnswer(
-      this.appState,
-      this.currentQuestion.id,
-      nextIsCorrect,
-    );
+    this.appState = applyAnswer(this.appState, question.id, nextIsCorrect);
     this.enqueueNewlyPooled(poolIdsBeforeAnswer);
     this.save();
 
@@ -252,57 +297,31 @@ export class QuizSession extends ProgressSessionBase {
   }
 
   /**
-   * 「当作正确」：把上次 submit 时记下的 preSubmitState 当起点，
+   * 「当作正确」：把上次 submit 时记下的快照当起点，
    * 以 isCorrect=true 重新走 applyAnswer。
    * 这样 hasEverMistaken 不会被这次 typo 打上、streak 自然 +1。
    */
   treatLastAnswerAsCorrect(): void {
-    if (!this.preSubmitState || !this.currentQuestion) return;
+    const rewind = rewindOf(this.flow);
+    const question = this.currentQuestion;
+    if (!rewind || !question) return;
     const poolIdsBeforeRewind = this.activePoolIdSet();
-    this.appState = applyAnswer(
-      this.preSubmitState,
-      this.currentQuestion.id,
-      true,
-    );
+    this.appState = applyAnswer(rewind, question.id, true);
     this.enqueueNewlyPooled(poolIdsBeforeRewind);
-    this.preSubmitState = null;
+    this.flow = markCorrect(this.flow);
     this.save();
-    this.isCorrect = true;
     this.deps.flash(true);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, true);
+    this.maybePlayAnswerSoundForCorrect();
   }
 
   /**
    * 把任意一道题标为已掌握（顶部 indicator / PoolPanel 双击）。
-   * 如果掌握的就是当前题，自动进入下一步流程（必要时先展示新题预览）。
+   * 如果掌握的就是屏上这一道，自动进入下一步流程（必要时先展示新题预览）。
    */
   markAsMastered(questionId: string): void {
-    const poolIdsBeforeMastery = this.activePoolIdSet();
-    const activeItem = this.appState.activePool.find(
-      (item) => item.id === questionId,
-    );
-    const masteredMistakes = {
-      ...this.appState.masteredMistakes,
-      [questionId]:
-        activeItem?.hasEverMistaken ??
-        this.appState.masteredMistakes[questionId] ??
-        false,
-    };
-    const nextState: RuntimeState = {
-      ...this.appState,
-      activePool: this.appState.activePool.filter(
-        (item) => item.id !== questionId,
-      ),
-      masteredIds: this.appState.masteredIds.includes(questionId)
-        ? [...this.appState.masteredIds]
-        : [...this.appState.masteredIds, questionId],
-      masteredMistakes,
-      pendingIds: this.appState.pendingIds.filter((id) => id !== questionId),
-    };
-    this.appState = fillActivePool(nextState);
-    this.enqueueNewlyPooled(poolIdsBeforeMastery);
-    this.save();
-    if (this.currentQuestion?.id === questionId) {
+    this.applyMastery(questionId);
+    // 预告态不动流程：屏上是预告卡，推进由「我知道了」/「标熟」自己那条路走
+    if (this.flow.kind !== "preview" && this.currentQuestion?.id === questionId) {
       this.advanceQuestionFlow();
     }
   }
@@ -314,24 +333,16 @@ export class QuizSession extends ProgressSessionBase {
   }
 
   markPreviewQuestionAsMastered(): void {
-    const previewQuestion = this.currentNewQuestion;
-    if (!previewQuestion) return;
+    if (this.flow.kind !== "preview") return;
+    this.applyMastery(this.flow.queued[0].id);
 
-    const previewQuestionId = previewQuestion.id;
-    this.markAsMastered(previewQuestionId);
-
-    if (this.currentNewQuestion?.id === previewQuestionId) {
-      this.newQuestionQueue = this.newQuestionQueue.slice(1);
-    }
-
-    if (this.currentNewQuestion) {
-      this.isPreviewingNewQuestion = true;
-      this.resetCopyQuestionStatus();
+    const next = dropPreview(this.flow);
+    this.resetCopyQuestionStatus();
+    if (next === null) {
+      this.selectNext();
       return;
     }
-
-    this.isPreviewingNewQuestion = false;
-    this.selectNext();
+    this.flow = next;
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -366,7 +377,7 @@ export class QuizSession extends ProgressSessionBase {
     activePoolPolicy: FilterChangeActivePoolPolicy,
   ): void {
     this.pendingFilterType = null;
-    this.clearNewQuestionPreviewState();
+    this.flow = resetFlow();
     this.appState = rebuildRuntimeStateForFilterChange(
       this.questions,
       this.appState,
@@ -409,21 +420,30 @@ export class QuizSession extends ProgressSessionBase {
     this.save();
   }
 
+  /**
+   * 有新题入池：排进「待提示」队列（答题流的 `enqueue` 转移）。
+   *
+   * 正常路径由 `enqueueNewlyPooled` 在判分 / 标熟之后调用；单独公开是因为
+   * 它是这台机器的一条正式转移（测试也用它摆出「答完这一题、池子里又进来一道」
+   * 的画面，而不是去写内部字段）。
+   */
+  queueNewQuestions(questions: readonly Question[]): void {
+    this.flow = enqueue(this.flow, questions);
+  }
+
+  /**
+   * 下一题。
+   *
+   * 机器自己转得动就转（预告 → 下一张预告、判分 → 预告），转不动
+   * （队列空了）才回到题库出题——这一层判断只在 `advance()` 里写一次。
+   */
   advanceQuestionFlow(): void {
-    if (this.isPreviewingNewQuestion) {
-      this.newQuestionQueue = this.newQuestionQueue.slice(1);
-      this.resetCopyQuestionStatus();
-      if (this.currentNewQuestion) return;
-      this.selectNext();
-      return;
-    }
-
-    if (this.currentNewQuestion) {
-      this.isPreviewingNewQuestion = true;
+    const next = advance(this.flow);
+    if (next !== null) {
+      this.flow = next;
       this.resetCopyQuestionStatus();
       return;
     }
-
     this.selectNext();
   }
 
@@ -506,7 +526,7 @@ export class QuizSession extends ProgressSessionBase {
   // ────────────────────────────────────────────────────────────────
 
   applyImportedState(newState: StoredState): void {
-    this.clearNewQuestionPreviewState();
+    this.flow = resetFlow();
     const stateWithPending: RuntimeState = {
       ...newState,
       masteredMistakes: newState.masteredMistakes ?? {},
@@ -539,9 +559,43 @@ export class QuizSession extends ProgressSessionBase {
     this.save({ updateDefaultSettings: true });
   }
 
-  private clearNewQuestionPreviewState(): void {
-    this.isPreviewingNewQuestion = false;
-    this.newQuestionQueue = [];
+  /**
+   * 把一道题标成已掌握（只改状态，不动答题流）。
+   *
+   * 「标熟」有三个入口（顶栏双击、活动池双击、总览列表、新题预告），
+   * 它们对 `appState` 要做的事逐字相同，所以只有这一份实现；
+   * 流程怎么走由各自的调用点决定（见 `markAsMastered` / `markPreviewQuestionAsMastered`）。
+   */
+  private applyMastery(questionId: string): void {
+    const poolIdsBeforeMastery = this.activePoolIdSet();
+    const activeItem = this.appState.activePool.find(
+      (item) => item.id === questionId,
+    );
+    const masteredMistakes = {
+      ...this.appState.masteredMistakes,
+      [questionId]:
+        activeItem?.hasEverMistaken ??
+        this.appState.masteredMistakes[questionId] ??
+        false,
+    };
+    const nextState: RuntimeState = {
+      ...this.appState,
+      activePool: this.appState.activePool.filter(
+        (item) => item.id !== questionId,
+      ),
+      masteredIds: this.appState.masteredIds.includes(questionId)
+        ? [...this.appState.masteredIds]
+        : [...this.appState.masteredIds, questionId],
+      masteredMistakes,
+      pendingIds: this.appState.pendingIds.filter((id) => id !== questionId),
+    };
+    this.appState = fillActivePool(nextState);
+    this.enqueueNewlyPooled(poolIdsBeforeMastery);
+    this.save();
+  }
+
+  private maybePlayAnswerSoundForCorrect(): void {
+    maybePlayAnswerSound(this.globalSettings, this.deps.sound, true);
   }
 
   private getCurrentQuestionCopyContext(): QuestionCopyContext {
@@ -592,9 +646,7 @@ export class QuizSession extends ProgressSessionBase {
       .map((item) => questionsById.get(item.id))
       .filter((q): q is Question => q !== undefined);
 
-    if (added.length > 0) {
-      this.newQuestionQueue = [...this.newQuestionQueue, ...added];
-    }
+    if (added.length > 0) this.flow = enqueue(this.flow, added);
   }
 
   private focusBlankInputIfNeeded(): void {
