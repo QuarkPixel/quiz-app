@@ -34,29 +34,51 @@
     import { describeSyncResult } from "@/features/sync/summary";
     import { mtimeOf } from "@/features/sync/storage";
     import { looksLikeSyncGist } from "@/features/sync/types";
-    import type { GistSummary } from "@/features/sync/gitee";
+    import {
+        IDLE_DRAFT,
+        NEW_GIST,
+        beginEditing,
+        beginProbe,
+        beginTest,
+        clearProbe,
+        draftState,
+        draftText,
+        dropGist,
+        editText,
+        failTest,
+        initialDraft,
+        isTesting,
+        pickGist,
+        savedState,
+        settleProbe,
+        settleTest,
+        type TokenDraft,
+    } from "@/features/sync/draft";
     import IconArrowUpRight from "@tabler/icons-svelte/icons/arrow-up-right";
     import IconHelp from "@tabler/icons-svelte/icons/help";
     import IconRosetteDiscountCheckFilled from "@tabler/icons-svelte/icons/rosette-discount-check-filled";
 
     /** 总开关：关掉只是不显示、不自动跑，令牌仍留着。 */
     let enabled = $state(syncConfigStore.value.enabled);
-    /** 编辑态：首次没配置时直接进；保存后退出。 */
-    let editing = $state(false);
-    /** 这次编辑是不是「第一次」（本地从没存过令牌）。首次编辑不显示状态行、取消。 */
-    let firstEdit = $state(false);
+    /**
+     * 令牌那一块的整块状态：常规 / 编辑中 / 验证中 / 验过 / 验失败。
+     *
+     * 以前是 `editing` + `draftToken` + `testState` + `gists` + `pickedId` 五个
+     * 字段拼的，「验过」和「有列表」各自能单独变，靠一个 `verified` 派生 getter
+     * 兜着。现在只有 `verified` 那一支带列表与选中项，形状见 `draft.ts`。
+     */
+    let panel = $state<TokenDraft>(IDLE_DRAFT);
 
-    let draftToken = $state("");
     let keyVisible = $state(false);
     let autoSync = $state(syncConfigStore.value.autoSync);
-    let busy = $state<"" | "test" | "delete" | "merge" | "push" | "pull">("");
     /**
-     * 最近一次「测试连接」的结果：只用来给那个按钮上色（绿 / 红）。
+     * 除「验令牌」之外的云操作：删除 / 同步 / 覆盖。
      *
-     * **不再在面板里写一行字**——成了就变绿、并列出片段；失败就变红，
-     * 具体原因交给全局提示（toast）说。`null` = 还没测过（按钮保持常态）。
+     * 验令牌**不在**这里：它有两种（编辑态验草稿、常规态验已存的配置），各自
+     * 都是 `panel` 的一个状态。放这儿就是同一个事实记两遍——以前
+     * `busy === "test"` 与「正在验」说的就是同一件事。
      */
-    let testState = $state<"ok" | "error" | null>(null);
+    let busy = $state<"" | "delete" | "merge" | "push" | "pull">("");
 
     let guideOpen = $state(false);
 
@@ -87,11 +109,8 @@
     let detailsOpen = $state(false);
 
     // ── 云端代码片段的选择 ──
-    /** 测试连接拉回来的列表；null = 还没测过 */
-    let gists = $state<GistSummary[] | null>(null);
-    /** 选中的 id；空字符串表示「新建」 */
-    let pickedId = $state("");
-    const NEW_GIST = "__new__";
+    // 列表与选中的 id 都不在这里了：它们只存在于 `panel` 的 `verified` 那一支，
+    // 「验过却没列表」「没验过却选了一条」于是根本表示不出来。
 
     /**
      * 代码片段列表每行行首的图标边长（px）。
@@ -106,16 +125,31 @@
 
     const status = $derived(syncEngine.status);
     const savedGistId = $derived(syncConfigStore.value.gistId);
-    const hasSavedToken = $derived(syncConfigStore.value.token.length > 0);
-    const draftValid = $derived(draftToken.trim().length > 0);
+
+    /** 输入框里的草稿（常规态没有草稿，是空串）。 */
+    const tokenText = $derived(draftText(panel));
+    const draftValid = $derived(tokenText.trim().length > 0);
 
     /**
-     * 这份草稿「验过了吗」——只有测试连接成功（拿到列表）才算。
+     * 这次编辑是不是「第一次配置」。
      *
-     * 保存按钮靠它：**改一下令牌就先作废**（列表一起收起来），验过才给点。
-     * 首次配置时它还是「保存按钮要不要出现」的开关：没验过连按钮都不显示。
+     * 以前是一个 `firstEdit` 字段，在每一处写令牌的地方手工跟着改。它其实恒等于
+     * 「本地还没存过令牌」：保存时写入令牌、清空时抹掉令牌，两条路径都自然对齐。
+     * 唯一对不上的地方是 `setEnabled(false)`（它把 `firstEdit` 置回 false 而令牌
+     * 还是空的），可那一刻开关是关的、整块面板都不渲染，看不出来。
+     *
+     * 改成派生之后就不会再漏改：首次编辑不显示「取消」「清空配置」。
      */
-    const verified = $derived(testState === "ok" && gists !== null);
+    const firstTime = $derived(syncConfigStore.value.token.length === 0);
+
+    /** 编辑态：草稿区露出来了（`idle` 之外都是）。 */
+    const editing = $derived(panel.kind !== "idle");
+
+    /** 验过的那一支——模板里从它取列表与选中项。 */
+    const verifiedDraft = $derived(panel.kind === "verified" ? panel : null);
+
+    /** 有请求在飞：按钮全禁掉（验令牌那两种也算）。 */
+    const anyBusy = $derived(busy !== "" || isTesting(panel));
 
     /**
      * 云端的题库数量。
@@ -127,7 +161,7 @@
 
     /** 列表里看起来是本应用建的那些。 */
     const syncGists = $derived(
-        (gists ?? []).filter((g) => looksLikeSyncGist(g)),
+        (verifiedDraft?.gists ?? []).filter((g) => looksLikeSyncGist(g)),
     );
 
     /**
@@ -251,15 +285,13 @@
     onMount(() => {
         refreshLocalBytes();
         const ticker = setInterval(() => (now = Date.now()), 1000);
-        const neverConfigured = syncConfigStore.value.token.length === 0;
-        editing = neverConfigured;
-        firstEdit = neverConfigured;
-        draftToken = syncConfigStore.value.token;
-        pickedId = syncConfigStore.value.gistId;
+        // 没有已存令牌就直接进编辑态（首次配置的下一步只能是填令牌）
+        panel = initialDraft(syncConfigStore.value.token);
 
         unsubscribe = syncEngine.subscribe((event) => {
             if (event.kind === "synced") {
-                testState = null;
+                // 常规态那个自检结果过期了；编辑态那份草稿不动（见 `clearProbe`）
+                panel = clearProbe(panel);
                 refreshLocalBytes();
             } else if (event.kind === "conflict") {
                 toastStore.show("发现同步冲突", event.message, "destructive");
@@ -280,17 +312,11 @@
     function setEnabled(next: boolean): void {
         enabled = next;
         syncConfigStore.update({ enabled: next });
-        if (next) {
-            if (!hasSavedToken) {
-                firstEdit = true;
-                editing = true;
-            }
-        } else {
-            editing = false;
-            firstEdit = false;
-            testState = null;
-            gists = null;
-        }
+        // 打开：没有令牌就直接进编辑态。关掉：草稿与自检结果一起作废，
+        // 否则再打开会看到上次那半截。
+        panel = next
+            ? initialDraft(syncConfigStore.value.token)
+            : IDLE_DRAFT;
     }
 
     // ── 编辑态 ──────────────────────────────────────────────────────────────
@@ -298,30 +324,23 @@
     /**
      * 进编辑态（点铅笔图标「修改配置」）。
      *
-     * 从这里开始**什么都不会落盘**：令牌、选中的片段都只活在 `draftToken` /
-     * `pickedId` 里，直到点「保存」。以前「测试连接」会顺手把令牌写进配置，
-     * 于是不点保存直接刷新页面，改动照样生效了。
+     * 从这里开始**什么都不会落盘**：令牌、选中的片段都只活在 `panel` 里，
+     * 直到点「保存」。以前「测试连接」会顺手把令牌写进配置，于是不点保存
+     * 直接刷新页面，改动照样生效了。
      *
      * 进来就**自动验一次**：既省掉一次点击，也顺手把片段列表拉出来——
      * 「换一条云端」现在就走这条路（不再有单独的「切换目标 Gists」）。
      */
     function startEditing(): void {
-        draftToken = syncConfigStore.value.token;
-        pickedId = syncConfigStore.value.gistId;
         keyVisible = false;
-        firstEdit = false;
-        editing = true;
-        testState = null;
-        gists = null;
-        if (draftValid) testConnection();
+        const token = syncConfigStore.value.token;
+        panel = beginEditing(token);
+        if (token.trim().length > 0) testConnection();
     }
 
+    /** 取消：草稿整个丢掉（列表、选中项、自检结果都长在草稿上）。 */
     function cancelEditing(): void {
-        draftToken = syncConfigStore.value.token;
-        pickedId = syncConfigStore.value.gistId;
-        editing = false;
-        testState = null;
-        gists = null;
+        panel = IDLE_DRAFT;
     }
 
     /**
@@ -334,25 +353,23 @@
         syncEngine.clearSyncState("云同步配置已清空");
         syncConfigStore.clear();
         enabled = false;
-        draftToken = "";
-        pickedId = "";
-        gists = null;
-        editing = false;
-        firstEdit = true;
+        panel = IDLE_DRAFT;
         keyVisible = false;
-        testState = null;
         refreshLocalBytes();
         toastStore.show("已清空云同步配置", "Gitee 上存储的代码片段仍被保留");
     }
 
     /** 保存：把草稿里的令牌 + 选中的代码片段写进配置，然后退出编辑态。 */
     function save(): void {
-        const selectedId = pickedId === NEW_GIST ? "" : pickedId;
-        const picked = gists?.find((g) => g.id === selectedId);
+        // 按钮只在验过之后才可点（`verifiedDraft` 就是那颗按钮的开关）
+        if (panel.kind !== "verified") return;
+
+        const selectedId = panel.pickedId === NEW_GIST ? "" : panel.pickedId;
+        const picked = panel.gists.find((g) => g.id === selectedId);
         const changedGist = selectedId !== savedGistId;
 
         syncConfigStore.update({
-            token: draftToken,
+            token: panel.text,
             enabled: true,
             gistId: selectedId,
             gistUrl:
@@ -365,12 +382,8 @@
         }
 
         enabled = true;
-        editing = false;
-        firstEdit = false;
-        gists = null;
-        // 自检结果只属于编辑态：带着它退出，下面那行状态文字会一直显示
-        // 「令牌有效 · 账号里共 2 条…」（线上看到过）
-        testState = null;
+        // 自检结果只属于编辑态：带着它退出，常规态那颗按钮会一直亮着绿勾
+        panel = IDLE_DRAFT;
         toastStore.show(
             "云同步已保存",
             selectedId ? "正在同步…" : "正在新建云端片段…",
@@ -397,81 +410,77 @@
     }
 
     /**
-     * 拉一份账号里的代码片段列表，顺手定下默认选中项。
-     *
-     * 列表是这一步的关键——新设备没有本地记的 Gist ID，不列出来就只能闷头新建一条，
-     * 于是「同一个令牌在别处同步」永远拿不到已有数据。
-     *
-     * `attempted` 是这次请求用的令牌：回来时如果草稿已经变了，这份结果就作废
-     * （否则「进编辑态自动验一次」的响应会追着用户刚改的令牌，把列表又摆回来）。
-     */
-    async function loadGists(attempted: string): Promise<void> {
-        try {
-            const list = await syncEngine.listGists(attempted);
-            if (attempted !== draftToken.trim()) return;
-            gists = list;
-
-            const ours = list.filter((g) => looksLikeSyncGist(g));
-            // 默认选中：已经选着的 > 当前正在用的 > 最近更新的那条 > 新建
-            if (!list.some((g) => g.id === pickedId)) {
-                pickedId = list.some((g) => g.id === savedGistId)
-                    ? savedGistId
-                    : (ours[0]?.id ?? NEW_GIST);
-            }
-            if (pickedId === "") pickedId = NEW_GIST;
-
-            testState = "ok";
-        } catch (error) {
-            if (attempted !== draftToken.trim()) return;
-            testState = "error";
-            gists = null;
-            toastStore.show(
-                "测试连接失败",
-                error instanceof Error ? error.message : String(error),
-                "destructive",
-            );
-        }
-    }
-
-    /**
-     * 测试连接：验令牌，然后（编辑态里）**把账号里的代码片段列出来**让用户挑。
-     *
-     * 编辑态里用草稿令牌试（`testConnection(draftToken)`），成功与否都**不落盘**；
-     * 常规态那一下试的是已经保存的配置。
+     * 测试连接：常规态验的是已存的配置，编辑态验的是草稿（成功与否都**不落盘**）。
      *
      * 反馈只有两处：**按钮自己变色**（成了绿、错了红）+ **失败时一条全局提示**。
      * 成功不弹提示——按钮变绿、列表出来，本身就是回执。
      */
     function testConnection(): void {
-        void withBusy("test", async () => {
-            if (!editing) {
+        // 已经在验了（按钮是灰的，但输入框里的回车绕得过去）
+        if (isTesting(panel)) return;
+
+        if (panel.kind === "idle") {
+            panel = beginProbe(panel);
+            void (async () => {
                 const result = await syncEngine.testConnection();
-                testState = result.ok ? "ok" : "error";
-                if (!result.ok) {
+                // 期间进了编辑态：这次结果说的是另一份配置，作废
+                if (panel.kind !== "idle" || panel.probe !== "testing") return;
+                panel = settleProbe(panel, result.ok);
+                refreshLocalBytes();
+                if (result.ok) {
+                    // 展示页只要「亮一下」：两秒后回到原样（编辑态才一直留着绿勾）
+                    flashVerified();
+                } else {
                     toastStore.show(
                         "测试连接失败",
                         result.message,
                         "destructive",
                     );
-                } else {
-                    // 展示页只要「亮一下」：两秒后回到原样（编辑态才一直留着绿勾）
-                    flashVerified();
                 }
-                return;
-            }
+            })();
+            return;
+        }
 
-            const attempted = draftToken.trim();
+        const attempted = panel.text.trim();
+        if (attempted.length === 0) return; // 空令牌连请求都不用发
+        panel = beginTest(panel);
+        void verify(attempted);
+    }
+
+    /**
+     * 编辑态验一份草稿：先验令牌，再**把账号里的代码片段列出来**让用户挑。
+     *
+     * 列表是这一步的关键——新设备没有本地记的 Gist ID，不列出来就只能闷头新建
+     * 一条，于是「同一个令牌在别处同步」永远拿不到已有数据。
+     *
+     * `attempted` 是这次请求用的令牌：回来时如果草稿已经变了（用户改了字、退出
+     * 了编辑态），这份结果整份作废——否则「进编辑态自动验一次」的响应会追着
+     * 用户刚改的令牌，把列表又摆回来。
+     */
+    async function verify(attempted: string): Promise<void> {
+        const stale = (): boolean =>
+            panel.kind !== "testing" || panel.text.trim() !== attempted;
+
+        try {
             const result = await syncEngine.testConnection(attempted);
-            // 期间又改了令牌 → 这次结果作废，列表与「已验过」都不算数
-            if (attempted !== draftToken.trim()) return;
+            if (stale()) return;
             if (!result.ok) {
-                testState = "error";
-                gists = null;
+                panel = failTest(panel, result.message);
                 toastStore.show("测试连接失败", result.message, "destructive");
                 return;
             }
-            await loadGists(attempted);
-        });
+
+            const list = await syncEngine.listGists(attempted);
+            if (stale()) return;
+            panel = settleTest(panel, list, savedGistId);
+        } catch (error) {
+            if (stale()) return;
+            const reason = error instanceof Error ? error.message : String(error);
+            panel = failTest(panel, reason);
+            toastStore.show("测试连接失败", reason, "destructive");
+        } finally {
+            refreshLocalBytes();
+        }
     }
 
     /**
@@ -481,9 +490,13 @@
      * 对一条已经不存在的 Gist 没有任何意义，留着只会一直报「Gist 不见了」。
      */
     function removeGist(gistId: string): void {
+        // 垃圾桶只长在列表上，而列表只在「验过」这一支里
+        if (panel.kind !== "verified") return;
+        const token = panel.text;
+
         void withBusy("delete", async () => {
             try {
-                await syncEngine.deleteGist(gistId, draftToken);
+                await syncEngine.deleteGist(gistId, token);
             } catch (error) {
                 toastStore.show(
                     "删除失败",
@@ -493,8 +506,7 @@
                 return;
             }
 
-            gists = (gists ?? []).filter((g) => g.id !== gistId);
-            if (pickedId === gistId) pickedId = NEW_GIST;
+            panel = dropGist(panel, gistId);
 
             if (savedGistId === gistId) {
                 syncEngine.forgetGist();
@@ -576,7 +588,7 @@
         data-value={value}
         class={cn(
             "flex items-center gap-2 px-2.5 py-2 transition-colors",
-            pickedId === value
+            verifiedDraft?.pickedId === value
                 ? "bg-accent"
                 : "hover:bg-accent/60 focus-within:bg-accent/60",
         )}
@@ -587,8 +599,8 @@
                 name="sync-gist"
                 class="sr-only"
                 {value}
-                checked={pickedId === value}
-                onchange={() => (pickedId = value)}
+                checked={verifiedDraft?.pickedId === value}
+                onchange={() => (panel = pickGist(panel, value))}
             />
             {#if value === NEW_GIST}
                 <!-- 还没建出来的那条：一眼看出是「新建」，不假装成一条已有片段 -->
@@ -617,7 +629,7 @@
                 >
             </span>
         </label>
-        {#if pickedId === value}
+        {#if verifiedDraft?.pickedId === value}
             <IconCheck size={14} stroke={2} class="shrink-0" />
         {/if}
         {#if value !== NEW_GIST}
@@ -633,7 +645,7 @@
                     idleTitle="删除此云端片段"
                     confirmTitle="再次点击以删除（不可恢复）"
                     aria-label={`删除代码片段 ${value}`}
-                    disabled={busy !== ""}
+                    disabled={anyBusy}
                     onConfirm={() => removeGist(value)}
                 >
                     {#snippet children()}
@@ -701,15 +713,14 @@
                 <!-- ── 编辑态 ─────────────────────────────────────────── -->
                 <div class="flex gap-2">
                     <Input
-                        bind:value={draftToken}
+                        value={tokenText}
                         type={keyVisible ? "text" : "password"}
                         placeholder="Gitee 私人令牌"
                         aria-label="Gitee 私人令牌"
                         class="font-mono text-[11px]"
-                        oninput={() => {
+                        oninput={(event) => {
                             // 令牌一变，之前那次自检就不算数了：列表收起来、保存变灰
-                            testState = null;
-                            gists = null;
+                            panel = editText(event.currentTarget.value);
                         }}
                         onkeydown={(event) => {
                             if (event.key === "Enter" && draftValid)
@@ -743,22 +754,22 @@
 
                 <!-- 反馈只有按钮自己：验过变绿、错了变红（具体原因走全局提示） -->
                 <Button
-                    variant={testState === "error" ? "destructive" : "outline"}
-                    data-state={testState ?? "idle"}
+                    variant={panel.kind === "failed" ? "destructive" : "outline"}
+                    data-state={draftState(panel)}
                     size="sm"
                     class="w-full"
-                    disabled={!draftValid || busy !== ""}
+                    disabled={!draftValid || anyBusy}
                     onclick={() => testConnection()}
                 >
                     <IconCloudCheck size={15} stroke={1.5} />
-                    {busy === "test" ? "测试中…" : "测试连接"}
-                    {#if testState == "ok"}
+                    {panel.kind === "testing" ? "测试中…" : "测试连接"}
+                    {#if panel.kind === "verified"}
                         <IconRosetteDiscountCheckFilled class="text-success" />
                     {/if}
                 </Button>
 
                 <!-- ── 选一条代码片段 ─────────────────────────────── -->
-                {#if gists !== null}
+                {#if verifiedDraft}
                     <div
                         class="flex flex-col gap-2"
                         transition:slide={{ duration: 200, easing: cubicOut }}
@@ -807,33 +818,33 @@
                         保存是**唯一**落盘的地方：上面填的令牌、选的片段都只是草稿，
                         取消或直接刷新页面都不会生效（以前「测试连接」会顺手写进去）。
 
-                        能点它的前提是「这次测试连接过了」（`verified`）：
+                        能点它的前提是「这次测试连接过了」（`verifiedDraft` 非空）：
                           - 第一次配置：没验过连按钮都不出现（列表也还没出来，没什么可保存的）；
                           - 再次编辑：按钮一直在，但验过之前是灰的；改了令牌立刻又变灰。
                     -->
-                    {#if !firstEdit || verified}
+                    {#if !firstTime || verifiedDraft}
                         <Button
                             size="sm"
                             class="flex-1"
-                            disabled={!verified || busy !== ""}
+                            disabled={!verifiedDraft || anyBusy}
                             onclick={() => save()}
                         >
                             <IconCheck size={15} stroke={1.5} />
                             保存
                         </Button>
                     {/if}
-                    {#if !firstEdit}
+                    {#if !firstTime}
                         <Button
                             variant="ghost"
                             size="sm"
-                            disabled={busy !== ""}
+                            disabled={anyBusy}
                             onclick={() => cancelEditing()}
                         >
                             取消
                         </Button>
                     {/if}
 
-                    {#if savedGistId.length > 0 && !firstEdit}
+                    {#if savedGistId.length > 0 && !firstTime}
                         <ConfirmActionButton
                             variant="ghost"
                             size="sm"
@@ -842,7 +853,7 @@
                             confirmLabel="确认清空"
                             idleTitle="清空本地同步配置"
                             confirmTitle="确认清空？本地题库与进度不受影响"
-                            disabled={busy !== ""}
+                            disabled={anyBusy}
                             onConfirm={() => clearConfig()}
                         />
                     {/if}
@@ -950,17 +961,17 @@
                         class="min-w-0 flex-1 cursor-default font-mono text-[11px]"
                     />
                     <Button
-                        variant={testState === "error"
+                        variant={savedState(panel) === "error"
                             ? "destructive"
                             : "outline"}
                         data-state={justVerified
                             ? "verified"
-                            : (testState ?? "idle")}
+                            : savedState(panel)}
                         size="icon"
                         class="shrink-0"
                         title="测试连接"
                         aria-label="测试连接"
-                        disabled={busy !== ""}
+                        disabled={anyBusy}
                         onclick={() => testConnection()}
                     >
                         {#if justVerified}
@@ -977,7 +988,7 @@
                         class="shrink-0"
                         title="修改配置"
                         aria-label="修改配置"
-                        disabled={busy !== ""}
+                        disabled={anyBusy}
                         onclick={() => startEditing()}
                     >
                         <IconEdit size={15} stroke={1.5} />
@@ -987,7 +998,7 @@
                 <Button
                     size="sm"
                     class="w-full"
-                    disabled={busy !== ""}
+                    disabled={anyBusy}
                     onclick={() => syncNow()}
                 >
                     <IconCloudUp size={15} stroke={1.5} />
@@ -1025,7 +1036,7 @@
                                         : "outline"}
                                     size="sm"
                                     class="w-full"
-                                    disabled={busy !== ""}
+                                    disabled={anyBusy}
                                     onclick={() =>
                                         void withBusy("merge", () =>
                                             syncEngine.keepLocal(),
@@ -1058,7 +1069,7 @@
                                         : "default"}
                                     size="sm"
                                     class="w-full"
-                                    disabled={busy !== ""}
+                                    disabled={anyBusy}
                                     onclick={() =>
                                         void withBusy("merge", () =>
                                             syncEngine.keepRemote(),
@@ -1156,7 +1167,7 @@
                                     confirmClass="ring-destructive/40 ring-2"
                                     idleLabel="用本地覆盖云端"
                                     confirmLabel="确认覆盖"
-                                    disabled={busy !== ""}
+                                    disabled={anyBusy}
                                     onConfirm={() => forceUpload()}
                                 >
                                     {#snippet children({ confirming })}
@@ -1178,7 +1189,7 @@
                                     confirmClass="ring-destructive/40 ring-2"
                                     idleLabel="用云端覆盖本地"
                                     confirmLabel="确认覆盖"
-                                    disabled={busy !== ""}
+                                    disabled={anyBusy}
                                     onConfirm={() => forceDownload()}
                                 >
                                     {#snippet children({ confirming })}
