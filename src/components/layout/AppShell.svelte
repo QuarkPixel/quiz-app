@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { Snippet } from "svelte";
+    import { untrack, type Snippet } from "svelte";
 
     // @ts-ignore
     import logoRaw from "/assets/icons/logo.svg?raw";
@@ -54,8 +54,12 @@
      * 不这么做的话，从绿色点一下会先闪一下黄再变回绿：那一瞬间的黄来自
      * `phase === "syncing"`，而黄的意思是「有没传上去的改动」——那会儿其实没有，
      * 看着就像刚点就出问题了。红的同理：报错后重试期间也该一直是红的。
+     *
+     * 初值要 `untrack` 包一下：这里**就是要只取一次**（之后靠下面那个 effect
+     * 在「跑完」时同步），直接写 `$state(settledTone)` 会让编译器以为我们漏了
+     * 响应式依赖并给出 `state_referenced_locally` 警告。
      */
-    let toneWhileRunning = $state<Tone>(settledTone);
+    let toneWhileRunning = $state<Tone>(untrack(() => settledTone));
     $effect(() => {
         if (!syncing) toneWhileRunning = settledTone;
     });
