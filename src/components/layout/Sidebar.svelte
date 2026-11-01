@@ -59,13 +59,19 @@
     import { handleGlobalSettingsShortcut } from "@/features/globalSettingsShortcut";
     import { IDLE_PREFETCH_MS, SHORTCUTS } from "@/config";
     import { syncConfigStore } from "@/features/sync/config.svelte";
+    import { exportBank, BankImportSession } from "@/features/bankFiles";
     import {
-        exportBank,
-        BankImportSession,
-        type BankFileMessage,
-        type BankImportPrompt,
-        type OverwriteImportRequest,
-    } from "@/features/bankFiles";
+        importIdle,
+        importReading,
+        importReport,
+        isImportInFlight,
+        overwriteRequestOf,
+        promptState,
+        reportMessageOf,
+        startAnswering,
+        stopAnswering,
+        type ImportUiState,
+    } from "./sidebarState";
     import {
         BANK_PROMPT_META,
         BANK_PROMPT_MODES,
@@ -114,11 +120,22 @@
     });
 
     let fileInput: HTMLInputElement | null = $state(null);
-    let isImporting = $state(false);
-    /** 正有文件被拖到窗口上（用于显示投放提示） */
-    let isDraggingFile = $state(false);
+
+    /**
+     * 导入进程此刻走到哪一步。四个字段（是否在读、会话、覆盖询问、汇总）原本
+     * 是并列的，现在只剩这一个判别联合，非法组合在类型上构造不出来。
+     */
+    let importState = $state<ImportUiState>(importIdle());
+    /** 这一轮导入还没收尾：菜单里的导入项禁用、拖拽提示不亮。 */
+    const importInFlight = $derived(isImportInFlight(importState));
+    /** 覆盖询问与结果汇总都是 `importState` 的投影，不是另立的字段。 */
+    const overwriteRequest = $derived(overwriteRequestOf(importState));
+    const importMessage = $derived(reportMessageOf(importState));
+
     /** dragenter / dragleave 计数，避免在子元素间移动时闪烁 */
-    let dragDepth = 0;
+    let dragDepth = $state(0);
+    /** 正有文件被拖到窗口上（用于显示投放提示）：计数非零且此刻不忙 */
+    const isDraggingFile = $derived(dragDepth > 0 && !importInFlight);
 
 
     /**
@@ -141,9 +158,6 @@
         if (status.phase === "error") return `云同步：${status.message}`;
         return "";
     });
-    let importSession = $state<BankImportSession | null>(null);
-    let importMessage = $state<BankFileMessage | null>(null);
-    let overwriteRequest = $state<OverwriteImportRequest | null>(null);
 
     let selectedHashes = $state<string[]>([]);
     let selectionAnchorHash = $state<string | null>(null);
@@ -273,29 +287,17 @@
         }
     }
 
-    function showImportPrompt(prompt: BankImportPrompt): void {
-        if (prompt.kind === "overwrite") {
-            overwriteRequest = prompt.request;
-            importMessage = null;
-            return;
-        }
-
-        overwriteRequest = null;
-        importSession = null;
-        importMessage = prompt.message;
-    }
-
     /** 走一次导入会话：文件选择与拖拽投放共用同一套逻辑。 */
     async function importFiles(files: File[]): Promise<void> {
-        if (files.length === 0 || isImporting || importSession !== null) return;
+        if (files.length === 0 || isImportInFlight(importState)) return;
 
-        isImporting = true;
+        importState = importReading();
         try {
             const session = await BankImportSession.create(source, files);
-            importSession = session;
-            showImportPrompt(session.currentPrompt());
+            importState = promptState(session, session.currentPrompt());
         } finally {
-            isImporting = false;
+            // 读文件中途抛错：状态还停在 reading，得自己收回 idle
+            if (importState.kind === "reading") importState = importIdle();
         }
     }
 
@@ -317,9 +319,6 @@
     function onWindowDragEnter(event: DragEvent): void {
         if (!hasDraggedFiles(event)) return;
         dragDepth += 1;
-        if (!isImporting && importSession === null) {
-            isDraggingFile = true;
-        }
     }
 
     function onWindowDragOver(event: DragEvent): void {
@@ -332,53 +331,49 @@
     }
 
     function onWindowDragLeave(event: DragEvent): void {
-        // 拖出窗口时 relatedTarget 为 null，直接收起提示（有些浏览器此时 types 已清空）
+        // 拖出窗口时 relatedTarget 为 null，直接清零（有些浏览器此时 types 已清空）
         if (event.relatedTarget === null) {
             dragDepth = 0;
-            isDraggingFile = false;
             return;
         }
         if (!hasDraggedFiles(event)) return;
         dragDepth = Math.max(0, dragDepth - 1);
-        if (dragDepth === 0) {
-            isDraggingFile = false;
-        }
     }
 
     async function onWindowDrop(event: DragEvent): Promise<void> {
         if (!hasDraggedFiles(event)) return;
         event.preventDefault();
         dragDepth = 0;
-        isDraggingFile = false;
         await importFiles(Array.from(event.dataTransfer?.files ?? []));
     }
 
     async function answerOverwrite(overwrite: boolean): Promise<void> {
-        if (!importSession || !overwriteRequest || isImporting) return;
+        const state = importState;
+        if (state.kind !== "asking" || state.busy) return;
 
-        isImporting = true;
+        importState = startAnswering(state);
         try {
-            showImportPrompt(await importSession.resolveOverwrite(overwrite));
+            const prompt = await state.session.resolveOverwrite(overwrite);
+            importState = promptState(state.session, prompt);
         } finally {
-            isImporting = false;
+            importState = stopAnswering(importState);
         }
     }
 
     function openFileImport(): void {
-        if (isImporting || importSession !== null) return;
+        if (isImportInFlight(importState)) return;
         fileInput?.click();
     }
 
     async function importFromClipboard(): Promise<void> {
-        if (isImporting || importSession !== null) return;
+        if (isImportInFlight(importState)) return;
 
-        isImporting = true;
+        importState = importReading();
         try {
             const session = await BankImportSession.createFromClipboard(source);
-            importSession = session;
-            showImportPrompt(session.currentPrompt());
+            importState = promptState(session, session.currentPrompt());
         } finally {
-            isImporting = false;
+            if (importState.kind === "reading") importState = importIdle();
         }
     }
 
@@ -497,9 +492,12 @@
         closeMenus(true);
         const result = await exportBank(source, hash);
         if (!result.ok) {
-            importMessage = result.message;
+            importState = importReport(result.message);
         } else if (result.warning) {
-            importMessage = { title: "题库已导出", text: result.warning };
+            importState = importReport({
+                title: "题库已导出",
+                text: result.warning,
+            });
         }
     }
 
@@ -600,14 +598,14 @@
 {#snippet importMenuContent()}
     <DropdownMenu.Content side="right" align="start" class="w-60">
         <DropdownMenu.Item
-            disabled={isImporting || importSession !== null}
+            disabled={importInFlight}
             onSelect={() => openFileImport()}
         >
             <IconFileImport size={14} stroke={1.75} />
             <span>从文件导入</span>
         </DropdownMenu.Item>
         <DropdownMenu.Item
-            disabled={isImporting || importSession !== null}
+            disabled={importInFlight}
             onSelect={() => void importFromClipboard()}
         >
             <IconClipboard size={14} stroke={1.75} />
@@ -617,7 +615,7 @@
         <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger
                 class="text-muted-foreground justify-end text-right text-xs"
-                disabled={isImporting || importSession !== null}
+                disabled={importInFlight}
             >
                 <span>复制 Prompt</span>
                 <IconPromptCopy size={12} stroke={1.75} />
@@ -710,7 +708,7 @@
             {#if banks.length != 0}
                 <DropdownMenu.Root>
                     <DropdownMenu.Trigger
-                        disabled={isImporting || importSession !== null}
+                        disabled={importInFlight}
                     >
                         {#snippet child({ props })}
                             <Sidebar.GroupAction {...props} title="导入题库">
@@ -848,8 +846,7 @@
                         <Sidebar.MenuItem>
                             <DropdownMenu.Root>
                                 <DropdownMenu.Trigger
-                                    disabled={isImporting ||
-                                        importSession !== null}
+                                    disabled={importInFlight}
                                 >
                                     {#snippet child({ props })}
                                         <Sidebar.MenuButton
@@ -954,7 +951,7 @@
 <Dialog.Root
     open={importMessage !== null}
     onOpenChange={(open) => {
-        if (!open) importMessage = null;
+        if (!open) importState = importIdle();
     }}
 >
     <Dialog.Content class="max-w-sm">
@@ -965,7 +962,7 @@
             </Dialog.Description>
         </Dialog.Header>
         <Dialog.Footer>
-            <Button onclick={() => (importMessage = null)}>知道了</Button>
+            <Button onclick={() => (importState = importIdle())}>知道了</Button>
         </Dialog.Footer>
     </Dialog.Content>
 </Dialog.Root>
