@@ -425,7 +425,9 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 
 **题目阶段只有一份判据**：`stageOf(state, id)`（`src/store.ts`）回答 `mastered` / `active` / `pending` / `absent`。三份集合本身没变（`masteredIds` / `activePool` 落盘，`pendingIds` 由 `computePendingIds` 按当前筛选算出、不入存），但**不要**再在各处自己写 `masteredIds.includes(...)` 那一套——加阶段 / 改语义时只有这一处要跟。
 
-**重置会传播**：`StoredState.resetRev`（`nextRev` 盖的戳）。`masteredIds` 是 highWaterSet（只涨不落），没有它一次重置会被另一台设备的旧值原样复活。合并时戳大的那一侧整段赢：它的 `masteredIds` / `masteredMistakes` 作基，另一侧只贡献 `rev > resetRev` 的池子条目。代价（有意接受）：重置后在**另一台**设备上新掌握的题会被这次覆盖丢掉（`masteredIds` 没有逐条时间戳）。
+**重置会传播**：`StoredState.resetRev`（`nextRev` 盖的戳）。`masteredIds` 是 highWaterSet（只涨不落），没有它一次重置会被另一台设备的旧值原样复活。合并时戳大的那一侧整段赢：它的 `masteredIds` / `masteredMistakes` 作基，另一侧只贡献 `rev > resetRev` 的池子条目。代价（有意接受）：重置后在**另一台**设备上新掌握的题会被这次覆盖丢掉（`masteredIds` 没有逐条时间戳）。**重置与导入都盖戳**（`resetStoredState` / `MemorySession.reset` / 两个 `applyImportedState`）。
+
+**新增 `StoredState` 字段要同时看四处**：`persistedState`（`store.ts`，落盘白名单）、`toStoredStateLike`（`features/quiz/settings.ts`）、`rebuildRuntimeState` / `rebuildRuntimeStateForFilterChange`（`features/quiz/runtime.ts`）、以及同步的登记表。后三处以前都是手抄字段，漏了 `quizSession` / `resetRev` 的后果分别是「调一下连对门槛就换了一道题」和「切筛选 / 导入把重置戳抹掉」。
 
 ### 刷题模式的「屏上会话」（`StoredState.quizSession`）
 
@@ -576,13 +578,24 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   本地改动永远传不上去，而基准线照常刷新，下一轮判成 pull、云端旧进度反手覆盖回来。
   **判定结果不许再被调用方改写**，要加语义就加字段。
 - **设备本地的字段不参与同步，也不能被同步擦掉**（`model/policy.ts` 的
-  `DEVICE_LOCAL_BANK_FIELDS`）：只剩 `ui` / `filterType`（纯视图：面板开合、题型筛选）。
+  `DEVICE_LOCAL_BANK_FIELDS`）：只剩 `ui` / `filterType`（纯视图：面板开合、题型筛选）；
+  general 那侧的 `activeBank` 同理（`DEVICE_LOCAL_GENERAL_FIELDS`——「当前打开哪个题库」
+  是设备本地导航，URL 才是第二真相，传过去会让另一台设备启动时被动跳到你在手机上开的题库）。
   会话（`memory.sessions`）与刷题池（`activePool`）都**可同步**，各自有确定的合并规则
   （`mergeSessionsWithBase` / `mergeActivePool`），不再靠 `local ?? remote`
   （那种写法**违反交换律**）。两条边界都要顾：
   **收集本地与解云端都要剥**（只剥一边会让进度哈希永远对不上 → "永远待同步"，
   而且老快照会把别的设备的界面状态灌回本地），写回本地统一走引擎的
   `applyRemoteState`（唯一落盘入口），它用 `attachDeviceLocal` 贴回**本机那份**。
+- **合并算子的具体规矩**（归属表在 `model/policy.ts` 文件头，实现在 `merge.ts`）：
+  - `activePool` 按 id 合，**逐字段**：`consecutiveCorrect` 先比 `rev`（大的那侧赢），
+    `rev` 相等时看 `hasEverMistaken`（答错的那侧一定更新，它会把连对清零），
+    双方都答错过取 `min`、都没答错过取 `max`；`hasEverMistaken` / `hasBeenShown` 取 OR，
+    `lastSelectedRound` 取 max。**不能拿 `lastSelectedRound` 当排序依据**——它是本地计数器，跨设备不可比
+  - `memory.sessions`：同一 `learning.id` 并 `masteredIds` / `cardIds`、队列 = 并集 − 已掌握；
+    不同 `id`（两台各开了一轮）取 `rev` 大的那一轮。`review` 同一天并集合、不同天把昨天
+    没完成的队列并进今天；`doneIds` 是墓碑，旧 `targets` 复活不了已过关的卡。
+    `mergeSessionsWithBase` 还要处理「一边把会话删了」——结束过的一轮不能被另一边的旧快照复活
 - **新增可同步字段必须登记**（`model/policy.ts`）：那里有**编译期穷尽护栏**，
   给状态加字段忘了登记 → `pnpm check` 直接不过。四项（卡片 / `StoredState` 顶层 /
   `MemoryStoredState` / `GeneralSnapshot`）都验证过会红。
@@ -1094,6 +1107,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     - **今天**的 → 接着打开：队列顺序、当前题、`doneIds` / `targets` / `streaks` 全部留着（这就是「3 / 5，换设备还是 3 / 5」）
     - **昨天**的 → `rolloverReviewSession`：把昨天**没完成的队列**并进今天，**计数归零**（`doneIds` / `touchedIds` / `targets` / `failed` / `streaks` 全部清空）——今天是一轮新的，卡片按常规到期重来。连对要求跨天作废，别让「昨天差一次没补完」变成今天的包袱
     - **没有**（或时钟偏快留下的未来记录）→ 新建今天这一份，队列 = 今天到期的卡打散
+  - `createReviewSession` **保持传入的顺序**，只有合并（`mergeReviewSession`）时才为了收敛而排序——`doneIds` 的顺序就是「今天先过了哪几道」，别在创建时顺手排掉
   - 队列 = 今天到期的（`state === "reviewing"` 且 `nextDue` ≤ 今天）+ 今天还没补完连对的（`retryTargetsToday()`，**只认今天的会话**）。`reviewQueueToday()` 是唯一判据，首页 `reviewableCount` = 它减去今天的 `doneIds`
   - 答对：只把本轮连对次数 +1（`sessions.review.streaks`），**不动掌握阶梯**；连对达到本轮目标（默认 1）才算「复习完成」→ 加进 `doneIds`
     - **本轮没失败过** → 完成时才推进阶梯（`level + 1`，下次隔 `2^(level-1)` 天）；`level` 超过 M → 已掌握（`level` / `streak` 清零，不再出现）
@@ -1103,7 +1117,8 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - **降级的卡不推进阶梯**：`failed` 只用来决定「本轮完成时要不要推进阶梯」；它和 `targets` / `streaks` 一起落盘，退出 / 刷新 / 换设备后仍然生效
   - 失败**不会**回到「学习中」
   - **收尾不删会话**：队列走完后 `sessions.review` 留着（`doneIds` 就是「今天过了哪几道」这个事实，进度条停在 5 / 5）。真正清掉它的时机是**跨天**（`rolloverReviewSession`）
-  - `reset()` / 导入进度会清掉整份 `sessions`（先 `finishRun()` 再清，否则 `exitSession` 的第一步会把「重前那一轮」又写回盘上）
+  - **首页标熟要同时剔落盘会话**（`dropFromSavedReview`）：`buildReviewSession` 只在复习轮跑着时读 `flow`，在首页点「标熟」时 `flow` 是 `idle`，那条路径不经过它。不直接改盘上那份的话，「标熟一张还欠连对的卡」之后待办仍在，下次复习又把它拉回来（并带上新的 `rev`，否则同步时被旧快照盖掉）
+  - `reset()` / 导入进度会清掉整份 `sessions`（先 `finishRun()` 再清，否则 `exitSession` 的第一步会把「重置前那一轮」又写回盘上）
   - 判分流里**不要**先改 `appState` 再 `writeProgress`：后者是从 `base` 重建整个 `memory` 段的。会话记账一律走 `flow`（`setReviewTarget` / `addTouched` / `addReviewed`），由 `save()` 的 `buildReviewSession` 收成落盘那份
 
 会话的落盘由 `save()` 统一收口：`buildLearningSession()` 收 `round + flow`，`buildReviewSession()` 收 `flow.review`，合成 `memory.sessions`。读完这一节请记住一句话：**`progress` 是长期进度，`sessions` 是「今天 / 本轮」的脚手架，两者都要落盘。**
@@ -1147,11 +1162,10 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 
 ### 日期与「今天」（凌晨 5 点换日）
 
-- **一天从凌晨 5 点开始算**（`MEMORY_DAY_START_HOUR = 5`）：凌晨 5 点前都算前一天，5 点后才算次日
-- 两套表示，别混：
-  - `DayKey`（`dayKeyOf()`，`YYYYMMDD` 整数）回答「是哪一天」，给 `sessions.*.day` / `learnedDay`；`addDayKeys` / `diffDayKeys` 是它的加减
-  - `nextDue`（本地 0 点毫秒戳）回答「什么时候到期」，给 `isDue` / `overdueDays` / `addDays`
-- `studyDay(timestamp)` 仍留在 `algorithm.ts`（返回学习日 0 点锚点），只给 `nextDue` 那套用：`isDue` = `startOfDay(nextDue) <= studyDay(now)`，排下次复习 = `addDays(studyDay(now), 间隔天数)`。**新代码不要再拿它当日期键**（换时区就对不上，见 `day.ts` 文件头）
+两套表示（`DayKey` 与 `nextDue`）的定义与换日规则在「状态模型 · 日期与「今天」」那一节，
+这里只写记忆模式侧的用法：
+
+- `studyDay(timestamp)` 留在 `algorithm.ts`（返回学习日 0 点锚点），只给 `nextDue` 那套用：`isDue` = `startOfDay(nextDue) <= studyDay(now)`，排下次复习 = `addDays(studyDay(now), 间隔天数)`。**新代码不要再拿它当日期键**（换时区就对不上，见 `day.ts` 文件头）
 - UI 侧（`MemoryOverview`）算「今天 / 明天 / N 天后 / 逾期 N 天」用 `overdueDays(item, session.now)`，别自己减时间戳
 - 推论（有意为之，和 Anki 的「次日开始时间」一致）：**凌晨 2 点学出来的卡，凌晨 5 点就到期**——因为 2 点还算「昨天」，它的「明天」指的就是从 5 点开始的这一天
 - 这个 5 点只作用于**记忆模式**的复习到期判断；刷题模式没有日期逻辑
@@ -1270,6 +1284,10 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 
 ### 测试
 
+- **`vite.config.ts` 的 `testTimeout` 是 20s**：85 个文件并发时，`syncSettings` / `syncLedgerFailure`
+  这两个「挂整页组件」的用例会超过默认 5s 被判定超时（单独跑只要 2–3s）。看到它们红先单独重跑，
+  别当成回归。
+
 **视图级冒烟（先看这一条）**
 
 - `tests/viewSmoke.test.ts` — 真的把 `QuizView` / `MemoryView` 挂进 happy-dom 点一遍：
@@ -1301,9 +1319,12 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - **过渡的残影不算「屏上是哪一屏」**：`SwapFade` 退场的那一层在 DOM 里还留着旧内容
   （`flushSync()` 不等动画），断言「现在显示的是不是新内容」时要先剔掉 `[data-swap-leaving]`
   （`tests/memoryRouting.test.ts` 的 `questionOnScreen()` 就是先克隆 body 再移除它们）。
-- **算「今天」用 `studyDay()`，不是 `startOfDay()`**：记忆模式的「今天」按凌晨 5 点换日，
-  0–5 点跑用例时 `startOfDay(now)` 落在还没到的学习日上，`isDue` 会判否、用例莫名变红
-  （`tests/viewSmoke.test.ts` 的 `dueToday()`）。
+- **比「哪一天」用 `dayKeyOf()`，比「到期」用 `studyDay()`，别用 `startOfDay()`**：记忆模式的
+  「今天」按凌晨 5 点换日，0–5 点跑用例时 `startOfDay(now)` 落在还没到的学习日上，`isDue` 会判否、
+  用例莫名变红（`tests/viewSmoke.test.ts` 的 `dueToday()`）。会话的 `day` / `learnedDay` 都是 `DayKey`，
+  用例里要构造「昨天」就 `addDayKeys(dayKeyOf(now), -1)`，不要拿时间戳去减。
+- **别写死时钟**：`makeSession(ids, { now })` 传固定时间源，`sessions.*.day` 与 `learnedDay` 都从它推；
+  用 `Date.now()` 会让「跨天」「跨时区」两类用例在半夜 / CI 上飘。
 
 **共享层与配置**
 
@@ -1339,7 +1360,10 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 **领域逻辑**
 
 - `tests/memoryMode.test.ts` — 校验与总览模型
-- `tests/memorySession.test.ts` — 两条流的状态流转、曲线、持久化
+- `tests/memorySession.test.ts` — 两条流的状态流转、曲线、持久化；会话续做（学到一半 / 复习到一半退出再进来）、跨天合并、复习口径「连对达标才算」
+- `tests/memoryReviewProgressBar.test.ts` — **组件级**的进度条：答「忘记」之后那一格不变成已过关、退出重挂仍是 1 / 3、分母不跟着补连对涨
+- `tests/quizSessionResume.test.ts` — 刷题模式屏上会话：题干页 / 判分页恢复、选项顺序还原、题目已不在池子里就不恢复、`lastAskedId` 不重复出题、判分前快照缺失时「视作正确」不可用
+- `tests/syncResetRev.test.ts` — 重置传播：`resetRev` 大的一侧整段赢、另一侧只贡献戳之后的池子条目、`memory.progress` 里旧 `rev` 的条目丢掉
 - `tests/memoryImportExport.test.ts` — 记忆进度的导出 / 导入 round-trip
 - `tests/appShortcutsMemory.test.ts` — 记忆模式走**同一份**键盘分发：三档自评按键、答案页降级、`Esc` 退出本轮、⌘S / ⌘N 不再漏，以及输入框 / 对话框 / 交互目标的守卫
 - `tests/globalSettingsShortcut.test.ts` — 全局设置快捷键：⌘⇧I 的键位识别（与 ⌘I / 裸 ⇧+I / ⌘⇧⌥I 区分）、打开对话框并 `preventDefault`、对话框里与输入法组词时不介入
