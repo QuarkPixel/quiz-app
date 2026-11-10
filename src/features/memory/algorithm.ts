@@ -16,6 +16,7 @@
  */
 
 import type { MemoryProgress } from "@/types";
+import { dayAnchor, dayKeyOf, MEMORY_DAY_START_HOUR } from "./day";
 
 /** 默认掌握阈值：走完第 7 次复习（间隔 64 天）后算已掌握。 */
 export const MEMORY_DEFAULT_GRADUATE_LEVEL = 7;
@@ -62,8 +63,11 @@ export function cumulativeIntervalDays(threshold: number): number {
 /**
  * 「一天」从凌晨 5 点开始算：凌晨 5 点前都算前一天，5 点后才算次日。
  * 所以凌晨 3 点打开应用，看到仍然是「昨天」的复习进度。
+ *
+ * 常量本身搬到了 `./day`（DayKey 那一层也要用），这里 re-export 保持
+ * 现有 import 路径不变。
  */
-export const MEMORY_DAY_START_HOUR = 5;
+export { MEMORY_DAY_START_HOUR };
 
 /** 把毫秒时间戳截断到本地当天 0 点。 */
 export function startOfDay(timestamp: number): number {
@@ -79,9 +83,12 @@ export function startOfDay(timestamp: number): number {
  *
  * 返回值故意留在 0 点而不是 5 点：`nextDue` 存的一直是「到期日期」，
  * 这样老数据（同样存在 0 点）不需要任何迁移。
+ *
+ * 内部走 `dayKeyOf` + `dayAnchor`：和 DayKey 用同一份「哪天」的定义，
+ * 不会出现「学习日按 5 点算、锚点按 0 点算」两套边界。
  */
 export function studyDay(timestamp: number): number {
-  return startOfDay(timestamp - MEMORY_DAY_START_HOUR * 60 * 60 * 1000);
+  return dayAnchor(dayKeyOf(timestamp));
 }
 
 /** 在某个时间戳上加 `days` 天（按本地日历天推进）。 */
