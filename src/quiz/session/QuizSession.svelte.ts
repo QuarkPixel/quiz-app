@@ -17,6 +17,15 @@
  *
  * 作答草稿（`selectedAnswers` / `blankAnswerInputs` / `shuffledOptions`）不在
  * 那台机器里：它们是用户正在填的表单，换题时由 `selectNext()` 清空。
+ *
+ * ── 刷新 / 换设备后停在同一道题 ────────────────────────────────────────────
+ *
+ * `flow` 活在内存里，刷新即回到 `empty`。所以「停在哪一道、答到哪一步」另外
+ * 落一份 `StoredState.quizSession`（模型见 `./quizSession.ts`）：
+ *   - `initialize()` 先试 `restoreQuizSession()`，失败才正常出题；
+ *   - `selectNext()` / `submit()` 把当前状态写回；
+ *   - 判分页也能恢复（对错 + 作答 + 选项顺序），但**判分前快照不落盘**，
+ *     所以恢复之后「视作正确」不可用（`canTreatAsCorrect === false`）。
  */
 
 import { tick } from "svelte";
@@ -61,6 +70,7 @@ import {
   type ShuffledOption,
 } from "../types/types";
 import { maybePlayAnswerSound } from "@/sound";
+import { nextRev } from "@/lib/rev";
 import { SWAP_LEAVING_ATTR } from "@/lib/transitions/swap";
 import type {
   CopyQuestionOptions,
@@ -86,6 +96,7 @@ import {
   showsAnswer,
   type QuizFlow,
 } from "./quizFlow";
+import { createQuizSession } from "./quizSession";
 
 /** 两个模式共用的 deps 形状，保留旧名字方便调用方按模式引用。 */
 export type QuizSessionDeps = SessionDeps;
@@ -184,6 +195,16 @@ export class QuizSession extends ProgressSessionBase {
     return nextQueuedOf(this.flow);
   }
 
+  /**
+   * 「视作正确」现在可用吗。
+   *
+   * 它需要判分前的 `RuntimeState` 快照，而快照**不落盘**（整份状态太大）。
+   * 所以从盘上恢复出来的判分页没有反悔入口——按钮不该出现，而不是点了没反应。
+   */
+  get canTreatAsCorrect(): boolean {
+    return rewindOf(this.flow) !== null;
+  }
+
   constructor(
     bank: QuizBank,
     deps: QuizSessionDeps,
@@ -215,11 +236,14 @@ export class QuizSession extends ProgressSessionBase {
   // 答题流
   // ────────────────────────────────────────────────────────────────
 
-  /** 入口：补齐活动池 + 选第一道题 */
+  /** 入口：补齐活动池 + 恢复上次停在哪（没有就选第一道） */
   initialize(): void {
     this.flow = resetFlow();
     this.appState = fillActivePool(this.appState);
-    this.save();
+    if (this.restoreQuizSession()) {
+      this.save();
+      return;
+    }
     this.selectNext();
   }
 
@@ -241,16 +265,7 @@ export class QuizSession extends ProgressSessionBase {
     this.presentationSeq += 1;
     this.markCurrentQuestionAsShown();
 
-    if (next?.options) {
-      const optionsWithIndex = next.options.map((opt, idx) => ({
-        ...opt,
-        originalIndex: idx,
-      }));
-      this.shuffledOptions = shuffle(optionsWithIndex);
-    } else {
-      this.shuffledOptions = [];
-    }
-
+    this.shuffledOptions = next ? this.buildShuffledOptions(next) : [];
     this.selectedAnswers = [];
     const answerCount = Array.isArray(next?.answer)
       ? (next.answer as string[]).length
@@ -258,6 +273,11 @@ export class QuizSession extends ProgressSessionBase {
     this.blankAnswerInputs = Array(answerCount).fill("");
 
     this.resetCopyQuestionStatus();
+    // 屏上停的是哪一道、答到哪一步，也是会话的一部分：刷新 / 换设备要能恢复。
+    // `next === null`（空题库 / 全掌握）时清掉，别留一条指向不存在的记录。
+    if (next) this.persistQuizSession({ phase: "asking" });
+    else this.clearQuizSession();
+    this.save();
     this.focusBlankInputIfNeeded();
   }
 
@@ -289,6 +309,8 @@ export class QuizSession extends ProgressSessionBase {
     const poolIdsBeforeAnswer = this.activePoolIdSet();
     this.appState = applyAnswer(this.appState, question.id, nextIsCorrect);
     this.enqueueNewlyPooled(poolIdsBeforeAnswer);
+    // 判分页也要能恢复：只存「对错」，判分前快照不落盘（见 `restoreQuizSession`）
+    this.persistQuizSession({ phase: "judged", correct: nextIsCorrect });
     this.save();
 
     if (nextIsCorrect && this.globalSettings.autoNextOnCorrect) {
@@ -309,6 +331,7 @@ export class QuizSession extends ProgressSessionBase {
     this.appState = applyAnswer(rewind, question.id, true);
     this.enqueueNewlyPooled(poolIdsBeforeRewind);
     this.flow = markCorrect(this.flow);
+    this.persistQuizSession({ phase: "judged", correct: true });
     this.save();
     this.deps.flash(true);
     this.maybePlayAnswerSoundForCorrect();
@@ -343,6 +366,9 @@ export class QuizSession extends ProgressSessionBase {
       return;
     }
     this.flow = next;
+    // 屏上换成了下一张预告：它不是「停在这道题等作答」，会话记录清掉
+    this.clearQuizSession();
+    this.save();
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -442,6 +468,9 @@ export class QuizSession extends ProgressSessionBase {
     if (next !== null) {
       this.flow = next;
       this.resetCopyQuestionStatus();
+      // 屏上换成了「新题预告」：那不是「停在某道题等作答」，会话记录清掉
+      this.clearQuizSession();
+      this.save();
       return;
     }
     this.selectNext();
@@ -532,6 +561,8 @@ export class QuizSession extends ProgressSessionBase {
       masteredMistakes: newState.masteredMistakes ?? {},
       settings: sanitizeBankSettings(newState.settings),
       pendingIds: [],
+      // 导入是「整段覆盖」：盖一个戳，别让云端的旧进度在下次同步时并集回来
+      resetRev: nextRev(Date.now(), this.appState.resetRev ?? 0),
     };
     this.appState = rebuildRuntimeState(
       this.questions,
@@ -598,6 +629,124 @@ export class QuizSession extends ProgressSessionBase {
     maybePlayAnswerSound(this.globalSettings, this.deps.sound, true);
   }
 
+  // ────────────────────────────────────────────────────────────────
+  // 屏上会话（刷新 / 换设备后接着答）
+  // ────────────────────────────────────────────────────────────────
+
+  /** 把题目选项摊成可作答的形状（`originalIndex` 记它在题库里的原位置）。 */
+  private buildShuffledOptions(question: Question): ShuffledOption[] {
+    if (!question.options) return [];
+    return shuffle(
+      question.options.map((opt, idx) => ({ ...opt, originalIndex: idx })),
+    );
+  }
+
+  /**
+   * 按存下来的顺序还原选项。
+   *
+   * 顺序必须**原样还原**：答案页要标「你选了哪个」，顺序变了就等于换了一道题。
+   * 题库改过（数量对不上 / 下标越界 / 重复）时返回 `null`，由调用方重新打乱——
+   * 顺序变了总比空着不能答好。
+   */
+  private restoreShuffledOptions(
+    question: Question,
+    order: readonly number[],
+  ): ShuffledOption[] | null {
+    if (!question.options) return [];
+    if (order.length !== question.options.length) return null;
+
+    const restored: ShuffledOption[] = [];
+    const seen = new Set<number>();
+    for (const originalIndex of order) {
+      const option = question.options[originalIndex];
+      if (option === undefined || seen.has(originalIndex)) return null;
+      seen.add(originalIndex);
+      restored.push({ ...option, originalIndex });
+    }
+    return restored;
+  }
+
+  /**
+   * 恢复「屏上停在哪」。
+   *
+   * 返回 `false` 就正常出题（没有会话 / 那道题已经不在池子里 / 题库改过了）。
+   *
+   * `phase === "judged"` 时恢复答案页——但**判分前快照不落盘**（它是一整份
+   * `RuntimeState`），所以恢复之后 `rewind` 是 `null`：「视作正确」既不会在
+   * UI 上出现，`treatLastAnswerAsCorrect` 也是空操作。这是有意接受的代价。
+   */
+  private restoreQuizSession(): boolean {
+    const session = this.appState.quizSession;
+    if (!session) return false;
+    const inPool = this.appState.activePool.some(
+      (item) => item.id === session.currentId,
+    );
+    const question = this.questions.find((q) => q.id === session.currentId);
+    if (!inPool || !question) return false;
+
+    this.lastAskedId = session.lastAskedId ?? session.currentId;
+    this.presentationSeq += 1;
+    this.markCurrentQuestionAsShown();
+
+    this.shuffledOptions =
+      this.restoreShuffledOptions(question, session.optionOrder) ??
+      this.buildShuffledOptions(question);
+    this.selectedAnswers = [...session.selectedAnswers];
+    this.blankAnswerInputs = [...session.blankAnswerInputs];
+
+    this.flow =
+      session.phase === "judged"
+        ? {
+            kind: "judged",
+            question,
+            correct: session.correct === true,
+            rewind: null,
+            queued: [],
+          }
+        : ask(question);
+    this.resetCopyQuestionStatus();
+    this.focusBlankInputIfNeeded();
+    return true;
+  }
+
+  /** 把「屏上停在哪」写进 `appState`（下一次 `save()` 会带出去）。 */
+  private persistQuizSession(patch: {
+    phase: "asking" | "judged";
+    correct?: boolean;
+  }): void {
+    const question = this.currentQuestion;
+    if (!question) {
+      this.clearQuizSession();
+      return;
+    }
+    const rev = nextRev(Date.now(), this.appState.quizSession?.rev ?? 0);
+    this.appState = {
+      ...this.appState,
+      quizSession: createQuizSession({
+        currentId: question.id,
+        phase: patch.phase,
+        correct: patch.correct,
+        selectedAnswers: this.selectedAnswers,
+        blankAnswerInputs: this.blankAnswerInputs,
+        optionOrder: this.shuffledOptions.map((opt) => opt.originalIndex),
+        lastAskedId: this.lastAskedId,
+        rev,
+      }),
+    };
+  }
+
+  /**
+   * 清掉屏上会话。
+   *
+   * 有两个调用场景：屏上换成了「新题预告」（那是展示，不是等作答）、
+   * 以及题目没了。**不要**在 `exitSession` 这类「只是离开页面」的地方清——
+   * 刷新后要能回到同一道题，靠的就是它还在盘上。
+   */
+  private clearQuizSession(): void {
+    if (this.appState.quizSession === undefined) return;
+    this.appState = { ...this.appState, quizSession: undefined };
+  }
+
   private getCurrentQuestionCopyContext(): QuestionCopyContext {
     return {
       shuffledOptions: this.shuffledOptions,
@@ -623,7 +772,11 @@ export class QuizSession extends ProgressSessionBase {
     if (!item || item.hasBeenShown) return;
 
     const activePool = [...this.appState.activePool];
-    activePool[itemIndex] = { ...item, hasBeenShown: true };
+    activePool[itemIndex] = {
+      ...item,
+      hasBeenShown: true,
+      rev: nextRev(Date.now(), item.rev ?? 0),
+    };
     this.appState = { ...this.appState, activePool };
     this.save();
   }

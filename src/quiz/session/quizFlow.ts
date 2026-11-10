@@ -26,6 +26,10 @@
  *      由会话去题库里挑（见 `QuizSession.selectNext`）；
  *   3. 作答草稿（`selectedAnswers` / `blankAnswerInputs` / `shuffledOptions`）
  *      **不属于**这台机器：它们是用户正在填的表单，换题时由会话清空。
+ *
+ * **跨刷新的那一份不在这里**：这台机器活在内存里，刷新即回到 `empty`。
+ * 「停在哪一道、答到哪一步」由 `StoredState.quizSession` 落盘 / 同步，
+ * 恢复逻辑见 `QuizSession.restoreQuizSession`（模型在 `./quizSession.ts`）。
  */
 
 import type { Question, RuntimeState } from "@/types";

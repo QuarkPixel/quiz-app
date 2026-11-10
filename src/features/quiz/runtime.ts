@@ -78,6 +78,9 @@ export function rebuildRuntimeState(
     settings: state.settings,
     filterType,
     ui: state.ui,
+    // 重置的墓碑戳是「进度的一部分」，重建状态时不能丢：
+    // 丢了就等于把这次重置忘掉，另一台设备的旧进度下次同步会原样回来
+    resetRev: state.resetRev,
   });
 }
 
@@ -100,6 +103,7 @@ export function rebuildRuntimeStateForFilterChange(
     settings: state.settings,
     filterType,
     ui: state.ui,
+    resetRev: state.resetRev,
   });
 }
 

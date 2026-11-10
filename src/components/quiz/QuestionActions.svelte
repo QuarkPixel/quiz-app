@@ -120,7 +120,7 @@
                 我知道了
             </Button>
         {:else if session.showResult}
-            {#if !session.isCorrect}
+            {#if !session.isCorrect && session.canTreatAsCorrect}
                 <ConfirmActionButton
                     variant="outline"
                     size="icon-lg"

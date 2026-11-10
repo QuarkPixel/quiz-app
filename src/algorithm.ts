@@ -5,6 +5,7 @@
 import type { Question, RuntimeState, ActivePoolItem, Stats } from "./types";
 import { createActivePoolItem, filterQuestions } from "./store";
 import { isDebugModeEnabled } from "./debug";
+import { nextRev } from "./lib/rev";
 
 interface WeightedPoolItem {
   id: string;
@@ -228,6 +229,7 @@ export function processAnswer(
   const item = { ...newState.activePool[itemIndex] };
   item.hasBeenShown = true;
   item.lastSelectedRound = newState.currentRound;
+  item.rev = nextRev(Date.now(), item.rev ?? 0);
 
   if (isCorrect) {
     item.consecutiveCorrect++;

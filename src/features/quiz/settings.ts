@@ -23,6 +23,11 @@ function toStoredStateLike(runtimeState: RuntimeState): StoredState {
     filterType: runtimeState.filterType,
     settings: runtimeState.settings,
     ui: runtimeState.ui,
+    // 改设置不是「换一道题」：屏上会话与重置墓碑都要原样带着。
+    // 漏掉 `quizSession` 会让「调一下连对门槛 → 刷新」变成换一道题；
+    // 漏掉 `resetRev` 会让这次重置在下次同步时被旧进度复活。
+    quizSession: runtimeState.quizSession,
+    resetRev: runtimeState.resetRev,
   };
 }
 
