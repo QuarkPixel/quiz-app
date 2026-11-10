@@ -186,7 +186,8 @@ describe("记忆模式：复习轮的进度条（跨会话）", () => {
 
     buttonWithText("忘记").click();
     flushSync();
-    expect(bar()).toEqual({ done: "1", total: "3" });
+    // 答「忘记」不算过关：这道卡还在队列里要重新连对 3 次，进度条分子不动
+    expect(bar()).toEqual({ done: "0", total: "3" });
     expect(document.body.textContent).toContain("答-");
 
     view.destroy();
@@ -194,8 +195,8 @@ describe("记忆模式：复习轮的进度条（跨会话）", () => {
     const resumed = await mountView();
     buttonWithText("复习").click();
     flushSync();
-    // 答错那道今天已经算过，但还要连对 3 次才能过；分母不跟着涨
-    expect(bar()).toEqual({ done: "1", total: "3" });
+    // 重新进来它还在队列里，仍然不算过关；分母也不跟着涨
+    expect(bar()).toEqual({ done: "0", total: "3" });
     resumed.destroy();
   });
 });

@@ -209,6 +209,13 @@ export default defineConfig(async () => ({
     include: ["tests/**/*.test.ts"],
     environment: "happy-dom",
     setupFiles: ["./tests/_setup.ts"],
+    /**
+     * 默认 5s 是**单文件跑**的预算。整套 85 个文件并发跑时，几个挂载整页的
+     * 组件测试（同步设置面板、账本失败）会稳定超过 5s 而假红——它们单独跑
+     * 都是 2–3s。放到 20s 是给并发留下的余量，不是掩盖慢：真有死循环的用例
+     * 依然会在 20s 被砍掉。
+     */
+    testTimeout: 20_000,
     // 这几个包默认会被 externalize（走 node 的条件解析），而测试跑的是 Svelte 的
     // **浏览器**构建；两边混在一起时，**动态 import** 它们的模块图会一直挂着不 resolve
     // （`await import("vaul-svelte")` 直接超时）。inline 之后走 vite 的 transform，

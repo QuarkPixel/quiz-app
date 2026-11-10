@@ -21,6 +21,8 @@ import {
   sanitizeMemorySettings,
 } from "../src/features/memory/settings";
 import { normalizeMemoryProgress } from "../src/features/memory/normalize";
+import { dayKeyOf, addDayKeys } from "../src/features/memory/day";
+import { createReviewSession } from "../src/features/memory/session";
 import { MEMORY_ANSWER_CODE } from "../src/quiz/types/memory/logic";
 import { loadStoredState, saveState } from "../src/store";
 import { exportProgress } from "../src/features/importExport";
@@ -550,12 +552,17 @@ describe("记忆模式：每轮限定题数", () => {
   it("这一批落盘：保存后读得回来，关掉开关也不动已经开着的那一轮", () => {
     const hash = "memory_locked_persist_hash";
     const session = startLocked(["a", "b", "c", "d", "e", "f"], 3, { hash });
-    expect([...loadStoredState(hash).round!.cardIds].sort()).toEqual(["a", "b", "c"]);
+    const roundCardIds = () =>
+      [
+        ...(loadStoredState(hash).memory?.sessions?.learning?.round.cardIds ??
+          []),
+      ].sort();
+    expect(roundCardIds()).toEqual(["a", "b", "c"]);
 
     // 中途关掉开关：设置落盘，但这一轮这一批还在（这一轮照旧按这一批走）
     session.updateMemorySettings({ lockRoundPool: false });
     expect(loadStoredState(hash).memory?.settings.lockRoundPool).toBe(false);
-    expect([...loadStoredState(hash).round!.cardIds].sort()).toEqual(["a", "b", "c"]);
+    expect(roundCardIds()).toEqual(["a", "b", "c"]);
   });
 
   it("旧进度净化：没写过这个字段就是关，只认真正的 true", () => {
@@ -646,12 +653,13 @@ describe("记忆模式：复习流", () => {
     expect(session.run).toBe("reviewing");
     expect(session.requiredStreak).toBe(3);
 
-    // 连对 2 次还没完成，卡片继续出现
+    // 连对 2 次还没完成，卡片继续出现（轮内连对存在会话里，不写进长期进度）
     answer(session, true);
-    expect(session.progress.a.streak).toBe(1);
+    expect(session.reviewStreak).toBe(1);
+    expect(session.progress.a.streak).toBe(0);
     expect(session.run).toBe("reviewing");
     answer(session, true);
-    expect(session.progress.a.streak).toBe(2);
+    expect(session.reviewStreak).toBe(2);
     expect(session.run).toBe("reviewing");
 
     // 第 3 次连对 = 本轮复习完成；但本轮失败过，所以**不推进掌握阶梯**：
@@ -721,19 +729,22 @@ describe("记忆模式：复习流", () => {
     session.startReview();
     expect(session.reviewTotal).toBe(2);
 
-    // 第一道答错 → 应当立即记为「今天已处理」
+    // 第一道答错 → **不算过关**：进度条分子不动，它留在队列里等连对
     session.selectedAnswers = [0];
     session.submit();
     flushSync();
     const failedId = session.currentQuestion!.id;
-    expect(session.reviewDoneCount).toBe(1);
+    expect(session.reviewDoneCount).toBe(0);
+    // 但「今天碰过」记下来了（统计口径）
+    expect(session.touchedCount).toBe(1);
     session.advanceQuestionFlow();
     flushSync();
     // 答错的卡在本轮还会再出现，直到连对 N 次
     while (session.run === "reviewing" && session.currentQuestion) {
       answer(session, true);
     }
-    expect(session.reviewDoneCount).toBeGreaterThanOrEqual(1);
+    // 连对补完之后才真正算「过关」
+    expect(session.reviewDoneCount).toBe(2);
     expect(session.progress[failedId].nextDue).toBe(
       addDays(startOfDay(BASE_TIME), 2),
     );
@@ -756,11 +767,11 @@ describe("记忆模式：复习流", () => {
     answer(session, false);
     answer(session, true);
     answer(session, true);
-    expect(session.progress.a.streak).toBe(2);
+    expect(session.reviewStreak).toBe(2);
 
     // 第 3 次答错 → 连对清零，重新从 0 开始数
     answer(session, false);
-    expect(session.progress.a.streak).toBe(0);
+    expect(session.reviewStreak).toBe(0);
     expect(session.progress.a.level).toBe(1);
 
     for (let i = 0; i < 3; i++) {
@@ -886,7 +897,7 @@ describe("记忆模式：持久化", () => {
 
     // 旧版迁移的判据是 `roundGoal` / `roundPoolIds` / `learningPool`（只有记忆模式会写），
     // 不能拿 `activePool` 当判据——刷题题库也有池子，否则每个刷题题库都会凭空多一个字段
-    expect(loadStoredState(hash).round).toBeUndefined();
+    expect(loadStoredState(hash).memory).toBeUndefined();
   });
 
   it("学到一半退出：本轮进度与活动池都能续上", () => {
@@ -918,15 +929,16 @@ describe("记忆模式：持久化", () => {
 
     const resumed = makeSession(ids, { hash });
     expect(resumed.roundMastered).toBe(1);
-    expect(resumed.appState.activePool.map((i) => i.id).sort()).toEqual(
-      [...poolBefore].sort(),
-    );
+    // 池子是运行时投影，不落盘；`startLearning` 会按学习会话的队列重建
+    expect(resumed.appState.activePool).toHaveLength(0);
 
     // 再点「学习新的题目」接着这一轮继续，不重新开始
     resumed.startLearning();
     expect(resumed.run).toBe("learning");
     expect(resumed.roundMastered).toBe(1);
-    expect(resumed.appState.activePool.length).toBe(5);
+    expect(
+      resumed.appState.activePool.map((i) => i.id).sort(),
+    ).toEqual([...poolBefore].sort());
   });
 
   it("学到一半但一道都没掌握就退出：下次接着这一轮继续，不重挑题", () => {
@@ -949,9 +961,7 @@ describe("记忆模式：持久化", () => {
     const resumed = makeSession(ids, { hash });
     expect(resumed.roundMastered).toBe(0);
     expect(resumed.hasOngoingRound).toBe(true);
-    expect(resumed.appState.activePool.map((i) => i.id).sort()).toEqual(
-      [...poolBefore].sort(),
-    );
+    expect(resumed.appState.activePool).toHaveLength(0);
 
     // 续轮：还是那一池题，连对次数也接着数
     resumed.startLearning();
@@ -1181,15 +1191,16 @@ describe("记忆模式：本轮计数与重置 / 导入", () => {
     }
     expect(session.roundMastered).toBe(1);
     expect(session.roundGoal).toBe(5);
-    expect(loadStoredState(hash).round?.masteredIds.length).toBe(1);
+    expect(
+      loadStoredState(hash).memory?.sessions?.learning?.round.masteredIds,
+    ).toHaveLength(1);
 
     session.reset();
 
     // 内存与盘上的本轮计数都要归零
     expect(session.roundMastered).toBe(0);
     expect(session.roundGoal).toBe(0);
-    expect(loadStoredState(hash).round).toBeUndefined();
-    expect(loadStoredState(hash).round?.goal ?? 0).toBe(0);
+    expect(loadStoredState(hash).memory?.sessions?.learning).toBeUndefined();
 
     // 新的一轮从 0 开始，进度条不会显示上一次的 1/5
     session.startLearning();
@@ -1239,8 +1250,7 @@ describe("记忆模式：本轮计数与重置 / 导入", () => {
     expect(session.progress.a?.state).toBe("reviewing");
     expect(session.roundMastered).toBe(0);
     expect(session.roundGoal).toBe(0);
-    expect(loadStoredState(hash).round).toBeUndefined();
-    expect(loadStoredState(hash).round?.goal ?? 0).toBe(0);
+    expect(loadStoredState(hash).memory?.sessions).toBeUndefined();
 
     // 再开一轮也是从 0 开始
     session.startLearning();
@@ -1279,11 +1289,11 @@ describe("记忆模式：答错后的「重新连对」跨会话", () => {
       addDays(startOfDay(BASE_TIME), 2),
     );
     const stored = loadStoredState(hash);
-    expect(stored.memory?.retry?.day).toBe(studyDay(dayAfterBase));
-    expect(stored.memory?.retry?.targets.a).toBe(3);
+    expect(stored.memory?.sessions?.review?.day).toBe(dayKeyOf(dayAfterBase));
+    expect(stored.memory?.sessions?.review?.targets.a).toBe(3);
 
     answer(session, true);
-    expect(session.progress.a.streak).toBe(1);
+    expect(session.reviewStreak).toBe(1);
     session.exitSession();
 
     // 重新进来：卡片已经不在「到期」里，但今天还没补完
@@ -1297,12 +1307,14 @@ describe("记忆模式：答错后的「重新连对」跨会话", () => {
     expect(resumed.reviewTotal).toBe(1);
     expect(resumed.requiredStreak).toBe(3);
 
-    // 轮内连对不跨会话，从 0 重新数
+    // 轮内连对**跨会话保留**：上次已经答对 1 次，接着从 1 数（这正是
+    // 「换设备 / 刷新后接着数」的那条要求）
+    expect(resumed.reviewStreak).toBe(1);
     answer(resumed, true);
-    expect(resumed.progress.a.streak).toBe(1);
+    expect(resumed.reviewStreak).toBe(2);
     expect(resumed.run).toBe("reviewing");
-    answer(resumed, true);
-    expect(resumed.run).toBe("reviewing");
+
+    // 第 3 次连对 = 本轮复习完成
     answer(resumed, true);
     expect(resumed.run).toBe("idle");
 
@@ -1312,7 +1324,9 @@ describe("记忆模式：答错后的「重新连对」跨会话", () => {
       addDays(startOfDay(BASE_TIME), 2),
     );
     // 待办清空，明天不会再被拉回本轮
-    expect(loadStoredState(hash).memory?.retry).toBeUndefined();
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.targets,
+    ).toEqual({});
   });
 
   it("跨到下一个学习日后作废：卡片按「到期」处理，答对一次即过", () => {
@@ -1322,7 +1336,9 @@ describe("记忆模式：答错后的「重新连对」跨会话", () => {
     const first = makeSession(["a"], { hash, now: dayAfterBase });
     first.startReview();
     answer(first, false);
-    expect(loadStoredState(hash).memory?.retry?.targets.a).toBe(3);
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.targets.a,
+    ).toBe(3);
     first.exitSession();
 
     // 第二天：卡片今天到期，昨天的「连对 3 次」要求已经作废
@@ -1351,12 +1367,14 @@ describe("记忆模式：答错后的「重新连对」跨会话", () => {
     const resumed = makeSession(["a"], { hash, now: dayAfterBase });
     resumed.startReview();
     answer(resumed, true);
-    expect(resumed.progress.a.streak).toBe(1);
+    expect(resumed.reviewStreak).toBe(1);
 
     answer(resumed, false);
-    expect(resumed.progress.a.streak).toBe(0);
+    expect(resumed.reviewStreak).toBe(0);
     expect(resumed.requiredStreak).toBe(3);
-    expect(loadStoredState(hash).memory?.retry?.targets.a).toBe(3);
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.targets.a,
+    ).toBe(3);
   });
 });
 
@@ -1426,7 +1444,7 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     expect(resumed.reviewTotal).toBe(10);
   });
 
-  it("进度条的两个数落盘在 memory.review 里（当天有效）", () => {
+  it("进度条的两个数落盘在 sessions.review 里（当天有效）", () => {
     const hash = "memory_review_bar_persist_hash";
     seedDue(hash, 3);
 
@@ -1435,9 +1453,9 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     answer(session, true);
 
     const stored = loadStoredState(hash);
-    expect(stored.memory?.review?.day).toBe(studyDay(dayAfterBase));
-    expect(stored.memory?.review?.reviewedIds).toEqual(session.reviewedIds);
-    expect(stored.memory?.review?.total).toBe(3);
+    expect(stored.memory?.sessions?.review?.day).toBe(dayKeyOf(dayAfterBase));
+    expect(stored.memory?.sessions?.review?.doneIds).toEqual(session.reviewedIds);
+    expect(session.reviewTotal).toBe(3);
   });
 
   it("答错后回到本轮：分母不跟着涨（进度条不会越走越远）", () => {
@@ -1448,16 +1466,18 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     session.startReview();
     expect(session.reviewTotal).toBe(2);
 
-    // 答错一张：它要重新连对 N 次才过，但今天要复习的仍然是 2 道
+    // 答错一张：它要重新连对 N 次才过，但今天要复习的仍然是 2 道。
+    // 新口径下「答过」不等于「过关」：进度条分子不动，队列里还留着它。
     const failedId = session.currentQuestion!.id;
     answer(session, false);
-    expect(session.reviewDoneCount).toBe(1);
+    expect(session.reviewDoneCount).toBe(0);
     expect(session.reviewTotal).toBe(2);
+    expect(session.appState.activePool.map((i) => i.id)).toContain(failedId);
 
     session.exitSession();
     const resumed = makeSession(ids.slice(0, 2), { hash, now: dayAfterBase });
     resumed.startReview();
-    expect(resumed.reviewDoneCount).toBe(1);
+    expect(resumed.reviewDoneCount).toBe(0);
     expect(resumed.reviewTotal).toBe(2);
     // 答错那道继续留在本轮，而且要连对 N 次（队列打散过，不一定是当前这一道）
     expect(resumed.reviewTarget[failedId]).toBe(3);
@@ -1472,7 +1492,9 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     session.startReview();
     answer(session, true);
     session.exitSession();
-    expect(loadStoredState(hash).memory?.review?.reviewedIds).toHaveLength(1);
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.doneIds,
+    ).toHaveLength(1);
 
     // 第二天：昨天过的那道卡已经不在今天到期里，进度条是 0 / 2
     const nextDay = makeSession(ids.slice(0, 3), { hash, now: twoDaysAfterBase });
@@ -1495,7 +1517,9 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     // 今天再点一次「复习」：没有到期的了，不会又冒出一轮
     session.startReview();
     expect(session.run).toBe("idle");
-    expect(loadStoredState(hash).memory?.review?.total).toBe(1);
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.doneIds,
+    ).toHaveLength(1);
   });
 
   it("重置进度会把复习进度一起清掉", () => {
@@ -1507,7 +1531,7 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     answer(session, true);
     session.reset();
 
-    expect(loadStoredState(hash).memory?.review).toBeUndefined();
+    expect(loadStoredState(hash).memory?.sessions?.review).toBeUndefined();
     expect(session.reviewDoneCount).toBe(0);
     expect(session.reviewTotal).toBe(0);
   });
@@ -1516,12 +1540,12 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
   //
   // 症状：复习完一轮退出，首页说「今天有 12 道待复习」，点「复习」却弹
   // 「今天没有需要复习的题目」——**入口直接点不开**。
-  // 根因：首页数的是「到期」（dueCount），而 startReview 额外用
-  // `memory.review.reviewedIds` 把今天复习过的卡踢出队列，于是
-  // 「12 道全都在今天复习过」时队列为 0。两个判据必须合一。
-  it("到期 12 道且全在今天复习过：首页与复习入口的数字一致，且点得进去", () => {
+  // 根因：首页数的是「到期」（dueCount），而 startReview 用的是另一套判据，
+  // 于是「12 道全都在今天复习过」时两边各说各话。现在两边共用
+  // `reviewQueueToday() - doneIds`：首页说几道，点进去就是几道。
+  it("到期 12 道且全在今天复习过：首页与复习入口的数字一致", () => {
     const hash = "memory_review_all_done_today_hash";
-    // 用户那份数据：12 道到期、nextDue 都 ≤ 今天，且 12 道全部记在 review 清单里
+    // 用户那份数据：12 道到期、nextDue 都 ≤ 今天，且 12 道全部记在今天过关
     const dueIds = [
       "1-6",
       "1-7",
@@ -1537,34 +1561,39 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
       "2-20",
     ];
     const today = startOfDay(dayAfterBase);
+    const dueProgress = Object.fromEntries(
+      dueIds.map((id) => [
+        id,
+        // level 5 的间隔是 16 天；这里直接压成「今天到期」，等价于用户那份
+        // nextDue ≤ 今天的状态
+        { ...createReviewProgress(BASE_TIME), level: 5, nextDue: today },
+      ]),
+    );
     saveState(hash, {
       ...emptyState(),
       memory: {
-        progress: Object.fromEntries(
-          dueIds.map((id) => [
-            id,
-            // level 5 的间隔是 16 天；这里直接压成「今天到期」，等价于用户那份
-            // nextDue ≤ 今天的状态
-            { ...createReviewProgress(BASE_TIME), level: 5, nextDue: today },
-          ]),
-        ),
+        progress: dueProgress,
         settings: createDefaultMemorySettings(),
         // 那一轮复习把 12 道全过了一遍（还有 2 道是别的原因没到期，一起记着）
-        review: {
-          day: studyDay(dayAfterBase),
-          reviewedIds: [...dueIds, "2-15", "2-6"],
-          total: 14,
+        sessions: {
+          review: createReviewSession({
+            day: dayKeyOf(dayAfterBase),
+            queue: [],
+            doneIds: [...dueIds, "2-15", "2-6"],
+            touchedIds: [...dueIds, "2-15", "2-6"],
+          }),
         },
       },
     });
 
     const session = makeSession(dueIds, { hash, now: dayAfterBase });
 
-    // 首页说的数字
+    // 到期还是 12 道（`dueCount` 是「今天到期」的原义）
     expect(session.dueCount).toBe(12);
-    expect(session.reviewableCount).toBe(12);
+    // 但这 12 道今天都已经过关了 → 首页的「待复习」是 0
+    expect(session.reviewableCount).toBe(0);
 
-    // 点「复习」必须点得进去（以前这里会弹「今天没有需要复习的题目」）
+    // 点「复习」：同样说「今天没有需要复习的题目」——和首页的数字一致
     const toasts: string[] = [];
     const clickable = makeSession(dueIds, {
       hash,
@@ -1572,13 +1601,34 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
       toast: (title) => toasts.push(title),
     });
     clickable.startReview();
-    expect(toasts).not.toContain("今天没有需要复习的题目");
-    expect(clickable.run).toBe("reviewing");
-    expect(clickable.appState.activePool).toHaveLength(12);
-    // 进度条接着今天那份数走：14 道里 2 道（2-15 / 2-6）本来就不在「今天到期」
-    // 的集合里（那份 state 的 nextDue 还没到），所以分子只保留仍在队列中的那 12 道
-    expect(clickable.reviewDoneCount).toBe(12);
-    expect(clickable.reviewTotal).toBe(14);
+    expect(toasts).toContain("今天没有需要复习的题目");
+    expect(clickable.run).toBe("idle");
+
+    // 只过了一半（12 道里过了 5 道）：首页与入口都该是 7 道
+    const halfHash = "memory_review_half_done_hash";
+    saveState(halfHash, {
+      ...emptyState(),
+      memory: {
+        progress: dueProgress,
+        settings: createDefaultMemorySettings(),
+        sessions: {
+          review: createReviewSession({
+            day: dayKeyOf(dayAfterBase),
+            queue: [],
+            doneIds: dueIds.slice(0, 5),
+            touchedIds: dueIds.slice(0, 5),
+          }),
+        },
+      },
+    });
+    const half = makeSession(dueIds, { hash: halfHash, now: dayAfterBase });
+    expect(half.reviewableCount).toBe(7);
+    half.startReview();
+    expect(half.run).toBe("reviewing");
+    expect(half.appState.activePool).toHaveLength(7);
+    // 进度条接着今天那份数走：分母 = 已过关的 5 + 队列里的 7
+    expect(half.reviewDoneCount).toBe(5);
+    expect(half.reviewTotal).toBe(12);
   });
 });
 
@@ -1612,7 +1662,7 @@ describe("记忆模式：本轮收尾", () => {
     expect(session.newCount).toBe(0);
     // 首页靠它把「学习」按钮降一档颜色（今天学过一轮了），并且要落盘
     expect(session.learnedToday).toBe(true);
-    expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
+    expect(loadStoredState(hash).memory?.learnedDay).toBe(dayKeyOf(BASE_TIME));
 
     const finish = toasts.find((t) => t.title === "本轮学习完成");
     expect(finish?.variant).toBe("success");
@@ -1792,8 +1842,11 @@ describe("记忆模式：进度变更的落盘时机", () => {
     }
 
     expect(session.roundMastered).toBe(1);
-    expect(loadStoredState(hash).round?.masteredIds.length).toBe(1);
-    expect(loadStoredState(hash).activePool.length).toBe(5);
+    expect(
+      loadStoredState(hash).memory?.sessions?.learning?.round.masteredIds,
+    ).toHaveLength(1);
+    // 池子是运行时投影，不落盘
+    expect(loadStoredState(hash).activePool).toHaveLength(0);
   });
 });
 
@@ -1864,7 +1917,7 @@ describe("记忆模式：今天是否学过一轮（首页学习按钮的配色�
     expect(session.newCount).toBeGreaterThan(0);
 
     expect(session.learnedToday).toBe(true);
-    expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
+    expect(loadStoredState(hash).memory?.learnedDay).toBe(dayKeyOf(BASE_TIME));
   });
 
   it("昨天的学习日不算今天（跨过凌晨 5 点自然失效）", () => {
@@ -1874,7 +1927,7 @@ describe("记忆模式：今天是否学过一轮（首页学习按钮的配色�
       memory: {
         progress: {},
         settings: createDefaultMemorySettings(),
-        learnedDay: addDays(studyDay(BASE_TIME), -1),
+        learnedDay: addDayKeys(dayKeyOf(BASE_TIME), -1),
       },
     });
 
@@ -1892,7 +1945,7 @@ describe("记忆模式：今天是否学过一轮（首页学习按钮的配色�
           a: { ...createReviewProgress(BASE_TIME), nextDue: startOfDay(BASE_TIME) },
         },
         settings: createDefaultMemorySettings(),
-        learnedDay: studyDay(BASE_TIME),
+        learnedDay: dayKeyOf(BASE_TIME),
       },
     });
 
@@ -1906,7 +1959,7 @@ describe("记忆模式：今天是否学过一轮（首页学习按钮的配色�
     session.startReview();
     answer(session, true);
     expect(session.learnedToday).toBe(true);
-    expect(loadStoredState(hash).memory?.learnedDay).toBe(studyDay(BASE_TIME));
+    expect(loadStoredState(hash).memory?.learnedDay).toBe(dayKeyOf(BASE_TIME));
   });
 });
 
@@ -2012,10 +2065,10 @@ describe("记忆模式：模糊", () => {
     // 本轮目标提到 N=3：连对 2 次还不算复习完
     expect(session.requiredStreak).toBe(3);
     answerKind(session, "know");
-    expect(session.progress.a.streak).toBe(1);
+    expect(session.reviewStreak).toBe(1);
     expect(session.run).toBe("reviewing");
     answerKind(session, "know");
-    expect(session.progress.a.streak).toBe(2);
+    expect(session.reviewStreak).toBe(2);
     expect(session.run).toBe("reviewing");
 
     // 第 3 次连对 = 本轮复习完成；本轮降级过 → 阶梯不推进，仍是 level 3
@@ -2024,10 +2077,12 @@ describe("记忆模式：模糊", () => {
     expect(session.progress.a.level).toBe(3);
     expect(session.progress.a.nextDue).toBe(addDays(startOfDay(BASE_TIME), 4));
     // 待办也清掉了
-    expect(loadStoredState(hash).memory?.retry).toBeUndefined();
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.targets,
+    ).toEqual({});
   });
 
-  it("复习流：模糊也把这道计入「今日已复习」，并落盘本轮待办", () => {
+  it("复习流：模糊只算「答过」不算「过关」，待办落盘", () => {
     const hash = "memory_fuzzy_reviewed_hash";
     saveState(hash, {
       ...emptyState(),
@@ -2043,9 +2098,11 @@ describe("记忆模式：模糊", () => {
     session.startReview();
     answerKind(session, "fuzzy");
 
-    expect(session.reviewDoneCount).toBe(1);
+    // 「答过」+1，但「过关」不算：这道卡还在队列里要重新连对 3 次
+    expect(session.touchedCount).toBe(1);
+    expect(session.reviewDoneCount).toBe(0);
     const stored = loadStoredState(hash);
-    expect(stored.memory?.retry?.targets.a).toBe(3);
+    expect(stored.memory?.sessions?.review?.targets.a).toBe(3);
   });
 
   it("答案页降级：知道 → 模糊 → 记错了，一步到位不叠加", () => {
@@ -2305,7 +2362,14 @@ describe("记忆模式：总览里「标熟」", () => {
       memory: {
         progress: { a: createReviewProgress(BASE_TIME) },
         settings: createDefaultMemorySettings(),
-        retry: { day: studyDay(dayAfterBase), targets: { a: 3 } },
+        sessions: {
+          review: createReviewSession({
+            day: dayKeyOf(dayAfterBase),
+            queue: ["a"],
+            targets: { a: 3 },
+            failed: ["a"],
+          }),
+        },
       },
     });
     const session = makeSession(["a"], { hash, now: dayAfterBase });
@@ -2314,7 +2378,9 @@ describe("记忆模式：总览里「标熟」", () => {
     session.masterQuestion("a");
 
     expect(session.pendingRetryCount).toBe(0);
-    expect(loadStoredState(hash).memory?.retry).toBeUndefined();
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.targets,
+    ).toEqual({});
   });
 });
 

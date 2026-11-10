@@ -62,13 +62,44 @@ const FULL_STATE = {
   filterType: "single",
   settings: { selectionMode: "random" },
   ui: { progressFocused: true, showPool: true },
-  round: { goal: 5, cardIds: ["q1", "q2", "q3"], masteredIds: ["q1"] },
+  resetRev: 11,
+  quizSession: {
+    currentId: "q1",
+    phase: "judged",
+    correct: true,
+    selectedAnswers: [0],
+    blankAnswerInputs: [],
+    optionOrder: [0, 1],
+    lastAskedId: "q1",
+    rev: 5,
+  },
   memory: {
     progress: { q1: { state: "reviewing", level: 2, streak: 0, nextDue: 123, lapses: 0, rev: 9 } },
     settings: { graduateLevel: 7, roundTarget: 5, lockRoundTarget: false },
-    retry: { day: 1, targets: { q1: 2 } },
-    review: { day: 1, reviewedIds: ["q1"], total: 1 },
-    learnedDay: 1,
+    learnedDay: 20250101,
+    sessions: {
+      learning: {
+        id: "s1",
+        day: 20250101,
+        round: { goal: 5, cardIds: ["q1", "q2", "q3"], masteredIds: ["q1"] },
+        queue: ["q2", "q3"],
+        currentId: "q2",
+        answered: false,
+        rev: 3,
+      },
+      review: {
+        day: 20250101,
+        queue: ["q2"],
+        currentId: null,
+        answered: false,
+        doneIds: ["q3"],
+        touchedIds: ["q2", "q3"],
+        targets: {},
+        failed: [],
+        streaks: {},
+        rev: 4,
+      },
+    },
   },
 } as unknown as StoredState;
 
@@ -104,8 +135,9 @@ describe("写回本地时贴回本机的设备本地字段", () => {
     // 本机的这些字段原样还在（否则一次同步就把用户的界面状态清空了）
     expect(merged.ui).toEqual(FULL_STATE.ui);
     expect(merged.filterType).toBe(FULL_STATE.filterType);
+    // 会话 / 池子是**可同步**的，所以走「合并后的那份」而不是贴回本机
     expect(merged.activePool).toEqual(FULL_STATE.activePool);
-    expect(merged.round).toEqual(FULL_STATE.round);
+    expect(merged.memory).toEqual(FULL_STATE.memory);
   });
 
   it("同步字段用云端/合并后的那份，不被本机覆盖", () => {

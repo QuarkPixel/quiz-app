@@ -11,6 +11,7 @@ import {
   buildRuntimeState,
   getActivePoolItem,
   shouldRequeueActivePoolItem,
+  stageOf,
 } from "../src/store";
 import {
   ACTIVE_POOL_SIZE,
@@ -740,9 +741,19 @@ describe("buildRuntimeState 对记忆进度的清理", () => {
           },
         },
         settings: { graduateLevel: 6, roundTarget: 5 },
-        retry: {
-          day: 1789315200000,
-          targets: { m1: 2, gone: 2 },
+        sessions: {
+          review: {
+            day: 20250101,
+            queue: ["m1", "gone"],
+            currentId: "m1",
+            answered: false,
+            doneIds: [],
+            touchedIds: ["m1", "gone"],
+            targets: { m1: 2, gone: 2 },
+            failed: ["m1", "gone"],
+            streaks: {},
+            rev: 1,
+          },
         },
       },
     };
@@ -752,7 +763,8 @@ describe("buildRuntimeState 对记忆进度的清理", () => {
     const runtime = buildRuntimeState(memoryQuestions, stateWithStaleProgress());
 
     expect(Object.keys(runtime.memory!.progress)).toEqual(["m1"]);
-    expect(runtime.memory!.retry?.targets).toEqual({ m1: 2 });
+    expect(runtime.memory!.sessions?.review?.targets).toEqual({ m1: 2 });
+    expect(runtime.memory!.sessions?.review?.queue).toEqual(["m1"]);
     expect(runtime.memory!.settings).toEqual({
       graduateLevel: 6,
       roundTarget: 5,
@@ -765,5 +777,62 @@ describe("buildRuntimeState 对记忆进度的清理", () => {
       memory: undefined,
     });
     expect(runtime.memory).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stageOf：题目阶段的唯一判据
+// ---------------------------------------------------------------------------
+
+describe("stageOf", () => {
+  const questions = [
+    makeQuestion("a"),
+    makeQuestion("b"),
+    makeQuestion("c"),
+  ];
+
+  function state(masteredIds: string[], pooledIds: string[]): RuntimeState {
+    return buildRuntimeState(questions, {
+      masteredIds,
+      masteredMistakes: {},
+      activePool: pooledIds.map((id) => createActivePoolItem(id, 1)),
+      currentRound: 1,
+      filterType: "all",
+      settings: createDefaultSettings(),
+      ui: { progressFocused: false, showPool: false },
+    });
+  }
+
+  it("四种阶段各归各位", () => {
+    const runtime = state(["a"], ["b"]);
+    expect(stageOf(runtime, "a")).toBe("mastered");
+    expect(stageOf(runtime, "b")).toBe("active");
+    expect(stageOf(runtime, "c")).toBe("pending");
+    expect(stageOf(runtime, "nope")).toBe("absent");
+  });
+
+  it("已掌握优先于池子：同一条 id 同时出现在两处时不会被当成「学习中」", () => {
+    // 脏数据才会这样，但判据必须是确定的（以前三处各写一遍时，
+    // 不同调用点会给出不同答案）
+    const runtime = state(["a"], ["a"]);
+    expect(stageOf(runtime, "a")).toBe("mastered");
+  });
+
+  it("被当前筛选排除的题是 absent，不是 pending", () => {
+    const mixed = [
+      makeQuestion("single", "single"),
+      makeQuestion("judge", "judgment"),
+    ];
+    const runtime = buildRuntimeState(mixed, {
+      masteredIds: [],
+      masteredMistakes: {},
+      activePool: [],
+      currentRound: 0,
+      filterType: "single",
+      settings: createDefaultSettings(),
+      ui: { progressFocused: false, showPool: false },
+    });
+    expect(stageOf(runtime, "single")).toBe("pending");
+    expect(stageOf(runtime, "judge")).toBe("absent");
   });
 });
