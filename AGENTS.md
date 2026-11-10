@@ -106,7 +106,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `bankStore.ts`：`BankStore`（唯一 `QuizSource` 实现），维护 general 配置里的 library / activeBank，负责 import / export / rename / remove / moveToTop
   - `types.ts`：`QuizBank` / `MemoryBank` / `Bank`（判别联合）、`BankSummary`（含 `mode`）、`QuizSource`
   - `context.ts`：`provideQuizSource` / `useQuizSource`
-- `src/store.ts` — **每个题库**的状态读写（按 `hash` 分 key）：`StoredState` 加载 / 保存 / 重置；`saveState` 原样携带 `memory` 段。`buildRuntimeState` 会丢掉题库里已不存在的 `activePool` / `round` 里的卡 / `memory.progress` 条目（以及这些题的 `memory.retry` 待办与 `memory.review.reviewedIds` 条目）——统计与导出都只认题库里真实存在的卡
+- `src/store.ts` — **每个题库**的状态读写（按 `hash` 分 key）：`StoredState` 加载 / 保存 / 重置；`saveState` 原样携带 `memory` 段。`buildRuntimeState` 会丢掉题库里已不存在的 `activePool` 条目 / `memory.progress` 条目，以及 `memory.sessions` 里这些题的队列 / 过关 / 待办 / 连对记录（`pruneLearningSession` / `pruneReviewSession`）——统计与导出都只认题库里真实存在的卡
 - `src/features/importExport.ts` — 进度编码：`{hash}.{base64url-deflate}`，`exportProgress` / `importProgress`。只依赖题目 `id`（`ProgressQuestion`），刷题 / 记忆模式通用；`FORMAT_VERSION = 9` 起记忆模式走第 10 个元素，记忆设置数组的**第 3 项**是 `lockRoundPool`（后加的，老备份那里是预留位 → 读不到就按关处理，所以没升版本号）
 - `src/algorithm.ts` — 纯算法：加权随机选题、`processAnswer`、`computeLearningSegments`
 - `src/features/quiz/` — UI 与算法之间的胶水层（`runtime.ts`、`answer.ts`、`answerMatcher.ts`、`filters.ts`、`settings.ts` …）
@@ -393,7 +393,8 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     `copyQuestion` 的剪贴板出口 / `toggleSound` / `toggleAutoNext` / 复制状态计时器）。子类只回答四个问题：
     `sessionHash` / `sessionQuestions` / `sessionState` / `applyImportedState`。
     **凡是两个模式一模一样的行为都加在这里**，不要再往两个 Session 里各抄一份（记忆模式曾因此漏过 ⌘N / ⌘S）
-  - `QuizSession.svelte.ts`：持有 reactive state，继承上面那个基类；`globalSettings` 是**指向共享 store 的 getter**（不自己持有副本）
+  - `QuizSession.svelte.ts`：持有 reactive state，继承上面那个基类；`globalSettings` 是**指向共享 store 的 getter**（不自己持有副本）。屏上状态机在 `quizFlow.ts`（`empty` / `asking` / `judged` / `preview`），**跨刷新的那一份在 `StoredState.quizSession`**（见「刷题模式的屏上会话」）
+  - `quizFlow.ts`：刷题模式的状态机（纯函数，只活在内存里）；`quizSession.ts`：跨刷新的那条记录（纯函数，落盘 / 同步）
   - `types.ts`：两个 session 共享的类型（复制题目相关、`KeyboardUiActions`）。
     **不要**再从 `QuizSession.svelte.ts` 里 import 类型——记忆模式并不依赖刷题会话
 - 设置面板分两处（入口与图标都不同，避免混淆）：
@@ -416,28 +417,57 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `library: BankSummary[]` — 题库索引（含 `mode`）
   - `globalSettings: GlobalSettings` — `{ soundEnabled, autoSubmitOnSelection, autoNextOnCorrect }`
 - `BankSettings`（按题库，刷题模式）— `{ activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode, notifyNewQuestionInPool }`
-- `StoredState`（按题库）— `masteredIds` / `masteredMistakes` / `activePool` / `currentRound` / `filterType` / `settings` / `ui` / `memory?` / `round?`。
-  `round?: MemoryRoundState` = `{ goal, cardIds, masteredIds }`，**记忆模式学习轮的唯一真相**（只在记忆模式用；以前拆成 `roundMastered` / `roundGoal` / `roundPoolIds` / `learningPool` 四份，读盘时由 `migrateLegacyMemoryRound` 一次性迁移）
+- `StoredState`（按题库）— `masteredIds` / `masteredMistakes` / `activePool` / `currentRound` / `filterType` / `settings` / `ui` / `memory?`。
+  顶层的 `round` 已经是**历史字段**：读盘时由 `normalizeStoredLearningSession` 一次性搬进 `memory.sessions.learning`，写盘不再产出
 - `RuntimeState = StoredState & { pendingIds }`，`pendingIds` 不入存
 
 掌握门槛（刷题模式）：从未答错 → `correctStreakToMaster`（默认 3）；曾错过 → `correctStreakAfterMistake`（默认 4）。`src/config/algorithm.ts` 定默认，按库设置覆盖。
 
+**题目阶段只有一份判据**：`stageOf(state, id)`（`src/store.ts`）回答 `mastered` / `active` / `pending` / `absent`。三份集合本身没变（`masteredIds` / `activePool` 落盘，`pendingIds` 由 `computePendingIds` 按当前筛选算出、不入存），但**不要**再在各处自己写 `masteredIds.includes(...)` 那一套——加阶段 / 改语义时只有这一处要跟。
+
+**重置会传播**：`StoredState.resetRev`（`nextRev` 盖的戳）。`masteredIds` 是 highWaterSet（只涨不落），没有它一次重置会被另一台设备的旧值原样复活。合并时戳大的那一侧整段赢：它的 `masteredIds` / `masteredMistakes` 作基，另一侧只贡献 `rev > resetRev` 的池子条目。代价（有意接受）：重置后在**另一台**设备上新掌握的题会被这次覆盖丢掉（`masteredIds` 没有逐条时间戳）。
+
+### 刷题模式的「屏上会话」（`StoredState.quizSession`）
+
+刷题模式没有「轮」的概念（池子是连续流），所以只有一条记录：**屏上停在哪一道、答到哪一步**。
+
+- `QuizSessionState = { currentId, phase: "asking" | "judged", correct?, selectedAnswers, blankAnswerInputs, optionOrder, lastAskedId?, rev }`，纯函数在 `src/quiz/session/quizSession.ts`
+- `initialize()` 先试 `restoreQuizSession()`：这道题还在 `activePool` 里就恢复（题干页 / 答案页）；否则正常出题。`fillActivePool` 在恢复**之前**跑，所以「刚被补回池子的题」也会恢复——它确实在池子里
+- 选项顺序（`optionOrder`）必须原样还原：答案页要标「你选了哪个」，顺序变了等于换了一道题。题库改过（数量对不上 / 下标越界）就重新打乱
+- 判分页可以恢复（对错 + 作答），但**判分前快照不落盘**（它是一整份 `RuntimeState`），所以恢复之后「视作正确」不可用：`canTreatAsCorrect` 为 `false`，`QuestionActions` 不渲染那个按钮（不是点了没反应）
+- 整条 LWW（`rev` 大的赢；同戳按 `currentId` 字典序裁决，保证交换律）：它是「屏上」的单值状态，没有可以逐字段拼的语义
+- **不进进度备份**（`exportProgress` 只装长期进度）；`buildRuntimeState` 会丢掉指向已删除题目的记录
+- `advanceQuestionFlow()` 进入「新题预告」时清掉记录——那是展示，不是「停在某道题等作答」
+
 记忆模式的状态段：
 
-- `StoredState.memory?: MemoryStoredState` — `{ progress: MemoryProgressMap, settings: MemoryBankSettings, retry?: MemoryRetryState, review?: MemoryReviewState, learnedDay?: number }`。只有记忆模式题库有这段；刷题模式题库保持 `undefined`（`normalizeMemoryState` 不会凭空造空段）
+- `StoredState.memory?: MemoryStoredState` — `{ progress, settings, sessions?, learnedDay? }`。只有记忆模式题库有这段；刷题模式题库保持 `undefined`（`normalizeMemoryState` 不会凭空造空段）
 - `MemoryProgressMap = Record<string, MemoryProgress>`，按题目 `id` 索引；**没有条目 = 未学习**
-- `MemoryProgress = { state: "learning" | "reviewing" | "mastered", level, streak, nextDue, lapses }`
+- `MemoryProgress = { state: "learning" | "reviewing" | "mastered", level, streak, nextDue, lapses, rev }`
   - `level`：掌握阶梯，从 1 开始；尚未进入阶梯（学习中 / 本轮还在连对）时为 0
-  - `streak`：轮内连续答对次数（学习模式用来判定学会；复习模式用来判定本轮是否完成）
-  - `nextDue`：下次复习到期**日期**的锚点（本地当天 0 点的毫秒时间戳）；非复习中为 0。「今天」按凌晨 5 点换日，判断到期要用 `studyDay()`，见「日期与『今天』」
+  - `streak`：**只有学习模式的轮内连对**。复习轮的连对存在 `sessions.review.streaks`（按天作废），不再借用这个字段
+  - `nextDue`：下次复习到期**日期**的锚点（本地当天 0 点的毫秒时间戳）；非复习中为 0。「今天」按凌晨 5 点换日，判断到期用 `isDue()`，见「日期与『今天』」
   - `lapses`：累计答错次数（**只有「忘记 / 记错了」算**，`模糊` 不算答错），仅用于统计；毕业进入复习时不清零
 - `masteredIds` 在记忆模式里只是 `progress[].state === "mastered"` 的投影（导出文件名会数它）：`MemorySession.withSyncedMasteredIds()` 在载入 / 导入时同步一次，不要把它当成第二份真相
-- `StoredState.memory.learnedDay?: number` — 最近一次「学完一轮」发生在哪个学习日。首页据此把学习入口降一档颜色（今天学过一轮 → 白底按钮但仍可点）；跨过凌晨 5 点自然失效，不需要清理
-- `MemoryRetryState = { day, targets }`（`StoredState.memory.retry`）— 本轮「答错后还要重新连对几次」的待办：`day` = 写下的学习日（`studyDay` 锚点），`targets` = 题目 id → 还要连对几次。跨过凌晨 5 点自动作废；**不进进度备份**（属于「本轮」这种短周期状态）
-- `MemoryReviewState = { day, reviewedIds, total }`（`StoredState.memory.review`）— 今天复习轮的进度（进度条的分子分母）：`day` = 写下的学习日（`studyDay` 锚点），`reviewedIds` = 今天已经复习过的题，`total` = 今天这一轮的总题数（**开轮时**定下）。跨过凌晨 5 点自动作废；**不进进度备份**（同上）。详见「复习进度条的跨会话续做」
+- `StoredState.memory.learnedDay?: DayKey` — 最近一次「学完一轮」发生在哪个学习日（`YYYYMMDD`）。首页据此把学习入口降一档颜色（今天学过一轮 → 白底按钮但仍可点）；跨过凌晨 5 点自然失效
+- `MemorySessionsState = { learning?, review? }`（`StoredState.memory.sessions`）— **两份「当日 / 本轮」会话**，模型在 `src/features/memory/session.ts`。没有进行中的会话时整个字段不存在
+  - `MemoryLearningSession = { id, day, round, queue, currentId, answered, rev }`。`round` 就是原来的 `{ goal, cardIds, masteredIds }`；`id` 标识「是不是同一轮」，`rev` 用于合并裁决
+  - `MemoryReviewSession = { day, queue, currentId, answered, doneIds, touchedIds, targets, failed, streaks, rev }`。`day` 是 `DayKey`；`doneIds` = 今天**过关**的卡（进度条分子，也是墓碑），`touchedIds` = 今天**答过**的卡（含忘记 / 模糊），`targets` = 本轮还要连对几次，`streaks` = 本轮已连对几次
+  - 两者都**可同步**（`memory.sessions` 已登记进 `SYNCED_BANK_FIELDS`），换设备能接着 3 / 5；合并规则见 `mergeSessionsWithBase`
+  - **不进进度备份**：它们是「今天 / 本轮」的短周期状态（`exportProgress` 只装长期进度）
 - `MemoryBankSettings`（按题库，记忆模式）— `{ graduateLevel: 7, roundTarget: 5, lockRoundPool: false }`（掌握阶梯阈值 M / 一轮要掌握几题 / **每轮限定题数**），由 `sanitizeMemorySettings` 净化（`lockRoundPool` 只认真正的 `true`）
   - 连对次数 / 顺序**不重复存**，直接复用刷题模式的 `BankSettings`（`correctStreakToMaster` / `selectionMode`）；UI 在同一个面板里，但落的是同一个 `settings` 对象
   - 记忆模式**不用** `BankSettings.activePoolSize`：池子容量与本轮目标共用 `roundTarget`（见「两条流」）
+
+### 日期与「今天」（`src/features/memory/day.ts`）
+
+两套时间，分工明确：
+
+- `DayKey`（`YYYYMMDD` 整数）回答「这是哪一天」：`sessions.*.day`、`learnedDay`。它只由本地日历决定，跟时区偏移无关，比较大小就是比较日期
+- `nextDue`（本地 0 点毫秒戳）回答「什么时候到期」：`isDue()` / `addDays()` 用
+
+`dayKeyOf(t)` 先拨回 5 小时再取日历日 —— **凌晨 5 点换日**：凌晨 3 点算前一天。`normalizeDayKey()` 认两种来源：新 `YYYYMMDD`，以及旧版「学习日 0 点毫秒戳」（按 `calendarKeyOf` 取日历日，**不能再减 5 小时**，否则日期整体前移一天）。
+页面跨 5 点要自动刷新：`MemorySession` 的 `now` getter 订阅 `clockTick`，由 `MemoryView` 的 interval 每分钟 +1（调试偏移也走同一条路）。
 
 ### 存储键布局
 
@@ -546,9 +576,10 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   本地改动永远传不上去，而基准线照常刷新，下一轮判成 pull、云端旧进度反手覆盖回来。
   **判定结果不许再被调用方改写**，要加语义就加字段。
 - **设备本地的字段不参与同步，也不能被同步擦掉**（`model/policy.ts` 的
-  `DEVICE_LOCAL_BANK_FIELDS`）：`ui` / `filterType` / `activePool` / `round`。
-  它们没有语义上说得通的合并方式
-  （原来那种 `local ?? remote` 谁在本地谁赢 ⇒ **违反交换律**）。两条边界都要顾：
+  `DEVICE_LOCAL_BANK_FIELDS`）：只剩 `ui` / `filterType`（纯视图：面板开合、题型筛选）。
+  会话（`memory.sessions`）与刷题池（`activePool`）都**可同步**，各自有确定的合并规则
+  （`mergeSessionsWithBase` / `mergeActivePool`），不再靠 `local ?? remote`
+  （那种写法**违反交换律**）。两条边界都要顾：
   **收集本地与解云端都要剥**（只剥一边会让进度哈希永远对不上 → "永远待同步"，
   而且老快照会把别的设备的界面状态灌回本地），写回本地统一走引擎的
   `applyRemoteState`（唯一落盘入口），它用 `attachDeviceLocal` 贴回**本机那份**。
@@ -990,22 +1021,37 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 
 ### 两个必须分开的概念
 
-- **复习完成（轮内）**：这一轮里这张卡还要连对几次。学习模式要求 N 次；复习模式默认 1 次，**答「忘记」或「模糊」后提到 N 次**。目标次数在 session 上是 `reviewTarget`，另有一份当天有效的落盘副本 `StoredState.memory.retry`（见「复习」小节）。
+- **复习完成（轮内）**：这一轮里这张卡还要连对几次。学习模式要求 N 次；复习模式默认 1 次，**答「忘记」或「模糊」后提到 N 次**。目标次数在 session 上是 `reviewTarget`，落盘副本是 `sessions.review.targets`（见「复习」小节）。
 - **掌握（阶梯）**：`level` / `nextDue` 那条 1/2/4/8… 曲线。**忘记**把它归零（回第 1 级）、**模糊**让它退一级；答对本身不推进它——推进发生在「本轮复习完成」那一刻。走完 M（`graduateLevel`）次才变成「已掌握」，此时 `level` / `streak` 一起清零。
 
-> 一句话：`progress.streak` = 轮内连对计数，`progress.level` = 掌握阶梯。两者互不干扰。
+> 一句话：学习流的 `progress.streak` = 轮内连对计数（复习流的连对在 `sessions.review.streaks`），`progress.level` = 掌握阶梯。两者互不干扰。
+
+### 三条必须分开的计数（复习进度条）
+
+| 计数 | 含义 | 存在哪 |
+|---|---|---|
+| `doneIds` | 今天**过关**的卡（连对达标） | `sessions.review.doneIds`（进度条分子） |
+| `touchedIds` | 今天**答过**的卡（含忘记 / 模糊） | `sessions.review.touchedIds`（只做统计） |
+| `queue` | 今天**还没过**的卡（顺序即出题顺序） | `sessions.review.queue`（进度条分母的另一半） |
+
+- 进度条分子 = `doneIds.length`，分母 = `doneIds + queue`。100% ⇔ 队列空了 ⇔ 首页 `reviewableCount === 0`。
+- **答过 ≠ 过关**：答「忘记 / 模糊」只进 `touchedIds`，不进 `doneIds`；那张卡留在队列里等连对。否则会出现「进度条 5 / 5，但队列里还有卡、首页说还有一道待复习」。
+- `doneIds` 同时是**墓碑**：一张卡一旦过关，任何旧 `targets` 都不能把它复活。
 
 ### 两条流（`MemorySession.svelte.ts`）
 
-会话骨架与 `QuizSession` 一致：`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()` / `copyCurrentQuestion()`，所以 `QuestionBody` / `QuestionActions` 式的 UI 可以直接套用（每个动作要在同一帧内写入 `selectedAnswers` 再 `submit()`，答案页才会出现）。额外多一个 `run: "idle" | "learning" | "reviewing"`（首页 / 学习 / 复习）。
+会话骨架与 `QuizSession` 一致：`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()` / `copyCurrentQuestion()`，所以 `QuestionBody` / `QuestionActions` 式的 UI 可以直接套用（每个动作要在同一帧内写入 `selectedAnswers` 再 `submit()`，答案页才会出现）。额外多一个 `run: "idle" | "learning" | "reviewing"`（首页 / 学习 / 复习），它是 `flow.run.kind` 的投影。
+
+**会话模型**（`src/features/memory/session.ts`，纯函数）：学习与复习各一份记录，存在 `StoredState.memory.sessions`，**可同步**。判据统一是「盘上有没有一份能接上的会话」——不靠内存里的标记位。
 
 - **学习新的题目**（`startLearning` → `run = "learning"`）
-  - **本轮 = 一个对象**（`StoredState.round` / `session.round`，模型在 `src/features/memory/round.ts`）：
+  - **本轮 = 一个对象**（`sessions.learning.round`，模型在 `src/features/memory/round.ts`）：
     `{ goal, cardIds, masteredIds }`。三条不变式**构造 / 读盘时都成立**：
-    `masteredIds ⊆ cardIds`、`1 ≤ goal ≤ cardIds.length`、池子 = `cardIds - masteredIds`。
-    第二条是治本的一条：**目标不会超过这一轮真能学出来的数量**（见下面「本轮判定」）
+    `masteredIds ⊆ cardIds`、`1 ≤ goal ≤ cardIds.length`、池子 = `cardIds - masteredIds`
+  - **进入时先看有没有能接上的会话**：同一轮（`round.cardIds` 一致）且还没学完 → 接着打开，队列 / 当前题 / 已掌握原样恢复；否则开新的一轮
   - **活动题目池 = 本轮这一批还没学完的卡**：`syncPoolToRound()` 按 `round.cardIds - round.masteredIds`
-    重建 `activePool`（保留原有的 `consecutiveCorrect`）。池子**不是**第二份真相，别直接往里加卡
+    重建 `activePool`（保留原有的 `consecutiveCorrect`）。池子**不是**第二份真相，别直接往里加卡；
+    **记忆模式的 `activePool` 不落盘**（`save()` 永远写空池子），学习池由 `round` 重建、复习队列由 `sessions.review` 恢复
   - **每掌握一题就补一题**（默认）：`graduateInLearning()` 记进 `round.masteredIds` 后调 `refillRound()`，
     从「没学过的 + 学到一半的」里补一道进 `round.cardIds`（`selectionMode` 只决定补进来的顺序，
     **池内出题一律随机**），新卡同时排进本轮队列
@@ -1016,15 +1062,14 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - **本轮判定**：`memoryRoundDone(round) >= round.goal` 就结束（`graduateInLearning` 里判）。
     目标是**开轮时收敛过的**——`createMemoryRound` 取「设置里的 `roundTarget`」与「这一批有几道」的小值，
     所以「设置 5 题、题库只剩 3 道可学」时这一轮的目标就是 3，进度条 0/3、结束 3/3。
-    **别再让目标停留在设置值**：那正是「学两题后结束本轮，下次学到第 3 题就突然结束」那条 bug
-    （目标 5 配着池子 3，池子一空本轮就收尾，进度条停在 3/5）
+    **别再让目标停留在设置值**：那正是「学两题后结束本轮，下次学到第 3 题就突然结束」那条 bug。
   - `finishLearningRound("bank" | "pool")` 只剩兜底（题库被改 / 这一批的卡在总览里被标熟 / 旧数据）：
     `"bank"` =「题库里没有更多新卡片了」、`"pool"` =「本轮这一批就这些了」——两者都**不报成功音效**
-  - 本轮结束时把 `memory.learnedDay` 写成当天（`studyDay(now)`）并落盘：首页据此把学习入口降一档颜色。中途退出（`exitSession`）不算学完一轮，`learnedDay` 不动
-  - **可中断续学**：`round` 整份落盘，`hasOngoingRound` 的判据是「轮里还剩几道**能学的**」（不是池子里有没有条目——复习期间池子被借去当到期队列了）。续轮时目标沿用轮里的那个，不重新取设置
-  - **学到一半去复习，池子不会被顶掉**：复习轮借 `activePool` 当到期队列；学习轮**不需要暂存位**
-    （以前的 `StoredState.learningPool` 已删除）——它随时能由 `round` 重建，`startLearning()` 里
-    `syncPoolToRound()` 一次就恢复，成员与顺序（`cardIds` 的顺序）都跟去复习之前一样。刷新也不丢：`round` 在盘上
+  - 本轮结束时把 `memory.learnedDay` 写成当天（`dayKeyOf(now)`）并落盘：首页据此把学习入口降一档颜色。中途退出（`exitSession`）不算学完一轮，`learnedDay` 不动
+  - **可中断续学 / 可跨天**：`sessions.learning` 整份落盘，学到一半退出、刷新、换设备都能接着学；**只有学完这一轮或点「结束本轮」才删掉这份会话**（跨过凌晨 5 点不删——一轮就是一轮）
+  - **学到一半去复习，池子不会被顶掉**：复习轮借 `activePool` 当到期队列；学习轮**不需要暂存位**，
+    它随时能由 `round` 重建（`startLearning()` 里 `syncPoolToRound()` 一次就恢复），
+    成员与顺序（`cardIds` 的顺序）都跟去复习之前一样
   - 要拿「学习池」**一律**用 `session.round`（或 `startLearning` 之后的 `activePool`），
     不要在复习轮里直接读 `activePool`——那时它是到期队列
   - 题干页只有大字号题干 + 「忘记 / 模糊 / 知道」三个按钮（`outline` / `secondary` / `default`）；点任意一个都只做两件事：题干回到常规字号、展示答案
@@ -1045,26 +1090,23 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - `Esc` = 退出本轮（回首页，下次接着这一轮）；`⌘/Ctrl+C/W/E/I/O` = 复制题目 / 导入 / 导出 / 设置 / 总览；`⌘/Ctrl+⇧+I` = 全局设置（应用级，必须赶在下面那个 `mod` 分支前放行，否则会连记忆设置一起切了）
   - 「该不该拦这次按键」的判定**只有一份**：`src/features/appShortcuts.ts` 的 `createAppKeyboardHandler`，两个视图各自装上（`createAppKeyboardHandler(session, uiActions)`）。输入框 / 对话框 / 输入法组词不介入，`Space` / `Enter` 落在按钮等交互目标上时让给原生点击。**不要**在组件里重写一套判定——漏掉 `isInteractiveTarget` 会让答案页的 `Space` 双触发（原生点击 + 全局处理器各跳一题），而两份实现分头演化正是 ⌘S / ⌘N 在记忆模式里失效的原因
 - **复习**（`startReview` → `run = "reviewing"`）
-  - 取所有到期的题（`state === "reviewing"` 且 `nextDue` ≤ 今天），外加**今天还没补完连对的卡**（见下面的「答错后的重新连对」），全部打散后放进 `activePool` 当队列
-  - 答对：只把本轮连对次数 +1，**不动掌握阶梯**；连对达到本轮目标（默认 1）才算「复习完成」
+  - 进入时按 `sessions.review.day` 分三种：
+    - **今天**的 → 接着打开：队列顺序、当前题、`doneIds` / `targets` / `streaks` 全部留着（这就是「3 / 5，换设备还是 3 / 5」）
+    - **昨天**的 → `rolloverReviewSession`：把昨天**没完成的队列**并进今天，**计数归零**（`doneIds` / `touchedIds` / `targets` / `failed` / `streaks` 全部清空）——今天是一轮新的，卡片按常规到期重来。连对要求跨天作废，别让「昨天差一次没补完」变成今天的包袱
+    - **没有**（或时钟偏快留下的未来记录）→ 新建今天这一份，队列 = 今天到期的卡打散
+  - 队列 = 今天到期的（`state === "reviewing"` 且 `nextDue` ≤ 今天）+ 今天还没补完连对的（`retryTargetsToday()`，**只认今天的会话**）。`reviewQueueToday()` 是唯一判据，首页 `reviewableCount` = 它减去今天的 `doneIds`
+  - 答对：只把本轮连对次数 +1（`sessions.review.streaks`），**不动掌握阶梯**；连对达到本轮目标（默认 1）才算「复习完成」→ 加进 `doneIds`
     - **本轮没失败过** → 完成时才推进阶梯（`level + 1`，下次隔 `2^(level-1)` 天）；`level` 超过 M → 已掌握（`level` / `streak` 清零，不再出现）
-    - **本轮失败过** → 阶梯保持 `resetReview` 写下的 `level = 1`、明天到期，**完成时不再推进**（并把轮内 streak 清零）。否则答错那张会被推成和一次答对那张同样的间隔
-  - 忘记：掌握阶梯 `resetReview` 归零（`level = 1`、`nextDue = 明天`）、`lapses` +1，**并把本轮目标提到 N**——这张卡必须在本轮里重新连对 N 次才算复习完；中途再答错就再清零
-    - 降级的卡（忘记 / 模糊）**立即计入「今日已复习」**（`markReviewed` + `failedThisRound`），进度条会立刻变绿；它在同一轮里再出现几次都算同一题
-    - `failedThisRound` 是会话状态（不落盘），只用来决定「本轮完成时要不要推进阶梯」；重新进入复习时由落盘的待办重建（见下）
-  - 模糊：`fuzzyReview` 把阶梯**退一级**（`level = max(1, level - 1)`，最低停在第 1 级）并按新阶梯安排下次复习（今天 + `2^(level-1)` 天）；**轮内连对次数不变**（模糊不加也不减），但和「忘记」一样把本轮目标提到 N、计入 `failedThisRound`——所以补完连对时同样不推进阶梯，退掉的那一级不会被立刻加回来。`lapses` 不动（模糊不算答错）
-  - **答错后的「重新连对」跨会话**：要求写进 `StoredState.memory.retry = { day, targets }`（`day` = 写下的学习日，`targets` = 题目 id → 还要连对几次）。`startReview` 会把当天仍有效的待办一起排进队列并把 `reviewTarget` / `failedThisRound` 恢复回来，`retryTargetsToday()` 负责过滤（只认 `state === "reviewing"` 且 `day === studyDay(now)`）；本轮完成或重置时 `clearRetryTarget()` 清掉。跨过凌晨 5 点（学习日变了）自动作废——那时卡片本来就已经到期，答对一次即过
-    - 轮内连对次数本身仍不跨会话（复习中的卡重新载入时 `streak` 归 0），所以重新进来是「从 0 开始连对 N 次」
-    - 首页与统计卡的「今日待复习」用 `reviewableCount`（= `dueCount` + `pendingRetryCount`）算，只看到期数会让答错后退出的人点不开复习
+    - **本轮失败过** → 阶梯保持 `resetReview` 写下的 `level = 1`、明天到期，**完成时不再推进**（并把轮内连对清零）。否则答错那张会被推成和一次答对那张同样的间隔
+  - 忘记：掌握阶梯 `resetReview` 归零（`level = 1`、`nextDue = 明天`）、`lapses` +1，**并把本轮目标提到 N**——这张卡必须在本轮里重新连对 N 次才算复习完；中途再答错就再清零。它进 `touchedIds`，**不进 `doneIds`**
+  - 模糊：`fuzzyReview` 把阶梯**退一级**（`level = max(1, level - 1)`，最低停在第 1 级）并按新阶梯安排下次复习；**轮内连对次数不变**，但和「忘记」一样把本轮目标提到 N、计入 `failed`——补完连对时同样不推进阶梯。`lapses` 不动
+  - **降级的卡不推进阶梯**：`failed` 只用来决定「本轮完成时要不要推进阶梯」；它和 `targets` / `streaks` 一起落盘，退出 / 刷新 / 换设备后仍然生效
   - 失败**不会**回到「学习中」
-  - **复习进度条的跨会话续做**：两个数（`reviewedIds` / `reviewTotal`）写进 `StoredState.memory.review = { day, reviewedIds, total }`（与 `memory.retry` 同一套「当天有效」的规矩，跨过凌晨 5 点作废）。每过一题 `reviewedIds` 加一道并立刻落盘，`startReview` 重新进来时接着这份数走——否则「今天复习了 5 / 10，退出（或刷新）再进来」会变成 0 / 5（**这是线上报过的 bug**：进度留住了，进度条却重置）
-    - `total` 是**开轮时**定下的分母，不跟着答错补回来的卡涨；重进时按 `max(存下来的 total, 已算过 ∪ 队列)` 兜底
-    - **「今天算过一道」≠「这道卡今天完事了」**：答「忘记 / 模糊」的卡立刻计入进度条（分子 +1），但只要 `memory.retry` 里还有它的待办，`startReview` 就必须继续把它排进队列
-    - 本轮队列走完（`finishSession`）**不清**这份记录：它是「今天复习过哪些卡」的事实；`reset()` / 导入进度才清
-    - 判分流里**不能**先改 `appState` 再 `writeProgress`：后者是从 `base` 重建整个 `memory` 段的，会把刚写进去的清单抹掉。走 `reviewSnapshot()` 拿快照，由 `withReview()` 并进那一次写入；不走判分流的（「下一题」结算、总览标熟）才用 `markReviewedAndSave()`
-    - 与 `reviewTotal` / `reviewedIds` 一起被净化的是 `normalizeMemoryReview()`（`normalizeMemoryState` 里调），`store.ts` 的 `cleanMemoryState` 还会丢掉题库里已不存在的 id
+  - **收尾不删会话**：队列走完后 `sessions.review` 留着（`doneIds` 就是「今天过了哪几道」这个事实，进度条停在 5 / 5）。真正清掉它的时机是**跨天**（`rolloverReviewSession`）
+  - `reset()` / 导入进度会清掉整份 `sessions`（先 `finishRun()` 再清，否则 `exitSession` 的第一步会把「重前那一轮」又写回盘上）
+  - 判分流里**不要**先改 `appState` 再 `writeProgress`：后者是从 `base` 重建整个 `memory` 段的。会话记账一律走 `flow`（`setReviewTarget` / `addTouched` / `addReviewed`），由 `save()` 的 `buildReviewSession` 收成落盘那份
 
-一轮的队列状态（`shownIds` / `reviewTarget` / `reviewedIds` / `reviewTotal` / `failedThisRound`）只存在 session 上，不写进 `RuntimeState`；`MemoryProgress`、`memory.retry` 与学习轮的 `round`（整份 `{ goal, cardIds, masteredIds }`）落盘。
+会话的落盘由 `save()` 统一收口：`buildLearningSession()` 收 `round + flow`，`buildReviewSession()` 收 `flow.review`，合成 `memory.sessions`。读完这一节请记住一句话：**`progress` 是长期进度，`sessions` 是「今天 / 本轮」的脚手架，两者都要落盘。**
 
 > **落盘时机**：`submit()` / `startReview()` / `exitSession()` 会 `save()`，`advanceQuestionFlow()` 里的结算（复习晋升一级、学习轮 `markMemoryRoundMastered`、补题、清待办）也**必须立刻 `save()`**——否则答完题点「下一题」后直接关页面会丢掉这次推进（表现为卡片又回到今天到期、本轮少算一张）。
 
@@ -1106,10 +1148,13 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 ### 日期与「今天」（凌晨 5 点换日）
 
 - **一天从凌晨 5 点开始算**（`MEMORY_DAY_START_HOUR = 5`）：凌晨 5 点前都算前一天，5 点后才算次日
-- `studyDay(timestamp)` 返回「这个时刻属于哪一天」的日期锚点。返回值仍是当天 **0 点**的时间戳，只是按 5 点切换归属——这样 `nextDue` 存的还是「到期日期」，老数据（同样是 0 点）不需要迁移
-- 判断到期 / 逾期 / 算「还有几天」一律走 `studyDay`：`isDue` = `startOfDay(nextDue) <= studyDay(now)`，`overdueDays` = `diffDays(nextDue, studyDay(now))`，排下次复习 = `addDays(studyDay(now), 间隔天数)`。UI 侧（`MemoryOverview`）算「今天 / 明天 / N 天后 / 逾期 N 天」也必须用 `studyDay(session.now)`，别用 `startOfDay`
+- 两套表示，别混：
+  - `DayKey`（`dayKeyOf()`，`YYYYMMDD` 整数）回答「是哪一天」，给 `sessions.*.day` / `learnedDay`；`addDayKeys` / `diffDayKeys` 是它的加减
+  - `nextDue`（本地 0 点毫秒戳）回答「什么时候到期」，给 `isDue` / `overdueDays` / `addDays`
+- `studyDay(timestamp)` 仍留在 `algorithm.ts`（返回学习日 0 点锚点），只给 `nextDue` 那套用：`isDue` = `startOfDay(nextDue) <= studyDay(now)`，排下次复习 = `addDays(studyDay(now), 间隔天数)`。**新代码不要再拿它当日期键**（换时区就对不上，见 `day.ts` 文件头）
+- UI 侧（`MemoryOverview`）算「今天 / 明天 / N 天后 / 逾期 N 天」用 `overdueDays(item, session.now)`，别自己减时间戳
 - 推论（有意为之，和 Anki 的「次日开始时间」一致）：**凌晨 2 点学出来的卡，凌晨 5 点就到期**——因为 2 点还算「昨天」，它的「明天」指的就是从 5 点开始的这一天
-- 这个 5 点只作用于**记忆模式**的复习到期判断；刷题模式的日期逻辑没有动
+- 这个 5 点只作用于**记忆模式**的复习到期判断；刷题模式没有日期逻辑
 
 ### 设置
 
@@ -1359,7 +1404,8 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - 所有对 general 配置的增量修改走 `updateGeneralConfig(patch)`（读-改-写），不要自己拼整个对象覆盖
 - 做题流里的持久化要容错（`saveState` / `saveDefaultSettings` / general 写入都只 warn）；导入题库这条路径需要能识别配额错误并回滚，所以 `saveGeneralConfig` 会抛异常
 - 记忆模式的进度必须经 `MemorySession.save()`（内部走 `saveState`）落盘：`saveState` 会把 `memory` 段原样带出去，绕过它保存状态会丢掉记忆进度
-- 一轮会话的队列状态（`shownIds` / `reviewTarget` / `reviewedIds` / `reviewTotal` / `failedThisRound`）只放 session 上，**不要**塞进 `RuntimeState`；确实需要跨会话的（只有 `reviewTarget` 的当天副本）走 `StoredState.memory.retry`：`saveState` 只序列化 `StoredState` 的字段，塞进 `RuntimeState` 的临时字段会在下一次保存时被丢掉
+- 一轮会话的队列 / 过关 / 待办 / 连对（`flow.review` 里的 `target` / `reviewed` / `touched` / `failed` / `streaks`）只在 session 上操作，**不要**塞进 `RuntimeState`；要跨会话的，由 `save()` 的 `buildLearningSession` / `buildReviewSession` 收进 `StoredState.memory.sessions`。`saveState` 只序列化 `StoredState` 的字段，塞进 `RuntimeState` 的临时字段会在下一次保存时被丢掉
+- 记忆模式的 `activePool` 是**运行时投影**（学习池由 `round` 重建、复习队列由 `sessions.review` 恢复），`save()` 永远写空池子；别把它当第二份真相，也别往盘上写
 - 学习流里，卡片连对到门槛时会在 `submit()` 阶段就毕业并离开 `activePool`，所以 `advanceQuestionFlow()` 里 `activePool.find()` 查不到 = 已学会（`MemoryProgress` 已变成 `reviewing`），要按「毕业」处理并计入 `completed`；不要当成「没连够」
 - `src/features/importExport.ts` 的 `FORMAT_VERSION` 每次 bump 都要保留旧版本的解码分支，并接受对应长度的紧凑数组
 - 新增题库模式时按 `BankModeDef` 的五步注释执行（`src/quiz/modes/types.ts`）
