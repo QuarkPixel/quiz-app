@@ -847,7 +847,7 @@ export class SyncEngine {
     // 记进 `storage`（`hook-silent`），再写一遍就成了两个可以各写各的字段。
     if (this.localPollTimer !== null) return;
     console.warn(
-      "[sync] localStorage 钩子不生效，改用定时比对本地改动（iOS 上踩过）",
+      "[sync] localStorage 钩子不生效，改用定时比对本地改动",
     );
     this.localPollTimer = setInterval(() => {
       this.pollLocalChanges();

@@ -29,33 +29,23 @@ import type { MemoryProgress, MemoryStoredState, StoredState } from "@/types";
 export const SYNCED_BANK_FIELDS = [
   "masteredIds", // highWaterSet（记忆模式下由 progress 推导，见 merge.ts）
   "masteredMistakes", // 逐键 max（答错次数只涨）
+  "activePool", // 刷题模式的活动池：按 id 合并（见 mergeActivePool）
   "currentRound", // max
   "settings", // scalar（按库设置）
+  "resetRev", // max（重置的墓碑戳：比它旧的另一侧整段作废）
+  "quizSession", // 刷题模式屏上会话：整条 LWW（rev 大的赢，见 quizSession.ts）
   "memory.progress", // cardMap
   "memory.settings", // scalar（记忆模式的按库设置）
   "memory.learnedDay", // max（「最近一次学完一轮」只前进）
+  "memory.sessions", // 学习 / 复习会话：按 day / round 合并（见 session.ts）
 ] as const;
 
-/**
- * **明确不参与同步**的字段：都是设备本地的 UI / 会话状态。
- *
- * 为什么把它们排除，而不是给它们编一条合并规矩：
- *   - `ui` / `filterType` 是纯 UI 状态，跨设备传只会让"我在手机上收起的面板
- *     在电脑上也是收起的"这种莫名其妙的行为；
- *   - `activePool` / `round` 是**本轮会话**的状态（`round` 是记忆模式学习轮的
- *     全部：目标 / 这一批 / 已掌握）。它们没有语义上说得通的合并方式（两台设备
- *     各挑了一批题怎么办？），而原来那种「`local ?? remote`」写法谁在本地谁赢 ⇒
- *     **违反交换律** ⇒ 两台设备永远算不出同一个结果。
- *
- * 排除它们之后，拉取 / 合并写回本地时**必须原样保留本机那份**（见 `attachDeviceLocal`），
- * 否则一次同步就会把本机的 UI 状态和会话池子清空。
- */
 /**
  * 装载期检查：登记表里的路径**只能有一层**（`x` 或 `memory.x`）。
  *
  * `stripDeviceLocal` 剥 `memory` 段时是按 `path.slice("memory.".length)` 取**一层**
- * 字段名的，所以登记成 `memory.review.total` 这种两层的路径会**过得了编译期护栏、
- * 却永远匹配不上**——表现成"登记了却从来不同步"，而且没有任何报错。
+ * 字段名的，所以登记成 `memory.sessions.learning` 这种三层的路径会**过得了编译期
+ * 护栏、却永远匹配不上**——表现成"登记了却从来不同步"，而且没有任何报错。
  *
  * 只在开发/测试期抛（`import.meta.env.DEV`）：这纯粹是给改这张表的人当场一个耳光，
  * 不该让生产环境的用户在启动时炸掉。
@@ -72,24 +62,24 @@ if (import.meta.env.DEV) {
   }
 }
 
+/**
+ * **明确不参与同步**的字段：只剩「我在哪、我在看什么」这类纯视图状态。
+ *
+ * 以前这里还躺着 `round` / `memory.review` / `memory.retry` / `activePool`，
+ * 理由不是「不能传」，而是「当时没写合并规则」。现在它们各自有了确定的算法：
+ *
+ *   - 学习轮 / 今日复习 → `memory.sessions`，`day` 大的赢计数、集合取并集、
+ *     `doneIds` 当墓碑（过关的卡不会被旧 `targets` 复活）；
+ *   - 刷题活动池 → 按 id 合并，条目带 `rev`（连对次数 LWW，`hasEverMistaken`
+ *     取 OR，`lastSelectedRound` 取 max）。
+ *
+ * 留在这一侧的三个字段是真的**每台设备各看各的**：
+ *   - `ui` / `filterType`：面板开合、题型筛选，传了只会让另一台设备被动改变界面；
+ *   - （general 里的 `activeBank` 同理，见 `DEVICE_LOCAL_GENERAL_FIELDS`）。
+ */
 export const DEVICE_LOCAL_BANK_FIELDS = [
-  // ── 记忆模式的「今天 / 本轮」状态：**不跨设备**（见文件头那段说明）──
-  //
-  // `memory.retry`（答错后还要重新连对几次）与 `memory.review`（今天复习到哪了）
-  // 都是**当天、本轮**的会话状态，本来就"跨过凌晨 5 点自动作废"，
-  // 而且**不进进度备份**（见 AGENTS.md）。它们被同步进云端的后果是：
-  // 你在 A 上把待办补完了、云端还留着一条旧的 ⇒ 合并（取并集）把那条**复活**
-  // ⇒ 那道卡因为"待重新连对"重新进入今天的复习队列 ⇒
-  // 首页显示「今天有一道待复习」，而它的 `nextDue` 明明在将来。
-  "memory.retry",
-  "memory.review",
   "ui",
   "filterType",
-  "activePool",
-  // 记忆模式学习轮（目标 / 这一批 / 已掌握）——一整份，见 `@/types` 的
-  // `MemoryRoundState`。以前拆成 `roundMastered` / `roundGoal` / `roundPoolIds`
-  // 三份登记，拆得越细越容易漏登记（漏了就会被同步出去）
-  "round",
 ] as const;
 
 /** general 里参与同步的字段。`activeBank` 是设备本地的（各设备看自己的题库）。 */
