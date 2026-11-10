@@ -58,6 +58,14 @@
     });
     provideMemorySession(session);
 
+    // 会话时钟：每分钟让 `session.now` 重新求值一次。
+    // 页面一直开着跨过凌晨 5 点时，首页的「今日待复习 / 今天学过」、
+    // 总览里的「今天 / 明天复习」不能停在昨天。
+    $effect(() => {
+        const timer = setInterval(() => session.refreshClock(), 60_000);
+        return () => clearInterval(timer);
+    });
+
     /**
      * 子路径 ←→ 会话，两个方向都在下面两个 `$effect` 里。
      *

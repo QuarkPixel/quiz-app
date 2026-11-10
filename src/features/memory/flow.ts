@@ -36,14 +36,14 @@
 import type { RuntimeState } from "@/types";
 import type { MemoryAnswerKind } from "@/quiz/types/memory/logic";
 
-/** 复习轮的记账：进度条的两个数 + 本轮连对目标 + 本轮降级过的卡。 */
+/** 复习轮的记账：本轮连对目标 + 过关 / 碰过 + 轮内连对 + 本轮降级过的卡。 */
 export interface MemoryReviewRun {
   /** 这道卡本轮还要连对几次（默认 1；答错 / 模糊后提到 N）。 */
   target: Record<string, number>;
-  /** 今天已经复习完的卡（进度条分子）。 */
+  /** 今天已经**过关**的卡（连对达标；进度条分子）。 */
   reviewed: string[];
-  /** 今天这一轮总共要过几道（进度条分母，开轮时定下）。 */
-  total: number;
+  /** 今天**答过**的卡（含忘记 / 模糊；只用于统计，不等过关）。 */
+  touched: string[];
   /**
    * 本轮被降级过的卡（「忘记」→ 阶梯归零；「模糊」→ 阶梯退一级）。
    *
@@ -51,6 +51,15 @@ export interface MemoryReviewRun {
    * 再推进就等于「答错那道和一次答对那道拿到同样的间隔」。
    */
   failed: string[];
+  /**
+   * 本轮每张卡已经连对几次。
+   *
+   * 以前借用 `MemoryProgress.streak`，可那个字段在载入时会被归零
+   * （`normalizeMemoryProgress` 对复习中的卡把 streak 清掉），
+   * 于是「退出再进来」永远从 0 开始数。现在它是会话自己的字段，
+   * 跟着 `sessions.review.streaks` 一起落盘。
+   */
+  streaks: Record<string, number>;
 }
 
 /** 正在跑哪一档。 */
@@ -307,11 +316,40 @@ export function clearReviewTarget(flow: MemoryFlow, id: string): MemoryFlow {
   return patchReview(flow, { target });
 }
 
-/** 记一道「今天复习过了」（幂等）。 */
+/** 记一道「今天过关了」（进度条靠它变绿，幂等）。 */
 export function addReviewed(flow: MemoryFlow, id: string): MemoryFlow {
   const review = reviewOf(flow);
   if (!review || review.reviewed.includes(id)) return flow;
   return patchReview(flow, { reviewed: [...review.reviewed, id] });
+}
+
+/** 记一道「今天答过了」（含忘记 / 模糊；统计用，幂等）。 */
+export function addTouched(flow: MemoryFlow, id: string): MemoryFlow {
+  const review = reviewOf(flow);
+  if (!review || review.touched.includes(id)) return flow;
+  return patchReview(flow, { touched: [...review.touched, id] });
+}
+
+/** 改这张卡本轮的连对次数。 */
+export function setReviewStreak(
+  flow: MemoryFlow,
+  id: string,
+  streak: number,
+): MemoryFlow {
+  const review = reviewOf(flow);
+  if (!review) return flow;
+  return patchReview(flow, {
+    streaks: { ...review.streaks, [id]: Math.max(0, Math.floor(streak)) },
+  });
+}
+
+/** 这张卡过关了：连对记账可以丢掉（它已经不在队列里）。 */
+export function clearReviewStreak(flow: MemoryFlow, id: string): MemoryFlow {
+  const review = reviewOf(flow);
+  if (!review || review.streaks[id] === undefined) return flow;
+  const streaks = { ...review.streaks };
+  delete streaks[id];
+  return patchReview(flow, { streaks });
 }
 
 /** 记一道「本轮降级过」（幂等）。 */
@@ -334,7 +372,8 @@ function cloneReview(review: MemoryReviewRun): MemoryReviewRun {
   return {
     target: { ...review.target },
     reviewed: [...review.reviewed],
-    total: review.total,
+    touched: [...review.touched],
     failed: [...review.failed],
+    streaks: { ...review.streaks },
   };
 }
