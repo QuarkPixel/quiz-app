@@ -21,7 +21,8 @@
     import { provideQuizSession } from "@/quiz/session/context";
     import { provideQuizUiActions } from "@/quiz/session/uiContext";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
-    import { untrack, type Component } from "svelte";
+    import { untrack, onMount, type Component } from "svelte";
+    import { subscribeStoredStateWrite } from "@/store";
     import { MediaQuery } from "svelte/reactivity";
     import { COMPACT_LAYOUT_QUERY } from "@/config";
     import {
@@ -53,6 +54,14 @@
         sound: soundPlayer,
     });
     provideQuizSession(session);
+
+    // 同步把盘上那份改写之后，会话要重读一次（理由同记忆模式，见
+    // `subscribeStoredStateWrite` 与 `QuizSession.reloadFromStorage`）。
+    onMount(() =>
+        subscribeStoredStateWrite((hash) => {
+            if (hash === bank.hash) session.reloadFromStorage();
+        }),
+    );
 
     // dialog 开关：纯 UI flag，留在容器局部
     let showReview = $state(false);

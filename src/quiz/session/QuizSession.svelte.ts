@@ -141,6 +141,14 @@ export class QuizSession extends ProgressSessionBase {
    */
   presentationSeq = $state(0);
 
+  /**
+   * 正在从盘上重读（`reloadFromStorage`）。
+   *
+   * 重读过程中会走到 `selectNext()`，而它本来要 `save()`——那一刻内存还没稳定，
+   * 写回去会把刚同步下来的合并结果盖掉。所以重读期间一律不写。
+   */
+  private isReloading = false;
+
   // === 筛选变更确认 state ===
   pendingFilterType: QuestionType | "all" | null = $state(null);
 
@@ -216,6 +224,32 @@ export class QuizSession extends ProgressSessionBase {
     this.hash = bank.hash;
     this.filterOptions = buildFilterOptions(this.questions);
     this.appState = loadRuntimeState(this.questions, this.hash);
+  }
+
+  /**
+   * 盘上那份被**外部**改写了（同步拉取 / 合并）→ 重新读回来。
+   *
+   * 和 `MemorySession.reloadFromStorage()` 同一件事：会话是内存快照，同步是
+   * 第二个写入方（`applyRemoteState`），它写完不重读就会「云端已经是这道题 /
+   * 这个进度，屏上还是旧的那份」，接着一次 `save()` 又把旧值盖回去。
+   *
+   * 正在答题（屏上有题）时不打断：只换 `appState`，屏上那道留着。空闲时按
+   * 盘上的 `quizSession` 恢复——同步过来的「停在哪道题」也算数。
+   */
+  reloadFromStorage(): void {
+    if (this.isReloading) return;
+    this.isReloading = true;
+    try {
+      const next = fillActivePool(loadRuntimeState(this.questions, this.hash));
+      const answering = this.currentQuestion !== null;
+      this.appState = next;
+      if (answering) return;
+
+      this.flow = resetFlow();
+      if (!this.restoreQuizSession()) this.selectNext();
+    } finally {
+      this.isReloading = false;
+    }
   }
 
   // ── ProgressSessionBase 的四个挂钩 ──────────────────────────────────
@@ -581,6 +615,9 @@ export class QuizSession extends ProgressSessionBase {
   // ────────────────────────────────────────────────────────────────
 
   private save(options: { updateDefaultSettings?: boolean } = {}): void {
+    // 正在从盘上重读：盘上那份就是要写的东西，这时再写会把刚同步下来的
+    // 合并结果覆盖掉（`reloadFromStorage` 里会走到 `selectNext()`）。
+    if (this.isReloading) return;
     saveState(this.hash, this.appState, {
       updateDefaultSettings: options.updateDefaultSettings === true,
     });
