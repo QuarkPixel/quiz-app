@@ -38,6 +38,7 @@ import {
   removeLocal,
   saveSyncMeta,
 } from "./storage";
+import { notifyStoredStateWritten } from "@/store";
 
 export function readActiveBankHash(): string | null {
   const raw = readLocal(STORAGE_KEY_GENERAL);
@@ -168,6 +169,10 @@ export function applyRemoteState(hash: string, syncable: unknown): void {
   const next = attachDeviceLocal(syncable, existing);
   if (next === undefined) removeLocal(stateKey);
   else applyRemoteValue(stateKey, JSON.stringify(next));
+  // 这是**唯一**一处「不由会话自己写盘」的入口：拉取 / 合并结果落到 localStorage
+  // 之后必须广播，否则已经挂着的会话还是它构造时那份内存快照（见 `@/store` 里
+  // `subscribeStoredStateWrite` 的说明）。
+  notifyStoredStateWritten(hash);
 }
 
 export function writeBankLocally(bank: {

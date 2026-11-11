@@ -360,6 +360,38 @@ type Covered<T> = [T] extends [never] ? true : never;
 type MissingFromPersist = Exclude<keyof StoredState, keyof ReturnType<typeof persistedState>>;
 export const STORED_STATE_COVERAGE: Covered<MissingFromPersist> = true;
 
+// ── 「盘上那份被外部改写了」的通知 ──────────────────────────────────────
+//
+// 两个会话（`MemorySession` / `QuizSession`）都是**内存快照**：构造时读一次盘，
+// 之后只靠自己的 `save()` 单向下写。但盘上那份不只由它写——同步的拉取 / 合并
+// 结果经 `features/sync/localwrite.ts` 的 `applyRemoteState` 直接落进
+// localStorage，页面不会重建（`viewKey` 只跟 `mode:hash` 走）。
+//
+// 没有这条通知就会这样：手机已经复习到 1 / 10，电脑同步成功、盘上也是 1 / 10，
+// 但会话内存里还是「今天没开过复习」→ 界面不动；用户点「复习」按旧快照新建
+// 一轮（今天到期 9 道）→ 显示 0 / 9，还顺手把 1 / 10 覆盖回盘上。
+//
+// 约定：**外部写盘之后必须广播**，会话收到后调自己的 `reloadFromStorage()`。
+// 会话自己的 `saveState` 不广播——那正是它刚写出去的内容。
+
+type StoredStateWriteListener = (hash: string) => void;
+const storedStateWriteListeners = new Set<StoredStateWriteListener>();
+
+/** 订阅「某个题库的 `StoredState` 被外部改写」；返回取消订阅的函数。 */
+export function subscribeStoredStateWrite(
+  listener: StoredStateWriteListener,
+): () => void {
+  storedStateWriteListeners.add(listener);
+  return () => {
+    storedStateWriteListeners.delete(listener);
+  };
+}
+
+/** 外部把状态落进 localStorage 之后调用（`applyRemoteState` 是唯一入口）。 */
+export function notifyStoredStateWritten(hash: string): void {
+  for (const listener of storedStateWriteListeners) listener(hash);
+}
+
 export function saveState(
   hash: string,
   state: StoredState,
