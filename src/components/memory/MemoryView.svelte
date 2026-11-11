@@ -1,7 +1,8 @@
 <script lang="ts">
     import type { MemoryBank } from "@/source/types";
-    import { untrack } from "svelte";
+    import { untrack, onMount } from "svelte";
     import { toastStore } from "@/features/toast.svelte";
+    import { subscribeStoredStateWrite } from "@/store";
     import { MemorySession } from "@/features/memory/MemorySession.svelte";
     import { provideMemorySession } from "@/features/memory/context";
     import FlashContainer from "../quiz/FlashContainer.svelte";
@@ -57,6 +58,23 @@
         sound: soundPlayer,
     });
     provideMemorySession(session);
+
+    /**
+     * 同步把**这个题库**的状态写进 localStorage 之后，会话要重读一次。
+     *
+     * 不重读的后果就是线上那条：手机上复习到 1 / 10，电脑同步成功、盘上也已经是
+     * 1 / 10，但屏上还是构造时那份「今天没开过复习」→ 点「复习」按旧快照新建
+     * 一轮（今天到期 9 道）→ 0 / 9，还顺手把 1 / 10 覆盖回盘上。
+     *
+     * 为什么还需要这一条（同步完不是会整页刷新吗）：刷新会被 `userActivity`
+     * 挂起（正在答题 / 弹窗开着 / 页面在后台），而且「当前题库没被判成拉取」
+     * 时压根不刷。这条通知让内存跟上盘上，不依赖那次刷新。
+     */
+    onMount(() =>
+        subscribeStoredStateWrite((hash) => {
+            if (hash === bank.hash) session.reloadFromStorage();
+        }),
+    );
 
     // 会话时钟：每分钟让 `session.now` 重新求值一次。
     // 页面一直开着跨过凌晨 5 点时，首页的「今日待复习 / 今天学过」、

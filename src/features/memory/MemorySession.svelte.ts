@@ -119,6 +119,7 @@ import {
   createLearningSession,
   createReviewSession,
   createSessionId,
+  mergeSessions,
   normalizeSessions,
   rolloverReviewSession,
 } from "@/features/memory/session";
@@ -211,10 +212,22 @@ export class MemorySession extends ProgressSessionBase {
   private clockTick = $state(0);
 
   /**
-   * 已经落盘的两份会话。`appState.memory.sessions` 在 `save()` 时同步更新，
-   * 但读的时候统一读这一份——它不会因为 `appState` 被别处重建而丢。
+   * 正在从盘上重读（`reloadFromStorage`）。
+   *
+   * 重读过程中会调 `selectNext()` 之类「本来要落盘」的动作，但那一刻内存还没有
+   * 稳定下来——此时 `save()` 会把半成品写回盘上，甚至盖掉刚同步下来的合并结果。
+   * 所以重读期间**一律不写**：盘上那份就是刚刚写进来的，不需要再写一遍。
    */
-  private savedSessions: MemorySessionsState | undefined;
+  private isReloading = false;
+
+  /**
+   * 已经落盘的两份会话。
+   *
+   * **必须响应式**：进度条的分子分母（`reviewedIds` / `reviewTotal`）直接读它，
+   * 而「盘上那份被同步改写」这条路径不会碰 `appState` 里的其它字段——不响应式的话
+   * 数字变了界面也不重算（这正是「手机上 1 / 10、电脑上还是 0 / 9」的一半原因）。
+   */
+  private savedSessions = $state<MemorySessionsState | undefined>(undefined);
 
   /** 学习会话的身份 / 开轮日 / 修订戳（跨 save 保留，不能每次重新生成）。 */
   private learningSessionId = "";
@@ -269,6 +282,76 @@ export class MemorySession extends ProgressSessionBase {
    */
   refreshClock(): void {
     this.clockTick += 1;
+  }
+
+  /**
+   * 盘上那份被**外部**改写了（同步拉取 / 合并）→ 重新读回来。
+   *
+   * 会话是内存快照：构造之后只由自己的 `save()` 单向下写。可盘上那份还有第二个
+   * 写入方——同步的 `applyRemoteState`。它写完不重读，就会出现「手机上已经
+   * 1 / 10，电脑上还是 0 / 9」；更糟的是再接一次 `save()` 会把旧会话盖回去，
+   * 于是下一次同步把 0 / 9 传到云端，两台设备一起错。
+   *
+   * 规则：
+   *   - `run === "idle"` → 完全以盘上为准（没有进行中的一轮，内存里没有额外信息）；
+   *   - 正在跑一轮 → 盘上那份与内存**合并**（`mergeSessions`），队列保留本机顺序，
+   *     远端新过关的卡剔掉、新到期的补到队尾，屏上那道不跳。
+   */
+  reloadFromStorage(): void {
+    if (this.isReloading) return;
+    this.isReloading = true;
+    try {
+      const stored = loadStoredState(this.hash);
+      const next = this.loadState(stored);
+      const disk = next.memory?.sessions;
+      const sessions =
+        this.run === "idle" ? disk : mergeSessions(this.savedSessions, disk);
+
+      this.appState = next;
+      this.savedSessions = sessions;
+      this.round = sessions?.learning?.round ?? null;
+      this.learningSessionId = sessions?.learning?.id ?? "";
+      this.learningSessionDay = sessions?.learning?.day ?? 0;
+      this.learningSessionRev = sessions?.learning?.rev ?? 0;
+      this.reviewSessionDay = sessions?.review?.day ?? null;
+      this.reviewSessionRev = sessions?.review?.rev ?? 0;
+
+      if (this.run === "reviewing") this.adoptReviewSession(sessions?.review);
+    } finally {
+      this.isReloading = false;
+    }
+  }
+
+  /**
+   * 把合并后的复习会话并回正在跑的这一轮。
+   *
+   * 队列保留本机顺序（用户正在答的那一串不该因为一次同步跳位），远端新过关的卡
+   * 从队列里剔掉、新到期的补到队尾；`doneIds` / `targets` / `streaks` 一律以合并
+   * 结果为准——进度条的分子分母就是从这里读的。
+   */
+  private adoptReviewSession(session: MemoryReviewSession | undefined): void {
+    if (!session) return;
+
+    const done = new Set(session.doneIds);
+    const queue = queueOf(this.flow).filter((id) => !done.has(id));
+    for (const id of session.queue) {
+      if (done.has(id) || queue.includes(id)) continue;
+      queue.push(id);
+    }
+
+    const current = cardIdOf(this.flow);
+    this.flow = beginReviewRun(queue, {
+      target: { ...session.targets },
+      reviewed: [...session.doneIds],
+      touched: [...session.touchedIds],
+      failed: [...session.failed],
+      streaks: { ...session.streaks },
+    });
+    if (current && queue.includes(current)) {
+      this.flow = showCard(this.flow, current);
+    } else {
+      this.selectNext();
+    }
   }
 
   // ── ProgressSessionBase 的四个挂钩 ──────────────────────────────────
@@ -658,6 +741,8 @@ export class MemorySession extends ProgressSessionBase {
    * 会话默认不存在，只有开过一轮才会写；学完 / 结束本轮时删掉。
    */
   startLearning(): void {
+    // 同 `startReview`：进入前以盘上为准，别拿构造时那份快照决定「有没有一轮可续」
+    this.reloadFromStorage();
     const stored = this.savedSessions?.learning;
     const resumable =
       stored !== undefined &&
@@ -787,6 +872,10 @@ export class MemorySession extends ProgressSessionBase {
    * 出题顺序：新开一轮打散；续做保留原顺序（否则「停在第 3 张」就成了一句空话）。
    */
   startReview(): void {
+    // 进入前先以盘上为准：同步可能刚把另一台设备的进度写下来，而这里的
+    // `savedSessions` 还是构造时那份（订阅通知能覆盖绝大多数情况，但「同步在
+    // 视图挂载之前就完成了」这类时序只能靠入口这一次重读兜住）。
+    this.reloadFromStorage();
     const today = dayKeyOf(this.now);
     const queueQuestions = this.reviewQueueToday();
     if (queueQuestions.length === 0 && (this.savedSessions?.review?.queue.length ?? 0) === 0) {
@@ -1826,6 +1915,10 @@ export class MemorySession extends ProgressSessionBase {
   // ── 持久化 ──────────────────────────────────────────────────────────
 
   private save(): void {
+    // 正在从盘上重读：盘上那份就是要写的东西，这时再写会把半成品（或刚被合并
+    // 进来的结果）覆盖掉。见 `isReloading`。
+    if (this.isReloading) return;
+
     // 1. 把当前 flow 收成两份会话（没有进行中的会话就是 undefined）。
     const sessions = this.buildSessions(this.savedSessions);
     this.savedSessions = sessions;
