@@ -1154,6 +1154,47 @@ describe("记忆模式：持久化", () => {
     expect(resumed.reviewDoneCount).toBe(3);
   });
 
+  it("收尾的「共复习 N 道」报今天的总数，不是本次进入后的数量", () => {
+    const hash = "memory_review_toast_hash";
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {
+          a: createReviewProgress(BASE_TIME),
+          b: createReviewProgress(BASE_TIME),
+          c: createReviewProgress(BASE_TIME),
+        },
+        settings: createDefaultMemorySettings(),
+      },
+    });
+
+    const now = addDays(startOfDay(BASE_TIME), 1) + 6 * 60 * 60_000;
+    const toasts: { title: string; description?: string }[] = [];
+    const toast = (title: string, description?: string) =>
+      toasts.push({ title, description });
+
+    // 只复习一题就退出（模拟当天刷新 / 离开）
+    const first = makeSession(["a", "b", "c"], { hash, now, toast });
+    first.startReview();
+    answer(first, true);
+    first.exitSession();
+
+    // 再进来把剩下的做完：本次只过了 2 道，但今天是 3 道
+    const resumed = makeSession(["a", "b", "c"], { hash, now, toast });
+    resumed.startReview();
+    let guard = 0;
+    while (resumed.run === "reviewing" && resumed.currentQuestion) {
+      expect(guard++).toBeLessThan(10);
+      answer(resumed, true);
+    }
+
+    const finish = toasts.find((t) => t.title === "本轮复习完成");
+    expect(
+      finish?.description,
+      "收尾要跟进度条同一个数（今天 3 道），不是本次进入后过的 2 道",
+    ).toBe("共复习 3 道卡片。");
+  });
+
   it("重置进度会把调试用的时间偏移一起清零", () => {
     const hash = "memory_reset_clock_hash";
     const session = makeSession(["a"], { hash });

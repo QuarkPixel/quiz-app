@@ -65,8 +65,8 @@ export interface MemoryReviewRun {
 /** 正在跑哪一档。 */
 export type MemoryRun =
   | { kind: "idle" }
-  | { kind: "learning"; queue: string[]; completed: number }
-  | { kind: "reviewing"; queue: string[]; completed: number; review: MemoryReviewRun };
+  | { kind: "learning"; queue: string[] }
+  | { kind: "reviewing"; queue: string[]; review: MemoryReviewRun };
 
 /** 屏上的那张卡。 */
 export type MemoryCard =
@@ -100,11 +100,6 @@ export function runKindOf(flow: MemoryFlow): MemoryRun["kind"] {
 /** 队列（首页恒为空）。 */
 export function queueOf(flow: MemoryFlow): readonly string[] {
   return flow.run.kind === "idle" ? [] : flow.run.queue;
-}
-
-/** 本轮完成数（学习 / 复习各自数自己的）。 */
-export function completedOf(flow: MemoryFlow): number {
-  return flow.run.kind === "idle" ? 0 : flow.run.completed;
 }
 
 /** 复习记账（不在复习时为 `null`）。 */
@@ -147,7 +142,7 @@ export function rewindOf(flow: MemoryFlow): RuntimeState | null {
 /** 开一轮学习（队列已排好序）。 */
 export function startLearning(queue: readonly string[]): MemoryFlow {
   return {
-    run: { kind: "learning", queue: [...queue], completed: 0 },
+    run: { kind: "learning", queue: [...queue] },
     card: null,
   };
 }
@@ -161,7 +156,6 @@ export function startReview(
     run: {
       kind: "reviewing",
       queue: [...queue],
-      completed: 0,
       review: cloneReview(review),
     },
     card: null,
@@ -268,15 +262,6 @@ export function appendQueue(
 ): MemoryFlow {
   if (flow.run.kind === "idle" || ids.length === 0) return flow;
   return { run: { ...flow.run, queue: [...flow.run.queue, ...ids] }, card: flow.card };
-}
-
-/** 本轮完成数 +1。 */
-export function countCompletion(flow: MemoryFlow): MemoryFlow {
-  if (flow.run.kind === "idle") return flow;
-  return {
-    run: { ...flow.run, completed: flow.run.completed + 1 },
-    card: flow.card,
-  };
 }
 
 // ── 转移：复习记账 ────────────────────────────────────────────────────────

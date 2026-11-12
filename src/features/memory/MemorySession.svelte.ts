@@ -89,8 +89,6 @@ import {
   cardIdOf,
   clearReviewStreak,
   clearReviewTarget,
-  completedOf,
-  countCompletion,
   dropFromQueue,
   dropQueueHead,
   finishRun,
@@ -435,11 +433,6 @@ export class MemorySession extends ProgressSessionBase {
   /** 最终判定（「知道 / 模糊」算没答错；「记错了」会把 isCorrect 翻回 false） */
   get isCorrect(): boolean {
     return correctnessOf(this.flow);
-  }
-
-  /** 本轮完成数量（学习 = 学会几道；复习 = 复习完几道） */
-  get completed(): number {
-    return completedOf(this.flow);
   }
 
   /**
@@ -1460,7 +1453,6 @@ export class MemorySession extends ProgressSessionBase {
     if (this.round) {
       this.round = markMemoryRoundMastered(this.round, id);
     }
-    this.flow = countCompletion(this.flow);
 
     // 出队 + 把队列里已经离开活动池的题清掉
     this.flow = dropQueueHead(this.flow);
@@ -1562,9 +1554,8 @@ export class MemorySession extends ProgressSessionBase {
     };
   }
 
-  /** 出队并计入本轮完成数。 */
+  /** 出队。完成数不在这里数：复习看 `reviewedIds`，学习看 `round.masteredIds`。 */
   private dropCurrent(): void {
-    this.flow = countCompletion(this.flow);
     this.flow = dropQueueHead(this.flow);
     this.selectNext();
   }
@@ -1741,7 +1732,12 @@ export class MemorySession extends ProgressSessionBase {
   }
 
   private finishSession(): void {
-    const learned = this.completed;
+    // 收尾报的是**今天过了几道**，与进度条同一个数（`reviewedIds` → 会话里的
+    // `doneIds`）。以前这里读 `flow.run.completed`——那是「本次进入复习之后过了
+    // 几道」，当天中途刷新 / 退出再进来会从 0 重数，总览里「标熟」的卡也不计，
+    // 于是进度条显示 5 / 5、收尾却说「共复习 2 道」。两份来源必然对不上，
+    // 所以那份计数已经删掉，别再把它加回来。
+    const learned = this.reviewedIds.length;
     const run = this.run;
 
     // 学习轮池子空了（队列跟着空）就按「这一轮学完」收尾。
@@ -1791,10 +1787,8 @@ export class MemorySession extends ProgressSessionBase {
     this.appState = { ...this.appState, activePool: [] };
     this.save();
     this.deps.toast(
-      run === "reviewing" ? "本轮复习完成" : "本轮学习完成",
-      run === "reviewing"
-        ? `共复习 ${learned} 道卡片。`
-        : `共学会 ${learned} 道卡片，明天开始复习。`,
+      "本轮复习完成",
+      `共复习 ${learned} 道卡片。`,
       "success",
     );
     maybePlaySuccessSound(this.globalSettings, this.deps.sound);
