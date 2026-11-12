@@ -112,15 +112,21 @@ import {
   type MemoryFlow,
   type MemoryRun,
 } from "@/features/memory/flow";
-import { nextRev, revOf } from "@/lib/rev";
-import { debugLog, sessionSummary } from "@/lib/debug";
-import { normalizeMemoryProgressMap } from "@/features/memory/normalize";
 import {
-  createLearningSession,
+  buildLearningSessionOf,
+  buildReviewSessionOf,
+  buildSessions,
+  loadMemoryState,
+  memorySectionOf,
+  withProgress,
+  withSyncedMasteredIds,
+} from "@/features/memory/sessionStore";
+import { nextRev } from "@/lib/rev";
+import { debugLog, sessionSummary } from "@/lib/debug";
+import {
   createReviewSession,
   createSessionId,
   mergeSessions,
-  normalizeSessions,
   rolloverReviewSession,
 } from "@/features/memory/session";
 import {
@@ -1027,7 +1033,7 @@ export class MemorySession extends ProgressSessionBase {
     if (this.round) {
       this.round = markMemoryRoundMastered(this.round, id);
     }
-    this.appState = this.withSyncedMasteredIds({
+    this.appState = withSyncedMasteredIds({
       ...this.appState,
       activePool: this.appState.activePool.filter((item) => item.id !== id),
       memory: this.writeProgress(this.appState, id, {
@@ -1671,40 +1677,16 @@ export class MemorySession extends ProgressSessionBase {
   }
 
   /**
-   * 让 `masteredIds` 与 `memory.progress` 保持一致。
-   *
-   * 记忆模式以 `progress[].state === "mastered"` 为准，`masteredIds` 只是它的
-   * 投影（导出文件名会数这个数量）。载入 / 导入进度时同步一次，免得出现
-   * 「进度里明明有已掌握的卡，文件名却写 (0 of N)」这种自相矛盾。
-   */
-  private withSyncedMasteredIds(state: RuntimeState): RuntimeState {
-    if (!state.memory) return state;
-    const masteredIds = Object.entries(state.memory.progress)
-      .filter(([, item]) => item.state === "mastered")
-      .map(([id]) => id);
-    return { ...state, masteredIds };
-  }
-
-  /**
    * 生成一份新的 `memory` 段：patch 里没写到的字段原样保留。
    *
-   * `memory` 段每次都是整体重建的，漏掉哪个字段就会在下次 `save()` 时把它抹掉
-   * （设置、本轮待办、今天学过一轮的标记都踩过这个坑），所以只走这一个出口。
+   * 实现见 `sessionStore.memorySectionOf`——那一层是纯函数，和「屏上怎么跑」
+   * 无关，单独拆出去之后这里只留一行委托。
    */
   private memorySection(
     base: RuntimeState,
     patch: Partial<MemoryStoredState>,
   ): MemoryStoredState {
-    const current = base.memory;
-    return {
-      progress: patch.progress ?? current?.progress ?? {},
-      settings:
-        patch.settings ?? current?.settings ?? createDefaultMemorySettings(),
-      // 会话由 `save()` 统一生成；这里读的是「已经落盘的那一份」，
-      // 这样 `writeProgress` 重建 memory 段时不会把会话抹掉。
-      sessions: "sessions" in patch ? patch.sessions : this.savedSessions,
-      learnedDay: "learnedDay" in patch ? patch.learnedDay : current?.learnedDay,
-    };
+    return memorySectionOf(base.memory, patch, this.savedSessions);
   }
 
   /**
@@ -1722,13 +1704,7 @@ export class MemorySession extends ProgressSessionBase {
     id: string,
     progress: MemoryProgress,
   ): MemoryStoredState {
-    const stamped: MemoryProgress = {
-      ...progress,
-      rev: nextRev(Math.max(revOf(base.memory?.progress?.[id]), revOf(progress))),
-    };
-    return this.memorySection(base, {
-      progress: { ...(base.memory?.progress ?? {}), [id]: stamped },
-    });
+    return withProgress(base, id, progress, this.savedSessions);
   }
 
   private finishSession(): void {
@@ -1922,7 +1898,7 @@ export class MemorySession extends ProgressSessionBase {
   // 记忆模式的运行时状态上」。
 
   protected applyImportedState(state: StoredState): void {
-    this.appState = this.withSyncedMasteredIds(
+    this.appState = withSyncedMasteredIds(
       buildRuntimeState(this.questions, {
         ...state,
         activePool: [],
@@ -1974,95 +1950,50 @@ export class MemorySession extends ProgressSessionBase {
   private buildLearningSession(
     previous: MemoryLearningSession | undefined,
   ): MemoryLearningSession | undefined {
-    const round = this.round;
-    if (!round) return undefined;
-
-    const running = this.run === "learning";
-    const sameRound =
-      previous !== undefined &&
-      previous.round.cardIds.join("\u0000") === round.cardIds.join("\u0000");
-
-    const queue = running
-      ? queueOf(this.flow).filter(
-          (id) => round.cardIds.includes(id) && !round.masteredIds.includes(id),
-        )
-      : sameRound
-        ? [...previous.queue]
-        : memoryRoundRemaining(round);
-    // 补齐这一轮还没学、但会话里没有的卡（老数据 / 被剪枝过）
-    for (const id of memoryRoundRemaining(round)) {
-      if (!queue.includes(id)) queue.push(id);
-    }
-
-    const currentId = running
-      ? cardIdOf(this.flow)
-      : previous?.currentId && queue.includes(previous.currentId)
-        ? previous.currentId
-        : null;
-    const answered = running ? isAnswered(this.flow) : false;
-
-    const id =
-      sameRound && previous
-        ? previous.id
-        : this.learningSessionId || createSessionId();
-    const day =
-      sameRound && previous
-        ? previous.day
-        : this.learningSessionDay || dayKeyOf(this.now);
-    const rev = nextRev(Math.max(previous?.rev ?? 0, this.learningSessionRev));
-
-    this.learningSessionId = id;
-    this.learningSessionDay = day;
-    this.learningSessionRev = rev;
-
-    return createLearningSession({
-      id,
-      day,
-      round,
-      queue,
-      currentId,
-      answered,
-      rev,
+    const built = buildLearningSessionOf({
+      round: this.round,
+      run: this.run,
+      flow: this.flow,
+      previous,
+      sessionId: this.learningSessionId,
+      sessionDay: this.learningSessionDay,
+      sessionRev: this.learningSessionRev,
+      now: this.now,
     });
+    if (built.session) {
+      this.learningSessionId = built.id;
+      this.learningSessionDay = built.day;
+      this.learningSessionRev = built.rev;
+    }
+    return built.session;
   }
 
   /** 把当前复习 flow 收成今天的复习会话（不在复习时保留盘上那份）。 */
   private buildReviewSession(
     previous: MemoryReviewSession | undefined,
   ): MemoryReviewSession | undefined {
-    if (this.run !== "reviewing") return previous;
-    const review = reviewOf(this.flow);
-    if (!review) return previous;
-
-    const day = this.reviewSessionDay ?? dayKeyOf(this.now);
-    const rev = nextRev(Math.max(previous?.rev ?? 0, this.reviewSessionRev));
-    this.reviewSessionDay = day;
-    this.reviewSessionRev = rev;
-
-    return {
-      day,
-      queue: [...queueOf(this.flow)],
-      currentId: cardIdOf(this.flow),
-      answered: isAnswered(this.flow),
-      doneIds: [...review.reviewed],
-      touchedIds: [...review.touched],
-      targets: { ...review.target },
-      failed: [...review.failed],
-      streaks: { ...review.streaks },
-      rev,
-    };
+    const built = buildReviewSessionOf({
+      run: this.run,
+      flow: this.flow,
+      previous,
+      sessionDay: this.reviewSessionDay,
+      sessionRev: this.reviewSessionRev,
+      now: this.now,
+    });
+    if (built.session && this.run === "reviewing") {
+      this.reviewSessionDay = built.day;
+      this.reviewSessionRev = built.rev;
+    }
+    return built.session;
   }
 
   private buildSessions(
     previous: MemorySessionsState | undefined,
   ): MemorySessionsState | undefined {
-    const learning = this.buildLearningSession(previous?.learning);
-    const review = this.buildReviewSession(previous?.review);
-    if (!learning && !review) return undefined;
-    return {
-      ...(learning ? { learning } : {}),
-      ...(review ? { review } : {}),
-    };
+    return buildSessions(
+      this.buildLearningSession(previous?.learning),
+      this.buildReviewSession(previous?.review),
+    );
   }
 
   private clearLearningSession(): void {
@@ -2077,32 +2008,11 @@ export class MemorySession extends ProgressSessionBase {
   private loadState(
     stored: ReturnType<typeof loadStoredState>,
   ): RuntimeState {
-    const today = dayKeyOf(this.now);
-    const validIds = new Set(this.questions.map((q) => q.id));
-    // 会话：结构净化 + 丢掉题库里已不存在的卡。
-    // 昨天的复习会话**不在这里丢**——`startReview` 会把它并进今天。
-    const sessions = normalizeSessions(stored.memory?.sessions, validIds);
-    const learned = stored.memory?.learnedDay;
-    const memory = stored.memory
-      ? {
-          ...stored.memory,
-          progress: normalizeMemoryProgressMap(stored.memory.progress),
-          settings: sanitizeMemorySettings(stored.memory.settings),
-          sessions,
-          // 时钟偏快的设备可能写出未来日期，读到就收敛到今天，
-          // 否则其他设备在到达那天之前都不会显示「今天学过」
-          learnedDay: learned !== undefined && learned > today ? today : learned,
-        }
-      : { progress: {}, settings: createDefaultMemorySettings() };
-
-    return this.withSyncedMasteredIds(
-      buildRuntimeState(this.questions, {
-        ...stored,
-        // 记忆模式不落盘活动池：它是学习轮 / 复习队列的运行时投影
-        activePool: [],
-        memory,
-      }),
-    );
+    return loadMemoryState({
+      stored,
+      questions: this.questions,
+      now: this.now,
+    });
   }
 }
 
