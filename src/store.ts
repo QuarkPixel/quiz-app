@@ -39,6 +39,7 @@ import {
 import { sanitizeMemorySettings } from "./features/memory/settings";
 import { normalizeQuizSession } from "./quiz/session/quizSession";
 import { nextRev } from "./lib/rev";
+import { subscribeStorageWrite } from "./lib/storageBus";
 import { loadGeneralConfig, updateGeneralConfig } from "./generalConfig";
 
 export interface SaveStateOptions {
@@ -365,31 +366,21 @@ export const STORED_STATE_COVERAGE: Covered<MissingFromPersist> = true;
 // 两个会话（`MemorySession` / `QuizSession`）都是**内存快照**：构造时读一次盘，
 // 之后只靠自己的 `save()` 单向下写。但盘上那份不只由它写——同步的拉取 / 合并
 // 结果经 `features/sync/localwrite.ts` 的 `applyRemoteState` 直接落进
-// localStorage，页面不会重建（`viewKey` 只跟 `mode:hash` 走）。
+// localStorage。
 //
-// 没有这条通知就会这样：手机已经复习到 1 / 10，电脑同步成功、盘上也是 1 / 10，
-// 但会话内存里还是「今天没开过复习」→ 界面不动；用户点「复习」按旧快照新建
-// 一轮（今天到期 9 道）→ 显示 0 / 9，还顺手把 1 / 10 覆盖回盘上。
-//
-// 约定：**外部写盘之后必须广播**，会话收到后调自己的 `reloadFromStorage()`。
-// 会话自己的 `saveState` 不广播——那正是它刚写出去的内容。
-
-type StoredStateWriteListener = (hash: string) => void;
-const storedStateWriteListeners = new Set<StoredStateWriteListener>();
+// 这条订阅只是把存储键翻译成题库 hash；**广播本身在 `@/lib/storageBus`**，
+// 消费方（会话、题库仓库、全局设置）都订阅那条总线。以前同步落盘后会整页
+// `location.reload()`——那会把正在答题的会话直接打断，这里是它的替代。
 
 /** 订阅「某个题库的 `StoredState` 被外部改写」；返回取消订阅的函数。 */
 export function subscribeStoredStateWrite(
-  listener: StoredStateWriteListener,
+  listener: (hash: string) => void,
 ): () => void {
-  storedStateWriteListeners.add(listener);
-  return () => {
-    storedStateWriteListeners.delete(listener);
-  };
-}
-
-/** 外部把状态落进 localStorage 之后调用（`applyRemoteState` 是唯一入口）。 */
-export function notifyStoredStateWritten(hash: string): void {
-  for (const listener of storedStateWriteListeners) listener(hash);
+  return subscribeStorageWrite((key) => {
+    if (!key.startsWith(STORAGE_PREFIX_STATE)) return;
+    const hash = key.slice(STORAGE_PREFIX_STATE.length);
+    if (hash.length > 0) listener(hash);
+  });
 }
 
 export function saveState(
@@ -428,7 +419,7 @@ export function resetStoredState(hash: string): StoredState {
     memory: previous.memory,
     // 重置是一条**会传播的删除**：盖一个戳，合并时让另一台设备的旧进度整段作废
     // （`masteredIds` 只涨不落，没有这个戳它会被旧值原样复活）
-    resetRev: nextRev(Date.now(), previous.resetRev ?? 0),
+    resetRev: nextRev(previous.resetRev ?? 0),
   };
 }
 

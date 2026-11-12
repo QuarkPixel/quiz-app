@@ -10,6 +10,8 @@
 
 import { loadGeneralConfig, updateGeneralConfig } from "@/generalConfig";
 import { sanitizeGlobalSettings } from "@/globalSettings";
+import { STORAGE_KEY_GENERAL } from "@/config";
+import { subscribeStorageWrite } from "@/lib/storageBus";
 import type { GlobalSettings } from "@/types";
 
 export class GlobalSettingsStore {
@@ -43,3 +45,9 @@ export class GlobalSettingsStore {
 
 /** 应用级单例；测试可调用 reload() 或自建实例注入 QuizSession。 */
 export const globalSettingsStore = new GlobalSettingsStore();
+
+// 同步把 general 写回来时（另一台设备改了设置），内存这份要跟上。
+// 走的是同一条存储总线：以前靠整页刷新，现在只重读这一段。
+subscribeStorageWrite((key) => {
+  if (key === STORAGE_KEY_GENERAL) globalSettingsStore.reload();
+});

@@ -32,6 +32,10 @@ import {
   memoryRoundRemaining,
   normalizeMemoryRound,
 } from "./round";
+// 两个纯叶子（`hash.ts` 没有任何依赖，`same.ts` 只依赖它），不会和
+// `sync/model/merge.ts` 形成环——那边反过来 import 本文件。
+import { canonicalJson } from "@/features/sync/hash";
+import { same } from "@/features/sync/model/same";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -87,6 +91,45 @@ export function createSessionId(): string {
     return cryptoObject.randomUUID();
   }
   return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * 「这一侧相对基准改过没有」——会话合并的**第一道裁决**。
+ *
+ * 返回：
+ *   `undefined` 两边都没记录 / 都没动 → 该删的删（会话结束会删记录）
+ *   `"local"`   只有本地动了（云端还是基准那份）→ 合并结果就是本地
+ *   `"remote"`  只有云端动了 → 用云端
+ *   `"both"`    两边都动过，或没有基准 → 才需要逐字段合
+ *
+ * 为什么必须先问这一句：会话里一半字段会**变小**（`targets` 递减、`streaks`
+ * 清零、`queue` 收缩），逐字段「取大 / 并集」会把旧值拉回来，于是单设备推进
+ * 也会被算成"两边各有一份"（详见 `mergeReviewSession` 的说明）。
+ */
+function resolveSide<T>(
+  base: T | undefined,
+  local: T | undefined,
+  remote: T | undefined,
+): "local" | "remote" | "both" | undefined {
+  const localChanged =
+    local !== undefined && (base === undefined || !same(base, local));
+  const remoteChanged =
+    remote !== undefined && (base === undefined || !same(base, remote));
+  if (!localChanged && !remoteChanged) return undefined;
+  if (!localChanged) return "remote";
+  if (!remoteChanged) return "local";
+  return "both";
+}
+
+/**
+ * 两份记录里"更晚"的那份（`rev` 大；同戳按规范化 JSON 裁决，保证可交换）。
+ *
+ * 给 `targets` / `streaks` 这类**非计数**字段用：它们描述"现在还差几次"，
+ * 只有最新那份是事实，不能取大。
+ */
+function newerRecord<T extends { rev: number }>(local: T, remote: T): T {
+  if (local.rev !== remote.rev) return local.rev > remote.rev ? local : remote;
+  return canonicalJson(local) >= canonicalJson(remote) ? local : remote;
 }
 
 // ── 学习会话 ────────────────────────────────────────────────────────────────
@@ -166,10 +209,20 @@ export function normalizeLearningSession(
 export function mergeLearningSession(
   local: MemoryLearningSession | undefined,
   remote: MemoryLearningSession | undefined,
+  base?: MemoryLearningSession,
 ): MemoryLearningSession | undefined {
-  if (!local) return remote;
-  if (!remote) return local;
+  const resolution = resolveSide(base, local, remote);
+  if (resolution === undefined) return undefined;
+  if (resolution === "local") return local ? combineLearningSessions(local, local) : undefined;
+  if (resolution === "remote") return remote ? combineLearningSessions(remote, remote) : undefined;
+  return local && remote ? combineLearningSessions(local, remote) : undefined;
+}
 
+/** 两侧都在时的那套逐字段合并（单侧也走它，保证形状一致）。 */
+function combineLearningSessions(
+  local: MemoryLearningSession,
+  remote: MemoryLearningSession,
+): MemoryLearningSession | undefined {
   // 两台设备各开了一轮：只能留一份。取更新的一轮；同一时刻按「学得更多」
   // 与 id 排序裁决，保证交换后结果一致。
   if (local.id !== remote.id) {
@@ -177,10 +230,14 @@ export function mergeLearningSession(
     const remoteScore = [remote.rev, remote.round.masteredIds.length, remote.round.cardIds.length];
     for (let index = 0; index < localScore.length; index++) {
       if (localScore[index] !== remoteScore[index]) {
-        return localScore[index] > remoteScore[index] ? local : remote;
+        return localScore[index] > remoteScore[index]
+          ? combineLearningSessions(local, local)
+          : combineLearningSessions(remote, remote);
       }
     }
-    return local.id < remote.id ? local : remote;
+    return local.id < remote.id
+      ? combineLearningSessions(local, local)
+      : combineLearningSessions(remote, remote);
   }
 
   const cardIds = sortedUnique([
@@ -308,8 +365,35 @@ export function isReviewSessionComplete(session: MemoryReviewSession): boolean {
 /**
  * 合并两份复习记录。
  *
- * 同一天：集合取并集，`targets` / `streaks` 逐卡取大（连对要求只会被提到 N，
- * 已经过的卡由 `doneIds` 兜底，不会再被旧 `targets` 复活）。
+ * ── 先做三方裁决，再谈"合" ──────────────────────────────────────────────────
+ *
+ * 这份记录里有一半字段是**会变小**的：
+ *
+ *   `targets`  答对一次就 -1（还差几次才过关）
+ *   `streaks`  答错清零
+ *   `queue`    过关后收缩
+ *   `currentId` / `answered` 往前推进
+ *
+ * 早先的实现对两侧都有的记录直接「集合取并集、数值取大」，等于假设这些字段
+ * 只涨不落。于是只要本地在往前推、云端还是上次同步的旧快照，合并结果就必然
+ * **既不是本地也不是云端**：`planProgressMerge` 据此判成「两边各有一份」→
+ * `reconcile` → 弹「云端也有新进度」并把结果写回本地。更糟的是写回去的
+ * `targets` 是旧的大值，用户下一题就发现「明明答对了，要求反而变多」。
+ *
+ * 所以先问一句**谁相对基准改过**（和 `pickScalar` 同一套因果）：
+ *
+ *   云端 == 基准          → 云端没动，合并结果就是本地那份
+ *   本地 == 基准          → 本地没动，用云端
+ *   两边都改了 / 没有基准 → 才逐字段合（真并发，保守合并）
+ *
+ * 没有基准（第一次接上这个云端）时两边都算"改过"，退回逐字段合——这时没有
+ * 比"取并集"更安全的答案。
+ *
+ * ── 逐字段合（真并发）的规矩 ──
+ *
+ * 同一天：`doneIds` / `touchedIds` / `failed` 取并集（只增）；
+ * `targets` / `streaks` **整组取 `rev` 较大那侧**——它们描述"这张卡现在还差
+ * 几次"，只有最新那份才是事实，取大会把已经答对的要求又提回去。
  *
  * 不同天：**新的一天赢计数**（`doneIds` / `touchedIds` 只认新的那天），
  * 但旧那天的**未完成部分**（`queue` / `targets` / `failed` / `streaks`）
@@ -318,54 +402,40 @@ export function isReviewSessionComplete(session: MemoryReviewSession): boolean {
 export function mergeReviewSession(
   local: MemoryReviewSession | undefined,
   remote: MemoryReviewSession | undefined,
+  base?: MemoryReviewSession,
 ): MemoryReviewSession | undefined {
-  if (!local) return remote;
-  if (!remote) return local;
+  const resolution = resolveSide(base, local, remote);
+  if (resolution === undefined) return undefined;
+  if (resolution === "local") return local ? combineReviewSessions(local, local) : undefined;
+  if (resolution === "remote") return remote ? combineReviewSessions(remote, remote) : undefined;
+  return local && remote ? combineReviewSessions(local, remote) : undefined;
+}
 
+/** 两侧都在时的那套逐字段合并（单侧也走它，保证形状一致）。 */
+function combineReviewSessions(
+  local: MemoryReviewSession,
+  remote: MemoryReviewSession,
+): MemoryReviewSession {
   const day = Math.max(local.day, remote.day);
-  const newer = local.day >= remote.day ? local : remote;
+  const newerDay = local.day >= remote.day ? local : remote;
   const sameDay = local.day === remote.day;
 
   // 不同天：旧的 `doneIds` / `touchedIds` 属于昨天，不能算进今天。
   const doneIds = sameDay
     ? sortedUnique([...local.doneIds, ...remote.doneIds])
-    : sortedUnique(newer.doneIds);
+    : sortedUnique(newerDay.doneIds);
   const done = new Set(doneIds);
   const touchedIds = sameDay
     ? sortedUnique([...local.touchedIds, ...remote.touchedIds])
-    : sortedUnique(newer.touchedIds);
+    : sortedUnique(newerDay.touchedIds);
 
   const queue = sortedUnique([...local.queue, ...remote.queue]).filter(
     (id) => !done.has(id),
   );
 
-  const mergeNumbers = (
-    left: Record<string, number>,
-    right: Record<string, number>,
-    min: number,
-  ): Record<string, number> => {
-    const result: Record<string, number> = {};
-    for (const id of new Set([...Object.keys(left), ...Object.keys(right)])) {
-      if (done.has(id)) continue;
-      const value = Math.max(left[id] ?? min, right[id] ?? min);
-      if (value >= min) result[id] = value;
-    }
-    return result;
-  };
-
   // 不同天时，旧那天的 targets / streaks 只对「还在队列里」的卡有意义。
   const keepOld = (id: string) =>
     sameDay || queue.includes(id);
-  const targets = mergeNumbers(
-    filteredRecord(local.targets, 1, keepOld),
-    filteredRecord(remote.targets, 1, keepOld),
-    1,
-  );
-  const streaks = mergeNumbers(
-    filteredRecord(local.streaks, 0, keepOld),
-    filteredRecord(remote.streaks, 0, keepOld),
-    0,
-  );
   const failed = sortedUnique([...local.failed, ...remote.failed]).filter(
     (id) => !done.has(id) && keepOld(id),
   );
@@ -384,6 +454,21 @@ export function mergeReviewSession(
   }
   if (currentId === null) answered = false;
 
+  // `targets` / `streaks` 取"最新那次作答"的整份。
+  // 它们不是计数器，是"现在还需要几次"：取大 = 把已经答对的要求提回去。
+  const latest = newerRecord(local, remote);
+  const latestNumbers = (
+    field: "targets" | "streaks",
+    min: number,
+  ): Record<string, number> => {
+    const result: Record<string, number> = {};
+    for (const [id, value] of Object.entries(filteredRecord(latest[field], min, keepOld))) {
+      if (done.has(id)) continue;
+      if (value >= min) result[id] = value;
+    }
+    return result;
+  };
+
   return {
     day,
     queue,
@@ -391,9 +476,9 @@ export function mergeReviewSession(
     answered,
     doneIds,
     touchedIds,
-    targets,
+    targets: latestNumbers("targets", 1),
     failed,
-    streaks,
+    streaks: latestNumbers("streaks", 0),
     rev: Math.max(local.rev, remote.rev),
   };
 }
@@ -486,25 +571,20 @@ export function normalizeSessions(
 }
 
 /**
- * 合并两份会话记录（同步用）。两边都没有时返回 `undefined`，
- * 不留下 `sessions: {}` 空壳。
+ * 合并两份会话记录（**没有基准**的两方合并，用于本机重读盘上那份）。
+ *
+ * 没有基准就分不清"谁改过"，只能逐字段合；同步链路一律走
+ * `mergeSessionsWithBase`（它带上次同步的基准，能先做因果裁决）。
  */
 export function mergeSessions(
   local: MemorySessionsState | undefined,
   remote: MemorySessionsState | undefined,
 ): MemorySessionsState | undefined {
-  if (!local && !remote) return undefined;
-  const learning = mergeLearningSession(local?.learning, remote?.learning);
-  const review = mergeReviewSession(local?.review, remote?.review);
-  if (!learning && !review) return undefined;
-  return {
-    ...(learning ? { learning } : {}),
-    ...(review ? { review } : {}),
-  };
+  return mergeSessionsWithBase(undefined, local, remote);
 }
 
 /**
- * 三方合并（同步层用）：在两边合并之上，处理「一边删了、另一边还留着」。
+ * 三方合并（同步层用）：先按基准裁决「谁改过」，再决定要不要逐字段合。
  *
  * 会话是**会结束**的：学完一轮 / 今天复习完就把记录删掉。如果只看 local /
  * remote 两边，已经结束的一方（`undefined`）会让另一台设备上的旧记录**复活**——
@@ -512,45 +592,18 @@ export function mergeSessions(
  *
  * 规则：
  *   - 两边都没有 → 删掉（不管 base）
- *   - 一边没有 → 如果另一边就是 base 那一份（`rev` 没变），说明它只是还没拉到
- *     删除，删除赢；如果另一边 `rev` 更大，说明它在那之后还有新进度，保留它
- *   - 两边都有 → 交给 `mergeLearningSession` / `mergeReviewSession`
+ *   - 一边没有 → 另一侧**就是基准那一份**（没动过）→ 说明它只是还没拉到删除，
+ *     删除赢；另一侧还有新改动 → 保留它
+ *   - 两边都有 → 交给 `mergeLearningSession` / `mergeReviewSession`，
+ *     它们内部同样先做基准裁决（云端没动就不"合"）
  */
 export function mergeSessionsWithBase(
   base: MemorySessionsState | undefined,
   local: MemorySessionsState | undefined,
   remote: MemorySessionsState | undefined,
 ): MemorySessionsState | undefined {
-  const mergeRecord = <T extends { rev: number }>(
-    baseRecord: T | undefined,
-    localRecord: T | undefined,
-    remoteRecord: T | undefined,
-    merge: (left: T | undefined, right: T | undefined) => T | undefined,
-  ): T | undefined => {
-    if (!localRecord && !remoteRecord) return undefined;
-    if (!localRecord && remoteRecord) {
-      if (baseRecord && remoteRecord.rev <= baseRecord.rev) return undefined;
-      return remoteRecord;
-    }
-    if (localRecord && !remoteRecord) {
-      if (baseRecord && localRecord.rev <= baseRecord.rev) return undefined;
-      return localRecord;
-    }
-    return merge(localRecord, remoteRecord);
-  };
-
-  const learning = mergeRecord(
-    base?.learning,
-    local?.learning,
-    remote?.learning,
-    mergeLearningSession,
-  );
-  const review = mergeRecord(
-    base?.review,
-    local?.review,
-    remote?.review,
-    mergeReviewSession,
-  );
+  const learning = mergeLearningSession(local?.learning, remote?.learning, base?.learning);
+  const review = mergeReviewSession(local?.review, remote?.review, base?.review);
   if (!learning && !review) return undefined;
   return {
     ...(learning ? { learning } : {}),

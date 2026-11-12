@@ -204,6 +204,21 @@ export class QuizSession extends ProgressSessionBase {
   }
 
   /**
+   * 屏上有没有**用户已经投入过**的东西（同步要覆盖本地前的唯一判据）。
+   *
+   * 不是"屏上有题"：刚打开应用、还没作答时换一道题并不会打断任何人。
+   * 判据是有没有**未保存的投入**：
+   *   - 已经判分（答案页）：用户正在看结果；
+   *   - 选过选项 / 填过空：草稿还没提交。
+   * 换题、覆盖进度会把这些抹掉，所以这时才需要问一句。
+   */
+  get hasWorkInProgress(): boolean {
+    if (this.flow.kind === "judged") return true;
+    if (this.selectedAnswers.length > 0) return true;
+    return this.blankAnswerInputs.some((value) => value.trim().length > 0);
+  }
+
+  /**
    * 「视作正确」现在可用吗。
    *
    * 它需要判分前的 `RuntimeState` 快照，而快照**不落盘**（整份状态太大）。
@@ -234,18 +249,22 @@ export class QuizSession extends ProgressSessionBase {
    * 这个进度，屏上还是旧的那份」，接着一次 `save()` 又把旧值盖回去。
    *
    * 正在答题（屏上有题）时不打断：只换 `appState`，屏上那道留着。空闲时按
-   * 盘上的 `quizSession` 恢复——同步过来的「停在哪道题」也算数。
+   * 盘上的 `quizSession` 恢复（那是本机自己的记录——它是设备本地字段，不同步）。
    */
   reloadFromStorage(): void {
     if (this.isReloading) return;
     this.isReloading = true;
     try {
       const next = fillActivePool(loadRuntimeState(this.questions, this.hash));
-      const answering = this.currentQuestion !== null;
+      // 屏上还有内容（题干 / 答案 / 新题预告）= 用户正在用这一屏：
+      // 盘上那份只提供长期进度，**屏上位置与作答草稿一律以本机为准**。
+      // 以前这里会 resetFlow() 再恢复，恢复失败就换一道题——刷题刷到一半
+      // 因为一次同步换了题，就是这么来的。
+      if (this.flow.kind !== "empty") {
+        this.appState = { ...next, quizSession: this.appState.quizSession };
+        return;
+      }
       this.appState = next;
-      if (answering) return;
-
-      this.flow = resetFlow();
       if (!this.restoreQuizSession()) this.selectNext();
     } finally {
       this.isReloading = false;
@@ -596,7 +615,7 @@ export class QuizSession extends ProgressSessionBase {
       settings: sanitizeBankSettings(newState.settings),
       pendingIds: [],
       // 导入是「整段覆盖」：盖一个戳，别让云端的旧进度在下次同步时并集回来
-      resetRev: nextRev(Date.now(), this.appState.resetRev ?? 0),
+      resetRev: nextRev(this.appState.resetRev ?? 0),
     };
     this.appState = rebuildRuntimeState(
       this.questions,
@@ -756,7 +775,7 @@ export class QuizSession extends ProgressSessionBase {
       this.clearQuizSession();
       return;
     }
-    const rev = nextRev(Date.now(), this.appState.quizSession?.rev ?? 0);
+    const rev = nextRev(this.appState.quizSession?.rev ?? 0);
     this.appState = {
       ...this.appState,
       quizSession: createQuizSession({
@@ -812,7 +831,7 @@ export class QuizSession extends ProgressSessionBase {
     activePool[itemIndex] = {
       ...item,
       hasBeenShown: true,
-      rev: nextRev(Date.now(), item.rev ?? 0),
+      rev: nextRev(item.rev ?? 0),
     };
     this.appState = { ...this.appState, activePool };
     this.save();

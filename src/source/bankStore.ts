@@ -1,9 +1,14 @@
-import { STORAGE_PREFIX_QUESTIONS, STORAGE_PREFIX_STATE } from "../config";
+import {
+  STORAGE_KEY_GENERAL,
+  STORAGE_PREFIX_QUESTIONS,
+  STORAGE_PREFIX_STATE,
+} from "../config";
 import { loadGeneralConfig, updateGeneralConfig } from "../generalConfig";
 import { exportProgress, importProgress } from "../features/importExport";
 import { formatBankFile, parseBankFileJson } from "../lib/bankFile";
 import { hashQuestionsJson } from "../lib/hash";
 import { loadStoredState } from "../store";
+import { subscribeStorageWrite } from "../lib/storageBus";
 import type { Question, MemoryQuestion } from "../types";
 import type {
   ApplyStateResult,
@@ -41,6 +46,8 @@ export class BankStore implements QuizSource {
   private index: BankSummary[];
   private activeHash: string | null;
   private listeners = new Set<() => void>();
+  /** 存储总线的退订函数（见构造函数）。 */
+  private readonly unsubscribeStorage: () => void;
 
   /** 已解析的题目缓存，避免每次切换都重新 JSON.parse 大字符串 */
   private questionsCache = new Map<
@@ -53,6 +60,33 @@ export class BankStore implements QuizSource {
     const config = loadGeneralConfig();
     this.index = config.library;
     this.activeHash = config.activeBank;
+
+    // 外部写入（同步）之后重读：题库列表 / 当前题库的题目都可能被另一端改过。
+    // 以前这一步是靠整页刷新做的——那会把正在答题的会话一起打断。
+    this.unsubscribeStorage = subscribeStorageWrite((key) => {
+      if (
+        key === STORAGE_KEY_GENERAL ||
+        key.startsWith(STORAGE_PREFIX_QUESTIONS)
+      ) {
+        this.reloadFromStorage();
+      }
+    });
+  }
+
+  /** 盘上那份被外部改写（同步拉取 / 合并）→ 重读 general 与题目缓存。 */
+  reloadFromStorage(): void {
+    const config = loadGeneralConfig();
+    this.index = config.library;
+    this.activeHash = config.activeBank;
+    // 题目内容可能被另一端替换过：缓存不清的话 `getActiveBank()` 还拿旧数组。
+    // （内容变了题库 hash 也会变，外层 `viewKey` 跟着换，会话自然重建。）
+    this.questionsCache.clear();
+    this.emit();
+  }
+
+  /** 取消对存储总线的订阅（测试清理用；应用里活到页面结束）。 */
+  dispose(): void {
+    this.unsubscribeStorage();
   }
 
   subscribe(listener: () => void): () => void {

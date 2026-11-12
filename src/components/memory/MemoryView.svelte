@@ -1,8 +1,9 @@
 <script lang="ts">
     import type { MemoryBank } from "@/source/types";
-    import { untrack, onMount } from "svelte";
+    import { onMount, untrack } from "svelte";
     import { toastStore } from "@/features/toast.svelte";
     import { subscribeStoredStateWrite } from "@/store";
+    import { activeWork } from "@/features/sync/activeWork.svelte";
     import { MemorySession } from "@/features/memory/MemorySession.svelte";
     import { provideMemorySession } from "@/features/memory/context";
     import FlashContainer from "../quiz/FlashContainer.svelte";
@@ -26,10 +27,6 @@
     import { createSoundPlayer } from "@/sound";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
     import { useRouter } from "@/features/routing/context";
-    import {
-        OVERLAY_KEYS,
-        userActivity,
-    } from "@/features/userActivity.svelte";
 
     /**
      * 记忆模式的装配层：版面与 `QuizView` **完全同构**（同一个 `ViewShell`，
@@ -66,15 +63,26 @@
      * 1 / 10，但屏上还是构造时那份「今天没开过复习」→ 点「复习」按旧快照新建
      * 一轮（今天到期 9 道）→ 0 / 9，还顺手把 1 / 10 覆盖回盘上。
      *
-     * 为什么还需要这一条（同步完不是会整页刷新吗）：刷新会被 `userActivity`
-     * 挂起（正在答题 / 弹窗开着 / 页面在后台），而且「当前题库没被判成拉取」
-     * 时压根不刷。这条通知让内存跟上盘上，不依赖那次刷新。
+     * 这条通知让内存跟上盘上，不依赖任何"整页刷新"（那条路已经删了，见
+     * `@/lib/storageBus`）。顺便把自己登记成"当前正在看的题库"，同步在写本地
+     * 之前会问 `activeWork.isBusy`。
      */
-    onMount(() =>
-        subscribeStoredStateWrite((hash) => {
+    onMount(() => {
+        const leave = activeWork.enter(bank.hash);
+        const off = subscribeStoredStateWrite((hash) => {
             if (hash === bank.hash) session.reloadFromStorage();
-        }),
-    );
+        });
+        return () => {
+            off();
+            leave();
+        };
+    });
+
+    // 屏上有没有"已经投入过"的东西 = 同步"要不要先问一句"的唯一依据。
+    // 首页（idle）换一份进度不会打断任何东西，直接落地。
+    $effect(() => {
+        activeWork.setBusy(bank.hash, session.hasWorkInProgress);
+    });
 
     // 会话时钟：每分钟让 `session.now` 重新求值一次。
     // 页面一直开着跨过凌晨 5 点时，首页的「今日待复习 / 今天学过」、
@@ -107,26 +115,6 @@
     const handleKeydown = createAppKeyboardHandler(session, {
         toggleReview: () => (showOverview = !showOverview),
         toggleSettings: () => (showSettings = !showSettings),
-    });
-
-    // ── 云同步的刷新让路 ────────────────────────────────────────────────
-    //
-    // 「正在答题」= 屏上有题（`currentQuestion` 非空），也就是指示点黄着的时候。
-    // 同步拉到当前这个题库的新内容时，刷新会被挂起，等这里回到 false 再补上
-    // （见 `@/features/userActivity.svelte`）。弹窗同理：开着设置 / 总览时刷新，
-    // 用户正在看的东西会连同弹窗一起消失。
-    $effect(() => {
-        userActivity.setAnswering(session.currentQuestion !== null);
-    });
-
-    $effect(() => {
-        const open =
-            showSettings || showOverview || session.importConfirmText !== null;
-        // 只在真的变了时写：直接写会在 effect 读写的**同一块** state 上打转
-        // （`effect_update_depth_exceeded`）
-        if (open !== untrack(() => userActivity.overlayOpen)) {
-            userActivity.setOverlay(OVERLAY_KEYS.settings, open);
-        }
     });
 
     // ── 子路径 ←→ 会话 ─────────────────────────────────────────────────

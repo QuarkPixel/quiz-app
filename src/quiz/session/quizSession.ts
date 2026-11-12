@@ -7,9 +7,11 @@
  *   - `StoredState.masteredIds` / `activePool` → 「学到哪了」
  *   - `StoredState.quizSession`               → 「现在停在哪」
  *
- * 合并规则是**整条取赢家**（`rev` 大的那一侧）：它不是集合，也没有可以逐字段
- * 拼的语义——「A 停在 3 号题、B 停在 7 号题」只能留一条。`rev` 相同就按
- * `currentId` 字典序裁决，保证交换律（`merge(a,b)` 与 `merge(b,a)` 一致）。
+ * 它是**设备本地状态**（「我在哪」，与 `activeBank` / `ui` 同族），不参与同步：
+ * 「A 停在 3 号题、B 停在 7 号题」没有语义上说得通的合并方式；更实际的问题是
+ * 它一旦进 `progressHash`，「换了一道题」就会被判成「这个题库变了」——每轮白传
+ * 一次分片、报一次「上传 1」，还会把正在做题的人弹一次「云端有更新」。
+ * 落盘只为刷新后续上，不跨设备（见 `sync/model/policy.ts`）。
  */
 
 import type { QuizSessionState } from "@/types";
@@ -99,30 +101,4 @@ export function normalizeQuizSession(
     ...(lastAskedId ? { lastAskedId } : {}),
     rev: toNonNegativeInt(raw.rev),
   };
-}
-
-/**
- * 合并两条会话：整条取 `rev` 大的那一侧。
- *
- * `rev` 相同（两台设备同一毫秒写的）时按 `currentId` 字典序裁决——不是为了
- * 「哪个更对」，只是为了让结果**可交换**（否则两台设备永远算不出同一份）。
- */
-export function mergeQuizSession(
-  local: QuizSessionState | undefined,
-  remote: QuizSessionState | undefined,
-): QuizSessionState | undefined {
-  if (!local) return remote;
-  if (!remote) return local;
-  if (local.rev !== remote.rev) {
-    return local.rev > remote.rev ? local : remote;
-  }
-  if (local.currentId !== remote.currentId) {
-    return local.currentId < remote.currentId ? local : remote;
-  }
-  // 同一道题、同一毫秒：按内容的规范化字符串裁决。
-  //
-  // 不用「取本地 / 取远端」：那违反交换律（`merge(a,b)` 与 `merge(b,a)` 得到
-  // 不同结果），两台设备会各算各的。`createQuizSession` / `normalizeQuizSession`
-  // 产出的键顺序是固定的，所以 `JSON.stringify` 在这里是确定的全序。
-  return JSON.stringify(local) >= JSON.stringify(remote) ? local : remote;
 }

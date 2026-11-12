@@ -21,14 +21,11 @@
     import { provideQuizSession } from "@/quiz/session/context";
     import { provideQuizUiActions } from "@/quiz/session/uiContext";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
-    import { untrack, onMount, type Component } from "svelte";
+    import { onMount, type Component } from "svelte";
     import { subscribeStoredStateWrite } from "@/store";
+    import { activeWork } from "@/features/sync/activeWork.svelte";
     import { MediaQuery } from "svelte/reactivity";
     import { COMPACT_LAYOUT_QUERY } from "@/config";
-    import {
-        OVERLAY_KEYS,
-        userActivity,
-    } from "@/features/userActivity.svelte";
     import { createSoundPlayer } from "@/sound";
 
     /**
@@ -57,11 +54,23 @@
 
     // 同步把盘上那份改写之后，会话要重读一次（理由同记忆模式，见
     // `subscribeStoredStateWrite` 与 `QuizSession.reloadFromStorage`）。
-    onMount(() =>
-        subscribeStoredStateWrite((hash) => {
+    // 顺便把自己登记成"当前正在看的题库"：同步写本地之前会问 `activeWork.isBusy`。
+    onMount(() => {
+        const leave = activeWork.enter(bank.hash);
+        const off = subscribeStoredStateWrite((hash) => {
             if (hash === bank.hash) session.reloadFromStorage();
-        }),
-    );
+        });
+        return () => {
+            off();
+            leave();
+        };
+    });
+
+    // 屏上有没有未提交的作答 = 同步"要不要先问一句"的唯一依据。
+    // 刚打开、还没作答时换一道题不会打断任何人，直接落地。
+    $effect(() => {
+        activeWork.setBusy(bank.hash, session.hasWorkInProgress);
+    });
 
     // dialog 开关：纯 UI flag，留在容器局部
     let showReview = $state(false);
@@ -115,24 +124,6 @@
     });
 
     session.initialize();
-
-    // ── 云同步的刷新让路 ────────────────────────────────────────────────
-    //
-    // 「正在答题」= 屏上有题，也就是指示点黄着的时候。同步拉到当前这个题库的新内容
-    // 时刷新会被挂起，等这里回到 false 再补（见 `@/features/userActivity.svelte`）。
-    $effect(() => {
-        userActivity.setAnswering(session.currentQuestion !== null);
-    });
-
-    // 弹窗开着时不刷新：设置 / 总览 / 导入确认都是「用户正在看的东西」
-    $effect(() => {
-        const open = showSettings || showReview || session.importConfirmText !== null;
-        // 只在真的变了时写：直接写会在 effect 读写的**同一块** state 上打转
-        // （`effect_update_depth_exceeded`）
-        if (open !== untrack(() => userActivity.overlayOpen)) {
-            userActivity.setOverlay(OVERLAY_KEYS.settings, open);
-        }
-    });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />

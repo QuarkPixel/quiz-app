@@ -96,6 +96,7 @@ import {
   finishRun,
   isAnswered,
   queueOf,
+  patchReview,
   ratingOf,
   reAnswer,
   removeFailed,
@@ -114,6 +115,7 @@ import {
   type MemoryRun,
 } from "@/features/memory/flow";
 import { nextRev, revOf } from "@/lib/rev";
+import { debugLog, sessionSummary } from "@/lib/debug";
 import { normalizeMemoryProgressMap } from "@/features/memory/normalize";
 import {
   createLearningSession,
@@ -306,6 +308,10 @@ export class MemorySession extends ProgressSessionBase {
       const disk = next.memory?.sessions;
       const sessions =
         this.run === "idle" ? disk : mergeSessions(this.savedSessions, disk);
+      // 记忆模式的 `activePool` 是**运行态**：盘上那份永远是空池子，
+      // 同步写回的那份（合并结果）也恒为 `[]`。直接整份替换会把正在用的池子
+      // 抹掉——学习轮因此丢掉轮内连对，复习轮因此把整条队列判成"不在池子里"。
+      const runtimePool = this.appState.activePool;
 
       this.appState = next;
       this.savedSessions = sessions;
@@ -316,7 +322,21 @@ export class MemorySession extends ProgressSessionBase {
       this.reviewSessionDay = sessions?.review?.day ?? null;
       this.reviewSessionRev = sessions?.review?.rev ?? 0;
 
+      if (this.run === "learning") {
+        // 池子由**本轮**重建：成员跟着新的 `round` 走，连对计数沿用内存里那份。
+        // 这一步同时把「合并后本轮已经学掉的卡」摘出去。
+        this.appState = { ...this.appState, activePool: runtimePool };
+        this.syncPoolToRound();
+      }
+
       if (this.run === "reviewing") this.adoptReviewSession(sessions?.review);
+
+      debugLog(
+        "session:reload",
+        `run=${this.run} disk:${sessionSummary({ memory: { sessions: disk } })}` +
+          ` merged:${sessionSummary({ memory: { sessions } })}` +
+          ` queue:${queueOf(this.flow).length}`,
+      );
     } finally {
       this.isReloading = false;
     }
@@ -339,19 +359,16 @@ export class MemorySession extends ProgressSessionBase {
       queue.push(id);
     }
 
-    const current = cardIdOf(this.flow);
-    this.flow = beginReviewRun(queue, {
+    // **只换记账，不动屏上那张卡**：用户正在答的那道题、已经选好的自评都不该
+    // 因为一次同步跳一下。远端新过关的卡从队列里剔掉，新到期的补到队尾。
+    this.flow = patchReview(this.flow, {
       target: { ...session.targets },
       reviewed: [...session.doneIds],
       touched: [...session.touchedIds],
       failed: [...session.failed],
       streaks: { ...session.streaks },
     });
-    if (current && queue.includes(current)) {
-      this.flow = showCard(this.flow, current);
-    } else {
-      this.selectNext();
-    }
+    this.flow = replaceQueue(this.flow, queue);
   }
 
   // ── ProgressSessionBase 的四个挂钩 ──────────────────────────────────
@@ -378,6 +395,16 @@ export class MemorySession extends ProgressSessionBase {
   /** 本轮是否正在进行（首页为 false）。键盘层用它决定 Esc 是否生效。 */
   get isSessionActive(): boolean {
     return runKindOf(this.flow) !== "idle";
+  }
+
+  /**
+   * 屏上有没有**用户已经投入过**的东西（同步要覆盖本地前的唯一判据）。
+   *
+   * 记忆模式的一轮本身就是"投入"：队列、当前卡、连对都在这份会话里，
+   * 覆盖会把它换掉。首页（`idle`）则没有任何东西可丢，云端更新直接落地。
+   */
+  get hasWorkInProgress(): boolean {
+    return this.run !== "idle";
   }
 
   /**
@@ -762,7 +789,6 @@ export class MemorySession extends ProgressSessionBase {
       this.learningSessionId = createSessionId();
       this.learningSessionDay = dayKeyOf(this.now);
       this.learningSessionRev = nextRev(
-        Date.now(),
         this.savedSessions?.learning?.rev ?? 0,
       );
     } else if (stored) {
@@ -912,14 +938,14 @@ export class MemorySession extends ProgressSessionBase {
       const rolled = rolloverReviewSession(stored, today, dueIds);
       session = createReviewSession({
         ...rolled,
-        rev: nextRev(Date.now(), rolled.rev),
+        rev: nextRev(rolled.rev),
       });
     } else {
       // 没有记录（或时钟偏快留下的未来记录）：新建今天这一份。
       session = createReviewSession({
         day: today,
         queue: shuffle(dueIds),
-        rev: nextRev(Date.now(), stored?.rev ?? 0),
+        rev: nextRev(stored?.rev ?? 0),
       });
     }
 
@@ -1165,7 +1191,7 @@ export class MemorySession extends ProgressSessionBase {
         streaks,
         currentId: review.currentId === id ? null : review.currentId,
         // 标熟也是今天这一轮的变化：带上新 `rev`，否则同步时会被旧快照盖掉
-        rev: nextRev(Date.now(), review.rev),
+        rev: nextRev(review.rev),
       },
     };
   }
@@ -1263,8 +1289,19 @@ export class MemorySession extends ProgressSessionBase {
   /**
    * 选下一题；队列空了就结束本次会话。
    *
-   * 队列和 `activePool` 必须保持一致：卡片毕业（进入复习中）后就会离开
-   * activePool，所以这里跳过已经不在池子里的题，避免刚毕业的卡又被抽出来。
+   * **「这道卡还能不能出」只看会话事实，不看 `activePool`。**
+   *
+   *   - 复习：在 `review.reviewed`（今天已过关）里的跳过；
+   *   - 学习：在 `round.masteredIds`（本轮已掌握）里的跳过；
+   *   - 题目被删 / id 改了 → `lookupQuestion` 为空。
+   *
+   * 以前这里要求「id 必须还在 `activePool` 里」。可 `activePool` 在记忆模式是
+   * **运行态**：不落盘（`save()` 永远写空池子）、合并结果里恒为空
+   * （`mergeBankState` 有意置 `[]`）。于是任何一次「同步写回 → 重读盘上那份」
+   * 都会把池子清空，队列里每一张卡都被判成"不在池子里"逐个丢弃——
+   * 表现就是「刚点完『现在合并』，点『下一题』直接说今天复习完了」。
+   *
+   * 池子不是第二份真相，就不该拿它当出题判据。
    */
   selectNext(): void {
     const next = queueOf(this.flow)[0];
@@ -1273,8 +1310,11 @@ export class MemorySession extends ProgressSessionBase {
       return;
     }
 
-    const inPool = this.appState.activePool.some((item) => item.id === next);
-    const question = inPool ? this.lookupQuestion(next) : null;
+    const settled =
+      this.run === "reviewing"
+        ? (reviewOf(this.flow)?.reviewed.includes(next) ?? false)
+        : (this.round?.masteredIds.includes(next) ?? false);
+    const question = settled ? null : this.lookupQuestion(next);
 
     if (!question) {
       this.flow = dropQueueHead(this.flow);
@@ -1681,7 +1721,7 @@ export class MemorySession extends ProgressSessionBase {
    *
    * **这里是进度写入的唯一收口，也是唯一盖修订戳的地方**（见 `src/lib/rev.ts`）。
    * 盖戳的基准取"本机见过的同一条卡的最大戳"（本地那份与本次要写的那份取大），
-   * 这样本机钟慢于对端时，本机的新改动也不会被判成旧改动。
+   * 计数逐个递增——**不读墙上时钟**，所以两台设备的钟谁快谁慢都不影响次序。
    *
    * 注意：**从云端拉回来 / 合并出来的那份不走这里**（`sync/apply` 直接落盘），
    * 否则两台设备各盖各的戳，同样的内容会算出不同状态，永远收敛不了。
@@ -1693,7 +1733,7 @@ export class MemorySession extends ProgressSessionBase {
   ): MemoryStoredState {
     const stamped: MemoryProgress = {
       ...progress,
-      rev: nextRev(Date.now(), Math.max(revOf(base.memory?.progress?.[id]), revOf(progress))),
+      rev: nextRev(Math.max(revOf(base.memory?.progress?.[id]), revOf(progress))),
     };
     return this.memorySection(base, {
       progress: { ...(base.memory?.progress ?? {}), [id]: stamped },
@@ -1800,7 +1840,7 @@ export class MemorySession extends ProgressSessionBase {
       activePool: [],
       settings: this.appState.settings,
       // 重置的墓碑戳：没有它，另一台设备同步时会把旧进度并集回来
-      resetRev: nextRev(Date.now(), this.appState.resetRev ?? 0),
+      resetRev: nextRev(this.appState.resetRev ?? 0),
       memory: {
         progress: {},
         settings: this.memorySettings,
@@ -1893,7 +1933,7 @@ export class MemorySession extends ProgressSessionBase {
         ...state,
         activePool: [],
         // 导入是「整段覆盖」：盖一个戳，别让云端的旧进度在下次同步时并集回来
-        resetRev: nextRev(Date.now(), this.appState.resetRev ?? 0),
+        resetRev: nextRev(this.appState.resetRev ?? 0),
         memory: state.memory ?? {
           progress: {},
           settings: this.memorySettings,
@@ -1975,10 +2015,7 @@ export class MemorySession extends ProgressSessionBase {
       sameRound && previous
         ? previous.day
         : this.learningSessionDay || dayKeyOf(this.now);
-    const rev = nextRev(
-      Date.now(),
-      Math.max(previous?.rev ?? 0, this.learningSessionRev),
-    );
+    const rev = nextRev(Math.max(previous?.rev ?? 0, this.learningSessionRev));
 
     this.learningSessionId = id;
     this.learningSessionDay = day;
@@ -2004,10 +2041,7 @@ export class MemorySession extends ProgressSessionBase {
     if (!review) return previous;
 
     const day = this.reviewSessionDay ?? dayKeyOf(this.now);
-    const rev = nextRev(
-      Date.now(),
-      Math.max(previous?.rev ?? 0, this.reviewSessionRev),
-    );
+    const rev = nextRev(Math.max(previous?.rev ?? 0, this.reviewSessionRev));
     this.reviewSessionDay = day;
     this.reviewSessionRev = rev;
 
