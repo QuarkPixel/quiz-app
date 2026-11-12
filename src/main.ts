@@ -1,6 +1,6 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
-import { installDebugConsoleCommands } from "./debug";
+import { installDebugConsoleCommands } from "@/lib/debug";
 import { installStorageHook } from "./features/sync/storage";
 import { syncEngine } from "./features/sync/engine.svelte";
 

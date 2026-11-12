@@ -4,7 +4,7 @@
 
 import type { Question, RuntimeState, ActivePoolItem, Stats } from "./types";
 import { createActivePoolItem, filterQuestions } from "./store";
-import { isDebugModeEnabled } from "./debug";
+import { debugOn } from "./lib/debug";
 import { nextRev } from "./lib/rev";
 
 interface WeightedPoolItem {
@@ -50,7 +50,7 @@ function logWeightDistribution(
   weights: WeightedPoolItem[],
   currentRound: number,
 ): void {
-  if (!isDebugModeEnabled()) return;
+  if (!debugOn()) return;
 
   console.groupCollapsed(
     "%cWeight Distribution %c(Round: %s)",
@@ -229,7 +229,7 @@ export function processAnswer(
   const item = { ...newState.activePool[itemIndex] };
   item.hasBeenShown = true;
   item.lastSelectedRound = newState.currentRound;
-  item.rev = nextRev(Date.now(), item.rev ?? 0);
+  item.rev = nextRev(item.rev ?? 0);
 
   if (isCorrect) {
     item.consecutiveCorrect++;

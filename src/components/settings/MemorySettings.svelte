@@ -19,7 +19,7 @@
     import IconRefresh from "@tabler/icons-svelte/icons/refresh";
     import IconPlus from "@tabler/icons-svelte/icons/plus";
     import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
-    import { isDebugModeEnabled } from "@/debug";
+    import { debugOn } from "@/lib/debug";
     import IconCopy from "@tabler/icons-svelte/icons/copy";
     import IconClipboard from "@tabler/icons-svelte/icons/clipboard";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
@@ -232,7 +232,7 @@
     <Separator />
 
     <!-- ── 调试区：只在 dev 模式显示（删掉 devClock.ts 时连同这一段一起删） ── -->
-    {#if isDebugModeEnabled()}
+    {#if debugOn()}
         <SettingsSection title="时间修改">
             <div class="flex items-center justify-between gap-3">
                 <Label for="memory-debug-day" class="text-sm font-normal">
