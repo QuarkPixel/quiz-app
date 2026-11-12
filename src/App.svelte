@@ -8,13 +8,13 @@
     import AlertToast from "./components/layout/AlertToast.svelte";
     import Sidebar from "./components/layout/Sidebar.svelte";
     import HeaderSidebarTrigger from "./components/layout/HeaderSidebarTrigger.svelte";
+    import SyncPromptDialog from "./components/settings/SyncPromptDialog.svelte";
     import * as SidebarUI from "$lib/components/ui/sidebar";
 
     import { createSource } from "./source";
     import { provideQuizSource } from "./source/context";
     import type { Bank } from "./source/types";
     import { provideRouter, router } from "./features/routing/context";
-    import { watchPageVisibility } from "./features/userActivity.svelte";
     import SwapFade from "./components/shared/SwapFade.svelte";
     import { SWAP_MS } from "./config";
     import IconFishBoneFilled from "@tabler/icons-svelte/icons/fish-bone-filled";
@@ -38,9 +38,6 @@
     // 打开页面先把 URL 与本地记录对一次账：没有参数的地址 → 跳到本地记着的题库
     // （`#/<hash>`），记忆模式还会带上 `/learn`、`/review` 那一层。
     router.start(source);
-
-    // 「页面在后台」也算「现在不能打断」：挂起的同步刷新等回到前台再补
-    onMount(watchPageVisibility);
 
     // 按题库模式收窄：quiz 走刷题模式答题流；memory 走记忆模式的卡片流。
     const quizBank = $derived(activeBank?.mode === "quiz" ? activeBank : null);
@@ -106,3 +103,9 @@
 
 <!-- 全局提示：整个应用只有这一份（挂在弹窗之外，所以不会被 Dialog 夹住） -->
 <AlertToast />
+
+<!--
+    同步唯一会打断用户的地方：冲突裁决 / 正在做题时的云端覆盖确认。
+    挂在应用级而不是某个视图里——同步可能在首页、设置面板或任何地方跑完。
+-->
+<SyncPromptDialog />

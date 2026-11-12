@@ -1,18 +1,29 @@
 /**
  * 计划器：把「本地有什么 / 云端有什么 / 上次同步时是什么样」算成一份计划。
  *
- * 从旧的 `merge.ts` 拆出来（那个文件 1000 多行，合并 / 计划 / general / 云端解析
- * 全混在一起）。**纯函数**：不碰网络、不碰 localStorage——这是整个同步里最需要
- * 被测试、也最容易出错的一段，搞错了就是静默覆盖用户数据。
+ * **纯函数**：不碰网络、不碰 localStorage——这是整个同步里最需要被测试、
+ * 也最容易出错的一段，搞错了就是静默覆盖用户数据。
  *
- * 判定结果**不再被调用方改写**：`judgeBank` 只回答「往哪个方向走」，完整决定由
- * `plan.ts` 的 `decideBank` 一次给出（见那个文件的文件头）。
+ * 每个题库"做什么"只有一处决定：`decision.ts` 的 `decideBankSync`。这个文件
+ * 只负责把那些决定装进计划、并算出"哪些分片要重建上传 / 哪些云端文件该回收"。
+ * 旧版在这里还会按 mtime 改判一次，于是同一份数据能算出两个方向——不要再来一遍。
  */
 
 import { stableHash, type BankRecord, type CollectedState } from "./collect";
+import { decideBankSync } from "./decision";
+import { debugLog, sessionSummary } from "@/lib/debug";
 import { mergeGeneral, sameSettings } from "./general";
-import { decideBank } from "./plan";
-import type { BankActionKind } from "./types";
+import type {
+  BankAction,
+  ConflictResolution,
+  GeneralSnapshot,
+  RemoteBank,
+  RemoteState,
+  SyncMeta,
+  SyncPlan,
+  SyncRowMeta,
+} from "./types";
+import { actionUploads } from "./types";
 
 import { bankContentHashInRemoteFiles, remoteJunkFiles } from "./remote";
 import {
@@ -20,15 +31,6 @@ import {
   shardFileName,
   shardIndexFromFileName,
   shardIndexOf,
-  type BankAction,
-  type BankVerdict,
-  type ConflictResolution,
-  type GeneralSnapshot,
-  type RemoteBank,
-  type RemoteState,
-  type SyncMeta,
-  type SyncPlan,
-  type SyncRowMeta,
 } from "./types";
 
 export function emptyPlan(general: GeneralSnapshot): SyncPlan {
@@ -47,238 +49,70 @@ export function emptyPlan(general: GeneralSnapshot): SyncPlan {
 }
 
 /**
- * 这份快照「没有进度」吗。
+ * 单个题库这一轮做什么。
  *
- * `null` 与 `undefined` 必须当成**同一件事**，别只判 `undefined`：
- *
- *   - `bankProgressHash` 用 `state ?? null` 归一（两者算出同一个哈希），
- *     `progressMerge` 的 `stateOf` 用 `asRecord`（`null` → `undefined`）——
- *     那两处都把它们当「没有进度」；
- *   - 但 `writeBankLocally` 会把 `null` 原样 `JSON.stringify` 成字符串 `"null"`
- *     写进 localStorage，于是这份「空进度」会一路传到云端、再传回来。
- *
- * 判定这里漏掉 `null` 的后果很具体：「本地没进度、云端有进度」会被读成
- * 「本地有进度」，于是走 `push`，**把云端那份真进度覆盖成空**。
+ * 判定需要的每一样东西都从**内容**来：两边的题目 / 进度哈希、上次同步时的
+ * 快照与内容哈希。`localAt` 只带进 `BankAction` 供展示，**不参与判定**。
  */
-function hasNoState(bank: { snapshot: { state?: unknown } }): boolean {
-  return bank.snapshot.state == null;
-}
-
-/**
- * 单个题库的三方判定。
- *
- * `baseline` 是「上次同步时这一行是什么」：新格式是题库行（`bank:<hash>`），
- * 老格式只有分片文件的元数据（`banks-3.json`）——升级上来的设备第一次同步
- * 还能拿它当兜底基准，不然后面那些判定全都没有参照物。
- */
-
-export function judgeBank(params: {
+function actionOf(params: {
+  hash: string;
+  name: string;
   local?: BankRecord;
   remote?: RemoteBank;
-  /** 题库行的基准（新格式） */
   row?: SyncRowMeta;
-  /** 该题库所在分片文件的基准（老格式兜底） */
-  fileRow?: SyncRowMeta;
-  /** 云端那个分片文件当前的内容哈希（配合 fileRow 判断「云端改过没有」） */
-  remoteFileHash?: string;
-  /**
-   * 云端那份**该题库**的内容哈希（只含题目 + 模式）。
-   *
-   * 「只有本地有」时才有意义：`remote` 为 undefined 只能说明**当前**云端解析出来的
-   * 题库表里没有它，但为了判断「云端是删了它、还是改了它」，调用方可以从云端分片
-   * 快照里再查一次（改过题目但同片的其它题库仍在时，它仍会在分片里）。
-   * 查不到就是 `undefined` = 云端确实没有它。
-   */
-  remoteBankContentHash?: string;
-}): BankVerdict {
-  const { local, remote, row, fileRow, remoteFileHash, remoteBankContentHash } =
-    params;
+  /** 云端分片里这个题库的内容哈希（判断"云端改过还是删了"） */
+  cloudContentHash?: string;
+}): BankAction {
+  const { hash, name, local, remote, row, cloudContentHash } = params;
+  const decision = decideBankSync({
+    local:
+      local === undefined
+        ? undefined
+        : {
+            contentHash: local.contentHash,
+            progressHash: local.progressHash,
+            snapshot: local.snapshot,
+            hasState: local.snapshot.state != null,
+          },
+    remote:
+      remote === undefined
+        ? undefined
+        : {
+            contentHash: remote.contentHash,
+            progressHash: remote.progressHash,
+            snapshot: remote.snapshot,
+            hasState: remote.snapshot.state != null,
+          },
+    baseSnapshot: row?.snapshot,
+    baseContentHash: row?.contentHash,
+    cloudContentHash,
+    hadBaseline: row !== undefined,
+  });
 
-  // ── 两边都有 ──
-  if (local && remote) {
-    // ① **题目一模一样**：这一轮没有任何需要裁决的东西，只看进度怎么合
-    //
-    //    进度不参与「内容冲突」的判定是有意的：两台设备先后做同一份题库是
-    //    最日常的用法，判成冲突再让人二选一，等于必然丢掉一边的进度。
-    if (local.contentHash === remote.contentHash) {
-      if (local.progressHash === remote.progressHash) return "skip";
-
-      const baseline = row ?? fileRow;
-      if (baseline === undefined) {
-        // 第一次接上这个云端（没有任何基准）：
-        //   - 本地没进度 → 听云端的
-        //   - 本地有进度 → 推上去（别白丢本地那份），顺带把基准立起来
-        return hasNoState(local) ? "pull" : "push";
-      }
-      // 本地没动过 → 跟着云端那份进度走
-      if (local.localAt <= baseline.syncedAt) return "pull";
-      // 两边都动过 → 按卡合并（合并结果由 `buildSyncPlan` 生成后交给引擎）
-      return "push";
-    }
-
-    // ② 题目不一样：按两个信号判谁改过
-    const baseline = row ?? fileRow;
-    if (baseline === undefined) {
-      // 没有任何基准（这台设备第一次接上这个云端，而且两边都已经有这份题库）。
-      // 先看有没有「空的一边」可以安全地让路，再退到让用户裁决。
-      const localHasState = !hasNoState(local);
-      const remoteHasState = !hasNoState(remote);
-      if (!localHasState && remoteHasState) return "pull";
-      if (localHasState && !remoteHasState) return "push";
-      return "conflict";
-    }
-
-    const localChanged = local.localAt > baseline.syncedAt;
-    // 老格式只有文件级的哈希：文件没变就说明云端这个题库也没变。
-    // 题库行的基准优先读 `contentHash`（只含题目），读不到才退回 `remoteHash`
-    // ——老记账里那个字段正好就是内容哈希。
-    const baselineContentHash = row ? (row.contentHash ?? row.remoteHash) : undefined;
-    const remoteChanged =
-      baselineContentHash !== (row ? remote.contentHash : remoteFileHash);
-
-    if (localChanged && remoteChanged) return "conflict";
-    if (localChanged) return "push";
-    if (remoteChanged) return "pull";
-    // 题目不同、两边按基准看都没动过：老格式的文件级基准才会走到这里
-    // （同片的别的题库动过就会让文件哈希变，从而两边都"动过"）。
-    // 这时以本地为准——总比永远跳过、差异一直摆在那里强。
-    return "push";
+  // 诊断：只在这一轮真要做点什么时说一句（`in-sync` 太吵）。
+  // 三侧会话摘要能直接回答「云端到底有没有新进度」。
+  if (decision.kind !== "in-sync") {
+    debugLog(
+      "sync:decide",
+      `${name}(${hash.slice(0, 4)}) → ${decision.kind} — ${decision.reason}` +
+        ` | local:${sessionSummary(local?.snapshot.state)}` +
+        ` remote:${sessionSummary(remote?.snapshot.state)}` +
+        ` base:${sessionSummary((row?.snapshot as { state?: unknown } | undefined)?.state)}`,
+    );
   }
 
-  // ── 只有本地有 ──
-  if (local && !remote) {
-    // 有题库行的基准 = 上次同步时它还在云端。但**删除不能压过编辑**：
-    // 只有「云端相对基准也没动」才说明那边真的只是删了。
-    //
-    // 判据用基准行里记的**题库内容哈希**（`contentHash`，只含题目 + 模式）。
-    // 老格式只有分片文件的 `remoteHash`，跟单个题库不是一个口径，比不出结论
-    // ——那种情况按「纯删除」处理（与改动前一致），不冒险报假冲突。
-    //
-    // 云端那个题库的内容哈希 `remoteBankContentHash` 由调用方从**当前云端分片**
-    // 里取（题库已经不在云端了时是 undefined = 云端确实没有它 = 真删除）。
-    if (row !== undefined) {
-      const cloudChanged =
-        row.contentHash !== undefined &&
-        remoteBankContentHash !== undefined &&
-        row.contentHash !== remoteBankContentHash;
-      return cloudChanged ? "conflict" : "deleteLocal";
-    }
-    return "push";
-  }
-
-  // ── 只有云端有 ──
-  if (!local && remote) {
-    // 本地没有它：可能是「这台设备删了它」，也可能是「别的设备新导入的」
-    // （后者没有基准行，走下面的 `pull`）。
-    //
-    // 有基准行时**不能直接删**：还得看云端那份相对基准动过没有。
-    //   - 没动过 → 本地确实只是删了它 → 回收云端那一份（正常删除传播）
-    //   - 动过   → 云端在基准之后被改过（例如另一台设备改了题目），
-    //              这时删掉就是「删除压过编辑」，必须让用户裁决
-    //
-    // 判据用**题库内容哈希**（`contentHash`，只含题目 + 模式）。老格式只有分片
-    // 文件的 `remoteHash`，跟单个题库不是一个口径，比不出结论——那种情况按
-    // 「纯删除」处理（与改动前一致），不冒险报假冲突。
-    if (row !== undefined) {
-      const cloudChanged =
-        row.contentHash !== undefined &&
-        remote.contentHash !== row.contentHash;
-      return cloudChanged ? "conflict" : "deleteRemote";
-    }
-    return "pull";
-  }
-
-  return "skip";
+  return {
+    hash,
+    name,
+    kind: decision.kind,
+    localHash: local?.contentHash,
+    remoteHash: remote?.contentHash,
+    localAt: local?.localAt ?? 0,
+    ...(decision.merged === undefined ? {} : { merged: decision.merged }),
+    ...(decision.progressMerged ? { progressMerged: true } : {}),
+    reason: decision.reason,
+  };
 }
-
-export function forcePushPlan(
-  local: CollectedState,
-  remote: RemoteState,
-  _meta: SyncMeta,
-): SyncPlan {
-  const plan = emptyPlan(local.general);
-  for (const bank of local.banks.values()) {
-    plan.actions.push({
-      hash: bank.hash,
-      name: bank.snapshot.name,
-      verdict: "push",
-      kind: "skip",
-      upload: true,
-      localHash: bank.contentHash,
-      remoteHash: remote.banks.get(bank.hash)?.contentHash,
-      localAt: bank.localAt,
-    });
-  }
-  for (const bank of remote.banks.values()) {
-    if (local.banks.has(bank.hash)) continue;
-    plan.actions.push({
-      hash: bank.hash,
-      name: bank.name,
-      verdict: "deleteRemote",
-      kind: "deleteRemote",
-      upload: true,
-      remoteHash: bank.contentHash,
-      localAt: 0,
-    });
-  }
-  plan.generalPush = true;
-  // 云端原来那份设置会被本地这份盖掉（云端还没有 general 时不算「变了」）
-  plan.settingsChanged =
-    remote.general !== null && !sameSettings(plan.general, remote.general);
-  plan.pushShards = shardsToPush(plan.actions, []);
-  plan.remoteShards = [...remote.shardBanks].map(([index, banks]) => ({
-    name: shardFileName(index),
-    banks,
-  }));
-  plan.remoteJunkFiles = remoteJunkFiles(remote);
-  plan.deleteRemoteFiles = emptyRemoteFiles(
-    plan.actions,
-    remote.shardBanks,
-    plan.remoteJunkFiles,
-    [],
-  );
-  return plan;
-}
-
-/** 「用云端覆盖本地」：无条件把云端全部拉下来，本地多出来的题库删掉。 */
-export function forcePullPlan(
-  local: CollectedState,
-  remote: RemoteState,
-  _meta: SyncMeta,
-): SyncPlan {
-  const plan = emptyPlan(remote.general ?? local.general);
-  for (const bank of remote.banks.values()) {
-    plan.actions.push({
-      hash: bank.hash,
-      name: bank.name,
-      verdict: "pull",
-      kind: "download",
-      upload: false,
-      localHash: local.banks.get(bank.hash)?.contentHash,
-      remoteHash: bank.contentHash,
-      localAt: local.banks.get(bank.hash)?.localAt ?? 0,
-    });
-  }
-  for (const bank of local.banks.values()) {
-    if (remote.banks.has(bank.hash)) continue;
-    plan.actions.push({
-      hash: bank.hash,
-      name: bank.snapshot.name,
-      verdict: "deleteLocal",
-      kind: "deleteLocal",
-      upload: false,
-      localHash: bank.contentHash,
-      localAt: bank.localAt,
-    });
-  }
-  // 云端为准：不回推 general，但要把合并后的 general 落到本地
-  plan.generalChangedLocal = true;
-  // 本地这份设置会被云端那份盖掉
-  plan.settingsChanged = !sameSettings(local.general, plan.general);
-  return plan;
-}
-
-/** 云端那些「不是我们的分片文件」：旧格式残留 + 认不出来的文件。 */
 
 export function buildSyncPlan(params: {
   local: CollectedState;
@@ -286,29 +120,6 @@ export function buildSyncPlan(params: {
   meta: SyncMeta;
 }): SyncPlan {
   const { local, remote, meta } = params;
-
-  const fileBaselineOf = (hash: string): SyncRowMeta | undefined => {
-    const index = remote.banks.get(hash)?.shard;
-    const fromRemote =
-      index === undefined ? undefined : meta.rows[shardFileName(index)];
-    if (fromRemote !== undefined) return fromRemote;
-    const localIndex = local.banks.get(hash)?.shard;
-    return localIndex === undefined ? undefined : meta.rows[shardFileName(localIndex)];
-  };
-
-  /**
-   * 三方合并要的那份「上次同步成功时这个题库长什么样」。
-   *
-   * 题库行优先，但**它没有快照时退回任何一个有快照的行**（老格式的文件行、
-   * 或者升级上来还没有快照的题库行）。没有它，`mergeBankSnapshots` 只能退化成
-   * 「两边各取更靠前的」——同一张卡上「一边答对推进、另一边答错归零」这类
-   * 情形就会合错（真踩过：合并之后掌握档位被另一边拖回去）。
-   */
-  const baseSnapshotOf = (hash: string): unknown => {
-    const row = meta.rows[bankRowKey(hash)];
-    if (row?.snapshot !== undefined) return row.snapshot;
-    return fileBaselineOf(hash)?.snapshot;
-  };
 
   const actions: BankAction[] = [];
   const hashes = new Set<string>([
@@ -319,64 +130,28 @@ export function buildSyncPlan(params: {
   for (const hash of hashes) {
     const localBank = local.banks.get(hash);
     const remoteBank = remote.banks.get(hash);
-    const judged = judgeBank({
-      local: localBank,
-      remote: remoteBank,
-      row: meta.rows[bankRowKey(hash)],
-      fileRow: fileBaselineOf(hash),
-      remoteFileHash:
-        remoteBank === undefined
-          ? undefined
-          : remote.files.find(
-              (file) => shardIndexFromFileName(file.name) === remoteBank.shard,
-            )?.hash,
-      // 「云端改过没有」要用**题库**的内容哈希。`remoteBank` 为 undefined 时
-      // 再从云端分片快照里找一次：那边可能改了题目（所以按题库表匹配不上），
-      // 但同片的快照里仍然有这个 hash。
-      remoteBankContentHash:
-        remoteBank?.contentHash ?? bankContentHashInRemoteFiles(remote, hash),
-    });
-
-    // 决定这一轮做什么。**「本地怎么改」与「要不要上传」是两个独立的问题**
-    // （见 `plan.ts` 的文件头：把它们混成一个 `verdict` 再让调用方改写，
-    // 就是上一个线上 bug 的根因），所以这里拿到的是一个完整的决定，不再事后修它。
-    const decision = decideBank({
-      judged,
-      local:
-        localBank === undefined
-          ? undefined
-          : { contentHash: localBank.contentHash, snapshot: localBank.snapshot },
-      remote:
-        remoteBank === undefined
-          ? undefined
-          : { contentHash: remoteBank.contentHash, snapshot: remoteBank.snapshot },
-      base: baseSnapshotOf(hash),
-    });
-
-    const action: BankAction = {
-      hash,
-      name:
-        localBank?.snapshot.name ??
-        remoteBank?.name ??
-        "未命名题库",
-      verdict: judged,
-      localHash: localBank?.contentHash,
-      remoteHash: remoteBank?.contentHash,
-      localAt: localBank?.localAt ?? 0,
-      // `verdict` 保持 `judgeBank` 的原话（往哪个方向走），
-      // 「要不要上传」与「合并出来的那份」由 `decideBank` 单独给出。
-      kind: decision.action,
-      upload: decision.upload,
-      ...(decision.merged === undefined ? {} : { merged: decision.merged }),
-      ...(decision.progressMerged ? { progressMerged: true } : {}),
-    };
-
-    actions.push(action);
+    actions.push(
+      actionOf({
+        hash,
+        name:
+          localBank?.snapshot.name ??
+          remoteBank?.name ??
+          "未命名题库",
+        local: localBank,
+        remote: remoteBank,
+        row: meta.rows[bankRowKey(hash)],
+        // `remoteBank` 为 undefined 时再从云端分片快照里找一次：那边可能改了
+        // 题目（所以按题库表匹配不上），但同片的快照里仍然有这个 hash。
+        cloudContentHash:
+          remoteBank?.contentHash ??
+          bankContentHashInRemoteFiles(remote, hash),
+      }),
+    );
   }
 
   actions.sort((a, b) => (a.hash < b.hash ? -1 : 1));
 
-  const conflicts = actions.filter((action) => action.verdict === "conflict");
+  const conflicts = actions.filter((action) => action.kind === "conflict");
   const general = mergeGeneral({
     local: local.general,
     remote: remote.general,
@@ -402,12 +177,11 @@ export function buildSyncPlan(params: {
       // 本地那份会被改写（设置从云端下来了），或者云端那份会被改写（本地设置推上去）
       !sameSettings(local.general, general) ||
       (remote.general !== null && !sameSettings(general, remote.general)),
-    pushShards: shardsToPush(actions, conflicts),
+    pushShards: shardsToPush(actions),
     deleteRemoteFiles: emptyRemoteFiles(
       actions,
       remote.shardBanks,
       remoteJunkFiles(remote),
-      conflicts,
     ),
     conflicts,
     remoteShards: [...remote.shardBanks].map(([index, banks]) => ({
@@ -418,25 +192,107 @@ export function buildSyncPlan(params: {
   };
 }
 
+export function forcePushPlan(
+  local: CollectedState,
+  remote: RemoteState,
+  _meta: SyncMeta,
+): SyncPlan {
+  const plan = emptyPlan(local.general);
+  for (const bank of local.banks.values()) {
+    plan.actions.push({
+      hash: bank.hash,
+      name: bank.snapshot.name,
+      kind: "upload",
+      localHash: bank.contentHash,
+      remoteHash: remote.banks.get(bank.hash)?.contentHash,
+      localAt: bank.localAt,
+      reason: "强制上传",
+    });
+  }
+  for (const bank of remote.banks.values()) {
+    if (local.banks.has(bank.hash)) continue;
+    plan.actions.push({
+      hash: bank.hash,
+      name: bank.name,
+      kind: "remove-remote",
+      remoteHash: bank.contentHash,
+      localAt: 0,
+      reason: "强制上传",
+    });
+  }
+  plan.generalPush = true;
+  // 云端原来那份设置会被本地这份盖掉（云端还没有 general 时不算「变了」）
+  plan.settingsChanged =
+    remote.general !== null && !sameSettings(plan.general, remote.general);
+  plan.pushShards = shardsToPush(plan.actions);
+  plan.remoteShards = [...remote.shardBanks].map(([index, banks]) => ({
+    name: shardFileName(index),
+    banks,
+  }));
+  plan.remoteJunkFiles = remoteJunkFiles(remote);
+  plan.deleteRemoteFiles = emptyRemoteFiles(
+    plan.actions,
+    remote.shardBanks,
+    plan.remoteJunkFiles,
+  );
+  return plan;
+}
+
+/** 「用云端覆盖本地」：无条件把云端全部拉下来，本地多出来的题库删掉。 */
+export function forcePullPlan(
+  local: CollectedState,
+  remote: RemoteState,
+  _meta: SyncMeta,
+): SyncPlan {
+  const plan = emptyPlan(remote.general ?? local.general);
+  for (const bank of remote.banks.values()) {
+    plan.actions.push({
+      hash: bank.hash,
+      name: bank.name,
+      kind: "download",
+      localHash: local.banks.get(bank.hash)?.contentHash,
+      remoteHash: bank.contentHash,
+      localAt: local.banks.get(bank.hash)?.localAt ?? 0,
+      reason: "强制下载",
+    });
+  }
+  for (const bank of local.banks.values()) {
+    if (remote.banks.has(bank.hash)) continue;
+    plan.actions.push({
+      hash: bank.hash,
+      name: bank.snapshot.name,
+      kind: "remove-local",
+      localHash: bank.contentHash,
+      localAt: bank.localAt,
+      reason: "强制下载",
+    });
+  }
+  // 云端为准：不回推 general，但要把合并后的 general 落到本地
+  plan.generalChangedLocal = true;
+  // 本地这份设置会被云端那份盖掉
+  plan.settingsChanged = !sameSettings(local.general, plan.general);
+  return plan;
+}
+
 /**
  * 哪些分片需要重建上传。
  *
  * **含未裁决冲突的分片一律不动**：分片是整体上传的，为了传同一片里的另一个
  * 题库而把它一起推上去，就等于替用户选了「保留本地」。
  */
-function shardsToPush(
-  actions: readonly BankAction[],
-  conflicts: readonly BankAction[],
-): number[] {
-  const blocked = new Set(conflicts.map((action) => action.hash));
+export function shardsToPush(actions: readonly BankAction[]): number[] {
+  const blocked = new Set(
+    actions
+      .filter((action) => action.kind === "conflict")
+      .map((action) => shardIndexOf(action.hash)),
+  );
   const indexes = new Set<number>();
   for (const action of actions) {
-    // 按 `upload` 而不是 `verdict`：判定 pull 但"本地手里那份云端没有"时同样要传
-    if (!action.upload) continue;
-    if (blocked.has(action.hash)) continue;
-    indexes.add(shardIndexOfHash(action.hash));
+    if (!actionUploads(action)) continue;
+    const index = shardIndexOf(action.hash);
+    if (blocked.has(index)) continue;
+    indexes.add(index);
   }
-  for (const hash of blocked) indexes.delete(shardIndexOfHash(hash));
   return [...indexes].sort((a, b) => a - b);
 }
 
@@ -450,16 +306,22 @@ function emptyRemoteFiles(
   actions: readonly BankAction[],
   shardBanks: ReadonlyMap<number, readonly string[]>,
   junk: readonly string[],
-  conflicts: readonly BankAction[],
 ): string[] {
-  const conflicted = new Set(conflicts.map((action) => action.hash));
+  const conflicted = new Set(
+    actions
+      .filter((action) => action.kind === "conflict")
+      .map((action) => action.hash),
+  );
+  // 「这一轮结束后还会留在云端」的题库：in-sync / upload / download / reconcile。
+  // `remove-*` 都不留（一个删本地、一个删云端），冲突由上面单独冻结。
   const alive = new Set(
     actions
       .filter(
         (action) =>
-          action.verdict === "skip" ||
-          action.verdict === "push" ||
-          action.verdict === "pull",
+          action.kind === "in-sync" ||
+          action.kind === "upload" ||
+          action.kind === "download" ||
+          action.kind === "reconcile",
       )
       .map((action) => action.hash),
   );
@@ -475,12 +337,6 @@ function emptyRemoteFiles(
   return [...new Set(files)].sort();
 }
 
-function shardIndexOfHash(hash: string): number {
-  return shardIndexOf(hash);
-}
-
-// ── general 的逐字段合并 ────────────────────────────────────────────────────
-
 export function planIsEmpty(plan: SyncPlan): boolean {
   return (
     !plan.generalPush &&
@@ -488,7 +344,7 @@ export function planIsEmpty(plan: SyncPlan): boolean {
     plan.deleteRemoteFiles.length === 0 &&
     plan.pushShards.length === 0 &&
     plan.actions.every(
-      (action) => action.verdict === "skip" || action.verdict === "conflict",
+      (action) => action.kind === "in-sync" || action.kind === "conflict",
     )
   );
 }
@@ -497,13 +353,11 @@ export function planIsEmpty(plan: SyncPlan): boolean {
  * 按用户的选择把冲突裁决掉：`keepLocal` 推、`keepRemote` 拉。
  *
  * `resolutions` 是「用户已经答过的那些题库 → 他的选择」，**按题库 hash 逐个**
- * 应用，而不是一刀切：
- *   - 用户只可能对他**看见过**的那些冲突做选择（面板上列的就是它们）；
- *   - 两次同步之间又冒出来的新冲突必须继续问，绝不能被上一次的答案顺手带走。
+ * 应用，而不是一刀切：用户只可能对他**看见过**的那些冲突做选择，两次同步之间
+ * 又冒出来的新冲突必须继续问。
  *
  * 裁决完要**重算** `pushShards` / `deleteRemoteFiles`——之前因为冲突而整片
- * 冻结的分片，现在可以动了。计划里带着云端分片的现状，所以这一步不需要
- * 再拿到 `RemoteState`。
+ * 冻结的分片，现在可以动了。
  */
 export function applyResolution(
   plan: SyncPlan,
@@ -513,11 +367,21 @@ export function applyResolution(
 
   const actions = plan.actions.map((action) => {
     const resolution = resolutions.get(action.hash);
-    if (resolution === undefined) return action;
-    const wanted: BankVerdict = resolution === "keepLocal" ? "push" : "pull";
+    if (resolution === undefined || action.kind !== "conflict") return action;
     // 裁决之后不再合并：保留本地就是原样上传，保留云端就是原样下载
-    const kind: BankActionKind = wanted === "push" ? "skip" : "download";
-    return { ...action, verdict: wanted, kind, upload: wanted === "push", merged: undefined };
+    return resolution === "keepLocal"
+      ? {
+          ...action,
+          kind: "upload" as const,
+          merged: undefined,
+          reason: "用户选择保留本地",
+        }
+      : {
+          ...action,
+          kind: "download" as const,
+          merged: undefined,
+          reason: "用户选择保留云端",
+        };
   });
 
   const shardBanks = new Map<number, string[]>();
@@ -526,27 +390,24 @@ export function applyResolution(
     if (index !== null) shardBanks.set(index, shard.banks);
   }
 
-  // 还剩没裁决的（用户没见过的新冲突）就继续留着，由调用方决定怎么办
-  const conflicts = actions.filter((action) => action.verdict === "conflict");
+  const conflicts = actions.filter((action) => action.kind === "conflict");
 
   return {
     ...plan,
     actions,
     conflicts,
-    pushShards: shardsToPush(actions, conflicts),
+    pushShards: shardsToPush(actions),
     deleteRemoteFiles: emptyRemoteFiles(
       actions,
       shardBanks,
       plan.remoteJunkFiles,
-      conflicts,
     ),
   };
 }
 
-// ── 把云端的文件解成 RemoteState ────────────────────────────────────────────
-
 /**
- * 从 Gist 文件组装云端状态。
+ * 计划里会不会写本机的题库进度（供引擎在"用户正在做题"时让路）。
  *
- * 认不出来的文件（不是我们的格式）一律跳过，只留个名字——绝不按猜测去动它。
+ * 直接按 `actionWritesLocal(kind)` 过滤，不另存一个"要写本地"的布尔——
+ * 「写本地」与「上传」都只由 `kind` 决定。
  */

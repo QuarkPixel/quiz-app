@@ -11,14 +11,12 @@ import type {
   ActivePoolItem,
   MemoryProgress,
   MemorySessionsState,
-  QuizSessionState,
 } from "@/types";
 import { mergeCard } from "./card";
 import { num, pickScalar, strArray } from "./operators";
 import { stripDeviceLocal, SYNCED_BANK_FIELDS } from "./policy";
 import { same } from "./same";
 import { mergeSessionsWithBase } from "@/features/memory/session";
-import { mergeQuizSession } from "@/quiz/session/quizSession";
 import { revOf } from "@/lib/rev";
 
 type Json = Record<string, unknown>;
@@ -38,7 +36,22 @@ function asCardMap(value: unknown): Record<string, MemoryProgress> | undefined {
  * 按卡合并进度表。
  *
  * 出现与否取**并集**（一边删过卡、另一边还有 → 留着还在的那份：进度不该因为
- * 一次合并消失，这是有意的取舍）。两边都在时才交给 `mergeCard`。
+ * 一次合并消失，这是有意的取舍）。
+ *
+ * ── 只有一侧有这张卡时，也必须走 `mergeCard` ──
+ *
+ * 以前这一支直接把原样那份塞进结果、只有两侧都在才调 `mergeCard`，于是同一个
+ * 输入会得到**两种形状**：`mergeCard` 会给结果补上 `lapses`（并剔除 `null`），
+ * 而「只有一侧有」保持原样。看起来只是少了几个字段，实际会要命——
+ *
+ *   `planProgressMerge` 判断"本地是不是云端的超集"用的是**三方比较**：
+ *   把「只有本地」跟自己合一遍当基线，再看真合并结果是不是等于它。基线走的是
+ *   两侧分支（形状被规范化），真合并结果里那张卡走的是单侧分支（原始形状），
+ *   两者永远不相等 ⇒ **每一轮都被判成「两边各有一份对方没有的」**（`reconcile`），
+ *   于是"同一台设备改了进度"既不上报上传、也永远收敛不了，本地还会被写回一次。
+ *
+ * 所以：**合并结果与「同一份数据出现在几侧」无关**。单侧也调 `mergeCard(x, x)`，
+ * 让两条分支落在同一种规范化形状上（`mergeCard` 是幂等的，不会改语义）。
  */
 export function mergeProgressMap(
   base: Record<string, MemoryProgress> | undefined,
@@ -59,7 +72,8 @@ export function mergeProgressMap(
     const inRemote = remote?.[id];
     if (inLocal === undefined || inRemote === undefined) {
       const kept = inLocal ?? inRemote;
-      if (kept !== undefined) result[id] = kept;
+      // 单侧也要过同一个算子：形状必须与两侧分支一致（理由见函数头）
+      if (kept !== undefined) result[id] = mergeCard(kept, kept);
       continue;
     }
     result[id] = mergeCard(inLocal, inRemote);
@@ -118,11 +132,6 @@ function asSessions(value: unknown): MemorySessionsState | undefined {
   return record as MemorySessionsState | undefined;
 }
 
-function asQuizSession(value: unknown): QuizSessionState | undefined {
-  const record = asRecord(value);
-  return record as QuizSessionState | undefined;
-}
-
 function asPool(value: unknown): ActivePoolItem[] {
   if (!Array.isArray(value)) return [];
   return value.filter(
@@ -156,51 +165,58 @@ function mergeActivePool(
   for (const id of ids) {
     const left = localMap.get(id);
     const right = remoteMap.get(id);
+    // **单侧也要走同一个构造器**：合并结果必须与"这份数据出现在几侧"无关，
+    // 否则 `planProgressMerge` 的「跟自己合」基线会永远对不上（见
+    // `mergeProgressMap` 的函数头——同一种病）。
     if (!left) {
-      if (right) result.push(right);
+      if (right) result.push(poolItem(right, right));
       continue;
     }
     if (!right) {
-      result.push(left);
+      result.push(poolItem(left, left));
       continue;
     }
-
-    const leftRev = left.rev ?? 0;
-    const rightRev = right.rev ?? 0;
-    let consecutiveCorrect: number;
-    if (leftRev !== rightRev) {
-      consecutiveCorrect =
-        (leftRev > rightRev ? left : right).consecutiveCorrect;
-    } else if (left.hasEverMistaken !== right.hasEverMistaken) {
-      // 答错的那侧一定更新（会把连对清零）
-      consecutiveCorrect =
-        (left.hasEverMistaken ? left : right).consecutiveCorrect;
-    } else if (left.hasEverMistaken) {
-      // 都答错过：取小的那侧，别把一次清零抹掉
-      consecutiveCorrect = Math.min(
-        left.consecutiveCorrect,
-        right.consecutiveCorrect,
-      );
-    } else {
-      consecutiveCorrect = Math.max(
-        left.consecutiveCorrect,
-        right.consecutiveCorrect,
-      );
-    }
-
-    result.push({
-      id,
-      consecutiveCorrect,
-      hasEverMistaken: left.hasEverMistaken || right.hasEverMistaken,
-      hasBeenShown: left.hasBeenShown || right.hasBeenShown,
-      lastSelectedRound: Math.max(
-        left.lastSelectedRound,
-        right.lastSelectedRound,
-      ),
-      rev: Math.max(leftRev, rightRev),
-    });
+    result.push(poolItem(left, right));
   }
   return result;
+}
+
+/**
+ * 两条池子条目的**规范形状**——不论是一侧有还是两侧都有，都从这儿出去。
+ *
+ * 条目上的 `rev` 缺省写成 `0`（老数据没有它）：两侧分支本来就这么做，单侧分支
+ * 以前原样返回，于是"本地改过、云端没动"会被算成"两边各有一份"。
+ */
+function poolItem(left: ActivePoolItem, right: ActivePoolItem): ActivePoolItem {
+  const leftRev = left.rev ?? 0;
+  const rightRev = right.rev ?? 0;
+  let consecutiveCorrect: number;
+  if (leftRev !== rightRev) {
+    consecutiveCorrect = (leftRev > rightRev ? left : right).consecutiveCorrect;
+  } else if (left.hasEverMistaken !== right.hasEverMistaken) {
+    // 答错的那侧一定更新（会把连对清零）
+    consecutiveCorrect = (left.hasEverMistaken ? left : right).consecutiveCorrect;
+  } else if (left.hasEverMistaken) {
+    // 都答错过：取小的那侧，别把一次清零抹掉
+    consecutiveCorrect = Math.min(
+      left.consecutiveCorrect,
+      right.consecutiveCorrect,
+    );
+  } else {
+    consecutiveCorrect = Math.max(
+      left.consecutiveCorrect,
+      right.consecutiveCorrect,
+    );
+  }
+
+  return {
+    id: left.id,
+    consecutiveCorrect,
+    hasEverMistaken: left.hasEverMistaken || right.hasEverMistaken,
+    hasBeenShown: left.hasBeenShown || right.hasBeenShown,
+    lastSelectedRound: Math.max(left.lastSelectedRound, right.lastSelectedRound),
+    rev: Math.max(leftRev, rightRev),
+  };
 }
 
 /**
@@ -361,12 +377,9 @@ export function mergeBankState(params: {
     remote?.settings ??
     {};
   if (resetRev > 0) merged.resetRev = resetRev;
-  // 屏上会话：整条 LWW。两边都没有时不留空壳
-  const quizSession = mergeQuizSession(
-    asQuizSession(local?.quizSession),
-    asQuizSession(remote?.quizSession),
-  );
-  if (quizSession) merged.quizSession = quizSession;
+  // `quizSession` **不在这里合**：它是「我在哪」（屏上停在哪道题），属于设备本地，
+  // 见 `policy.ts` 的 `DEVICE_LOCAL_BANK_FIELDS`。写回本地时由
+  // `attachDeviceLocal` 贴回本机那份——云端根本没有它。
   if (hasMemory) merged.memory = mergedMemory;
 
   return merged;

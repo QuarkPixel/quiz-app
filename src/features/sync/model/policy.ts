@@ -33,7 +33,6 @@ export const SYNCED_BANK_FIELDS = [
   "currentRound", // max
   "settings", // scalar（按库设置）
   "resetRev", // max（重置的墓碑戳：比它旧的另一侧整段作废）
-  "quizSession", // 刷题模式屏上会话：整条 LWW（rev 大的赢，见 quizSession.ts）
   "memory.progress", // cardMap
   "memory.settings", // scalar（记忆模式的按库设置）
   "memory.learnedDay", // max（「最近一次学完一轮」只前进）
@@ -80,6 +79,20 @@ if (import.meta.env.DEV) {
 export const DEVICE_LOCAL_BANK_FIELDS = [
   "ui",
   "filterType",
+  /**
+   * 刷题模式的「屏上会话」（停在哪道题 / 判分页 / 作答草稿）。
+   *
+   * 它是**「我在哪」，不是进度**——和 `activeBank` 同一族。让它参与同步会出两个
+   * 具体问题：
+   *   1. `progressHash` 把光标也算进去 ⇒ 只换了一道题就判成「这个题库变了」，
+   *      每一轮都白传一次分片、报一次「上传 1」；
+   *   2. 远端只是光标更靠前，却会把整个题库判成 `download` / `reconcile`，
+   *      正在做题的人被弹一次"云端有更新"——而进度其实一模一样。
+   *
+   * 它仍然**落盘**（刷新后回到同一道题，见 `quiz/session/quizSession.ts`），
+   * 只是不跨设备。真正要跨设备的是 `memory.sessions`（3 / 5 那种进度）。
+   */
+  "quizSession",
 ] as const;
 
 /** general 里参与同步的字段。`activeBank` 是设备本地的（各设备看自己的题库）。 */

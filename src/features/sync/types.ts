@@ -334,6 +334,32 @@ export interface SyncConflict {
   remoteAt?: number;
 }
 
+/**
+ * 需要用户拍板的一件事——**显式的两支**，不是散落的布尔。
+ *
+ * 只有两种情况会打断用户（其余一律按内容方向静默处理）：
+ *
+ *   1. `conflict`：题目分叉、两边都改过 → 选保留哪一边；
+ *   2. `remote-write`：云端有本地没有的内容，需要写本地，但用户**正在做**
+ *      这个题库 → 现在更新会替换屏幕上那一轮，先问一句。
+ *
+ * 「云端更新、用户没在做」不弹窗，直接落地（`remote-write` 根本不会产生）。
+ */
+export type SyncPromptState =
+  | {
+      kind: "conflict";
+      conflicts: SyncConflict[];
+      /** 这批冲突的稳定签名，用于"关掉弹窗后别每轮都再弹一次" */
+      signature: string;
+    }
+  | {
+      kind: "remote-write";
+      hash: string;
+      name: string;
+      /** 这次写本地会做什么（决定文案） */
+      operation: "replace" | "merge" | "remove";
+    };
+
 /** 同步引擎对外暴露的状态。 */
 export interface SyncStatus {
   phase:
@@ -343,7 +369,12 @@ export interface SyncStatus {
     | "syncing"
     | "offline"
     | "error"
-    | "conflict";
+    | "conflict"
+    /**
+     * 云端有本地没有的内容、要写本地，但用户正在做这个题库：
+     * 已经弹窗问了，等他确认（「稍后」也算这一态）。
+     */
+    | "awaiting";
   /** 最近一次操作的结果说明（成功 / 失败） */
   message: string;
   /** 最近一次操作完成的时间（毫秒）——自检、对账也算，只用于排查 */
@@ -459,62 +490,75 @@ export interface RemoteState {
 
 // ── 判定 ────────────────────────────────────────────────────────────────────
 
-export type BankVerdict =
-  | "skip"
-  | "push"
-  | "pull"
-  | "deleteLocal"
-  | "deleteRemote"
-  | "conflict";
-
-/** 一个题库的同步决定。 */
-export type BankActionKind =
-  | "skip" // 本地不用改
-  | "download" // 用云端那份覆盖本地
-  | "merge" // 把合并结果写回本地
-  | "deleteLocal" // 本地删掉这个题库
-  | "deleteRemote" // 云端删掉这个题库
-  | "conflict";
+/**
+ * 一个题库这一轮做什么——**一支判别联合，没有第二个字段来表示"方向"**。
+ *
+ * 旧版同时存 `verdict`（按 mtime 猜的方向）与 `kind`（按内容改判的结果），
+ * 两者会互相覆盖；调用方有时读这个、有时读那个，"本地会不会被写"就没有
+ * 单一答案了。现在只有 `kind`，由 `decision.ts` 的 `decideBankSync` 一次算出。
+ */
+export type BankSyncKind =
+  /** 两边一致，什么都不用做 */
+  | "in-sync"
+  /** 本地是云端的超集：**只上传，本地只读** */
+  | "upload"
+  /** 云端是本地的超集：用云端那份覆盖本地 */
+  | "download"
+  /** 两边各有一份对方没有的：合并结果写回本地，再推上去 */
+  | "reconcile"
+  /** 需要用户裁决（题目分叉且两边都改过 / 没有基准） */
+  | "conflict"
+  /** 云端删掉了这个题库：本地跟着删 */
+  | "remove-local"
+  /** 本机删掉了这个题库：云端跟着删 */
+  | "remove-remote";
 
 export interface BankAction {
   hash: string;
   /** 给人看的题库名 */
   name: string;
-  verdict: BankVerdict;
+  /** **这一轮对这个题库做什么**（唯一的决定）。 */
+  kind: BankSyncKind;
   /** 本地内容的哈希；本地没有这个题库时 undefined */
   localHash?: string;
   /** 云端内容的哈希；云端没有这个题库时 undefined */
   remoteHash?: string;
-  /** 本地最后改动时间（毫秒） */
+  /** 本地最后改动时间（毫秒）——只用于展示，不参与判定 */
   localAt: number;
   /**
-   * **本地这一轮做什么。** 引擎按它分支，不按 `verdict`。
-   *
-   * `verdict` 只是 `judgeBank` 按 mtime 猜出来的"方向"；`kind` 是综合了
-   * "本地这份到底有没有云端没有的东西"之后的最终决定（例如判定是 pull、
-   * 但本地手里那份云端没有时，`kind` 是 `skip`——只上传，**不许下载覆盖**）。
-   */
-  kind: BankActionKind;
-  /**
-   * **要不要把这个题库传上去。**
-   *
-   * 与「本地怎么改」是两件事（见 `plan.ts` 的 `BankDecision`）：本地改过、云端没有
-   * 时只需要上传，本地不用改写；而 blob 竞态恢复时（判定是 pull、但本地手里那份
-   * 云端没有）既要合并写回本地、**也要**推上去。
-   *
-   * 以前 `shardsToPush` 只看 `verdict`，于是"判定 pull 但其实要上传"这种情况
-   * 永远传不上去，下一轮再被拉取盖掉。
-   */
-  upload: boolean;
-  /**
-   * 两边都动过、但**题目一样**时合出来的那份快照（见 `mergeBankSnapshots`）。
+   * `reconcile` 时合出来的那份快照（见 `mergeBankSnapshots`）。
    *
    * 有它就说明这一轮不需要人裁决：引擎会把它**同时**写到本地与云端，
-   * 两台设备的进度都保住。题目真的分叉了才会是 `conflict`，那时没有这个字段。
+   * 两台设备的进度都保住。题目真的分叉了才是 `conflict`，那时没有这个字段。
    */
   merged?: unknown;
   /** 这次合并是不是只有进度不同（用于给用户报一句「已合并进度」） */
   progressMerged?: boolean;
+  /** 判定理由（冲突面板的说明、排查日志都用它）。 */
+  reason: string;
+}
+
+/**
+ * 这一轮要不要把这个题库传上去。
+ *
+ * 从 `kind` 推出来，不另存一个布尔——"上传"和"本地怎么改"是两件事，
+ * 但两件都只由 `kind` 决定（见 `decision.ts` 的表）。
+ */
+export function actionUploads(action: BankAction): boolean {
+  return (
+    action.kind === "upload" ||
+    action.kind === "reconcile" ||
+    action.kind === "remove-remote"
+  );
+}
+
+/** 这一轮会不会写本机的题库存储（进度 / 题目）。 */
+export function actionWritesLocal(action: BankAction): boolean {
+  return (
+    action.kind === "download" ||
+    action.kind === "reconcile" ||
+    action.kind === "remove-local"
+  );
 }
 
 /** 云端某个分片文件里装了哪些题库（回收空文件时要重算）。 */

@@ -21,18 +21,19 @@
  * 1. **推上去的内容必须是「应用完拉取之后」重新收集的**，不能拿同步开始时
  *    收集的旧快照去推——线上真出过：新设备把「空壳 general」推上云端，
  *    于是所有设备的题库列表都被清空了。
- * 2. **冲突（同一个题库两边都改过）绝不自动选一边**：进入 conflict 状态，
- *    在设置面板里让用户决定，决定前那个题库（连同它所在的分片）都不动。
- * 3. 拉取**动到了当前这个题库**时才会整页刷新，而不是逐个去刷新内存里的会话状态——
- *    题目 / 进度在内存里有好几份缓存（BankStore 的解析缓存、两个 Session 的
- *    runtime state），刷新是唯一不会漏掉某一处、也不会把「答题到一半」搞成
- *    状态撕裂的做法。两个收窄条件都不能省：
- *      - **只让当前题库触发刷新**：拉下来的要是别的题库，侧边栏那条列表已经跟着
- *        localStorage 变了，页面本身没有一处是旧的——为它刷新纯属打断；
- *      - **忙的时候挂起**（`@/features/userActivity`）：正在答题 / 开着弹窗 / 页面
- *        在后台时，这一下刷新会把内存里的会话整个抹掉（答到一半的题、刚挑好的
- *        活动池、复习进度条）。挂起的那笔等停手后自己补上，期间只是内存里的视图
- *        停在旧内容上。
+ * 2. **本地默认是只读的**：只有"云端确实包含本地没有的内容"时才写本地
+ *    （`BankSyncKind` 里的 `download` / `reconcile` / `remove-local`）。
+ *    `upload` 那一支不许碰进度——这正是"我在同一台设备上做题，云端不该反过来
+ *    覆盖我"的落点。判定只看内容，不看 mtime（见 `decision.ts`）。
+ * 3. **冲突绝不自动选一边**：题目分叉且两边都改过时进入 conflict，弹窗 + 设置
+ *    面板让用户选，决定前那个题库（连同它所在的分片）都不动。
+ * 4. **云端要写本地、但用户正在做这个题库 → 先问一句**（`SyncPromptState` 的
+ *    `remote-write`）。没在做就静默落地，不弹。
+ * 5. **落盘之后不整页刷新**：写入走 `applyRemoteValue`，它广播键名
+ *    （`@/lib/storageBus`），持有内存副本的（两个 Session / BankStore /
+ *    GlobalSettingsStore）各自重读。以前那一版在这里 `location.reload()`，
+ *    正在答题的人会看到页面自己跳一下，作答草稿与滚动位置一起丢——那是用
+ *    暴力掩盖「内存与盘上没有通道」这件事，不是设计。
  *
  * ── 状态怎么表示 ───────────────────────────────────────────────────────────
  *
@@ -85,14 +86,13 @@ import {
   forcePullPlan,
   forcePushPlan,
 } from "./planner";
-import type { BankAction, RemoteState, SyncPlan } from "./types";
+import type { RemoteState, SyncPlan } from "./types";
 import {
   applyRemoteState,
   baselineMeta,
   ensureLibraryEntry,
   nextMeta,
   pruneConflictSeen,
-  readActiveBankHash,
   remoteBankCount,
   removeBankLocally,
   saveConflictSeen,
@@ -131,7 +131,6 @@ import {
   saveSyncMeta,
 } from "./storage";
 import { resolveSyncTarget } from "./target";
-import { userActivity } from "@/features/userActivity.svelte";
 import {
   SYNC_FOCUS_THROTTLE_MS,
   SYNC_LOCAL_POLL_MS,
@@ -140,16 +139,21 @@ import {
 } from "@/config";
 import {
   GIST_GENERAL_FILE,
+  actionWritesLocal,
   bankRowKey,
   shardFileName,
+  type BankAction,
   type ConflictResolution,
   type RemoteFile,
   type SyncMeta,
   type SyncConfig,
+  type SyncPromptState,
   type SyncStatus,
   type SyncTarget,
   type SyncTransferResult,
 } from "./types";
+import { activeWork } from "./activeWork.svelte";
+import { debugLog } from "@/lib/debug";
 
 export type SyncMode = "merge" | "push" | "pull";
 
@@ -162,16 +166,14 @@ export interface SyncEvent {
 export interface SyncOutcome extends SyncTransferSummary {
   /** 没能自动解决的冲突（题库 hash） */
   conflicts: string[];
+  /**
+   * 这一轮本该写本地、但用户正在做那些题库而**暂时没写**（等他在弹窗里确认）。
+   *
+   * 和 `conflicts` 分开：冲突要选"留哪边"，这里只是"现在写还是等会儿"。
+   */
+  awaiting: string[];
   /** 有几份题库是「题目一样、进度两边都动过」自动合起来的 */
   progressMerged: number;
-  /**
-   * 这一轮是不是真的改写了「当前正在看的那个题库」。
-   *
-   * **不是**「本地有没有被改过」：拉下来的题库要是用户没打开的那一份，
-   * 页面里没有一处是旧的（侧边栏读的是 localStorage），为它刷新只会打断人。
-   * 决定要不要刷新的是这个字段，见 `execute` 末尾那段。
-   */
-  changedLocal: boolean;
 }
 
 const IDLE_OUTCOME: SyncOutcome = {
@@ -183,7 +185,7 @@ const IDLE_OUTCOME: SyncOutcome = {
   removed: 0,
   settingsChanged: false,
   conflicts: [],
-  changedLocal: false,
+  awaiting: [],
 };
 
 /**
@@ -319,6 +321,38 @@ export class SyncEngine {
    * 一刀切会把用户没见过的冲突也顺手裁决掉，而用户只对他**看见过**的负责。
    */
   private resolutions = new Map<string, ConflictResolution>();
+
+  /**
+   * 需要用户拍板的一件事（**只有两支**，见 `SyncPromptState`）。
+   *
+   * 弹窗由 `SyncPromptDialog` 渲染，引擎只负责"什么时候该问"：
+   *   - 真正的冲突（题目分叉、两边都改过）→ `conflict`；
+   *   - 云端有本地没有的内容、要写本地，但用户**正在做**这个题库 → `remote-write`。
+   *
+   * 其余情况一律不弹：云端更新而用户没在做 → 直接落地；本地是超集 → 只上传。
+   */
+  prompt: SyncPromptState | null = $state(null);
+
+  /**
+   * 用户对「现在覆盖本地」点过头的题库。
+   *
+   * 只对**当前这一轮**有效：执行完（成功或失败）就清空，下一轮重新判断。
+   * 不能长期留着——那等于替用户把以后每一次覆盖都预先答应了。
+   */
+  private approvedWrites = new Set<string>();
+
+  /**
+   * 用户点了「稍后」的题库。
+   *
+   * 只要用户还在做这个题库就不再问（也不会写本地 / 上传，见 `runOnce`）；
+   * 一旦不在做了，下一次同步按「云端更新、用户没在用」静默落地。
+   * 这样既不会每 3 分钟弹一次，也不会把用户的选择悬在半空。
+   */
+  private dismissedWrites = new Set<string>();
+
+  /** 关掉冲突弹窗后，同一批冲突不再每轮弹一次（签名变了才会再弹）。 */
+  private dismissedConflictSignature = "";
+
   private running: Promise<SyncOutcome> | null = null;
   private pushTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -549,17 +583,57 @@ export class SyncEngine {
   }
 
   /**
+   * 「云端有更新，现在覆盖本地」——用户点了「立即更新」。
+   *
+   * 只对当前弹窗里那一个题库生效。随后重跑一轮：`runOnce` 看到它在
+   * `approvedWrites` 里就跳过"用户正在做"的让路判断，直接把云端那份写下来。
+   *
+   * 返回这一轮的 outcome（UI 不需要它，测试与调用方要等它落完）。
+   */
+  async acceptRemoteWrite(): Promise<SyncOutcome> {
+    const prompt = this.prompt;
+    if (prompt?.kind !== "remote-write") return IDLE_OUTCOME;
+    this.approvedWrites.add(prompt.hash);
+    this.prompt = null;
+    return this.run("merge");
+  }
+
+  /**
+   * 关掉弹窗（「稍后」/ 点遮罩 / Esc）。
+   *
+   * - 冲突：记住这批冲突的签名，不再每轮弹；红点与设置面板里的选择项照旧留着。
+   * - 远端覆盖：记住这个题库，用户还在做它期间不再问（也不动本地）。
+   */
+  dismissPrompt(): void {
+    const prompt = this.prompt;
+    if (prompt === null) return;
+    if (prompt.kind === "conflict") {
+      this.dismissedConflictSignature = prompt.signature;
+    } else {
+      this.dismissedWrites.add(prompt.hash);
+    }
+    this.prompt = null;
+  }
+
+  /**
    * 记下用户的选择，然后**重新**跑一次同步。
    *
    * 如果此刻正好有一次同步在跑，它已经读过裁决表了——必须先等它结束再跑，
    * 否则用户点了按钮却什么都没发生（裁决还躺在表里等下一轮）。
    */
   private async resolveConflicts(kind: ConflictResolution): Promise<SyncOutcome> {
-    for (const conflict of this.status.conflicts) {
-      this.resolutions.set(conflict.hash, kind);
-    }
+    const hashes = this.status.conflicts.map((conflict) => conflict.hash);
+    for (const hash of hashes) this.resolutions.set(hash, kind);
+
+    // 如果此刻正好有一次同步在跑，它已经读过裁决表了——必须先等它结束再跑，
+    // 否则用户点了按钮却什么都没发生（裁决还躺在表里等下一轮）。
     const running = this.running;
     if (running !== null) await running.catch(() => {});
+
+    // 等它结束**之后**再记"已经批准覆盖"：那一轮的 finally 会把这张表清空，
+    // 提前记会被顺手抹掉，于是「保留云端」又会被"你正在做题"拦一次。
+    for (const hash of hashes) this.approvedWrites.add(hash);
+
     return this.run("merge");
   }
 
@@ -603,6 +677,11 @@ export class SyncEngine {
     this.markTarget("unverified");
     // 「第一次看到冲突」的记录就在这本记账里，跟着一起删掉了
     clearSyncMeta();
+    // 需要拍板的事也一起作废：换了目标 / 清了账，旧的覆盖请求没有意义
+    this.prompt = null;
+    this.approvedWrites.clear();
+    this.dismissedWrites.clear();
+    this.dismissedConflictSignature = "";
     this.status = {
       phase: "idle",
       message,
@@ -819,6 +898,11 @@ export class SyncEngine {
       this.pushTimer = null;
     }
     this.resolutions.clear();
+    // 关掉总开关就不该再有任何「等你拍板」的弹窗
+    this.prompt = null;
+    this.approvedWrites.clear();
+    this.dismissedWrites.clear();
+    this.dismissedConflictSignature = "";
     // 「第一次看到冲突」的记录在盘上的记账里，这里**不动它**：关掉再打开开关、
     // 或者刷新页面，那个时间还得是原来那个。真要连它一起忘掉，「清空配置」
     // 那条路会把整本记账删掉。
@@ -940,6 +1024,7 @@ export class SyncEngine {
 
       const client = new GiteeClient(target);
       const local = this.collectLocal();
+      debugLog("sync:run", `${mode} · 本地 ${local.banks.size} 个题库`);
 
       // ── 还没有云端：建一条，把本地推上去 ──
       if (!client.id) {
@@ -977,6 +1062,12 @@ export class SyncEngine {
       }
 
       const gist = await client.getGist();
+      debugLog(
+        "sync:remote",
+        gist
+          ? `云端 ${gist.files.size} 个文件`
+          : "404：目标仓库不存在，整轮跳过（不会进入判定）",
+      );
       if (!gist) {
         // 目标没了：卡片上会把那条 id 划掉标「已被删除」，这里只留一句给通知用的话
         this.markTarget("missing");
@@ -1026,10 +1117,10 @@ export class SyncEngine {
       // ── 冲突裁决 ──
       //
       // 只要还有**没裁决**的冲突，这一轮就什么都不做：不拉、不推、不改本地
-      // （所以也不会整页刷新），只把冲突摆到面板上问用户。
-      // 早期版本会「冲突的题库不动、其余照常同步」，于是拉到别的题库之后
-      // 立刻 `location.reload()`——冲突提示跟着内存状态一起没了，用户看到的
-      // 就是「还没选就自己刷过去了」。宁可停一轮，也不能让用户的选择落空。
+      // （所以也不会碰任何会话状态），只把冲突摆到弹窗 / 面板上问用户。
+      // 早期版本会「冲突的题库不动、其余照常同步」，于是其它题库被拉下来之后
+      // 冲突提示跟着一次整页刷新没了，用户看到的就是「还没选就自己刷过去了」。
+      // 宁可停一轮，也不能让用户的选择落空。
       if (mode === "merge" && plan.conflicts.length > 0) {
         // 把用户已经答过的那些裁决应用上去；用户没答过的仍然是 conflict
         plan = applyResolution(plan, this.resolutions);
@@ -1049,6 +1140,43 @@ export class SyncEngine {
         }
       }
 
+      // ── 云端要写本地，但用户正在做这个题库 → 先问一句 ──
+      //
+      // 判定完全来自计划里的 `kind`（`actionWritesLocal`），不再看 mtime：
+      // 只有 download / reconcile / remove-local 会碰本机进度。上传（`upload`）
+      // 无论用户是否在做都不需要问——它对本地是只读的。
+      //
+      // 这一轮**不执行**（连别的题库也不动）：和冲突同一条规矩，宁可停一轮，
+      // 也不要让"用户刚点的立即更新"和"别处已经写了一半"混在一起。
+      if (mode === "merge") {
+        this.pruneDismissedWrites();
+        const busyWrites = plan.actions.filter(
+          (action) =>
+            actionWritesLocal(action) &&
+            activeWork.isBusy(action.hash) &&
+            !this.approvedWrites.has(action.hash),
+        );
+        const needsPrompt = busyWrites.filter(
+          (action) => !this.dismissedWrites.has(action.hash),
+        );
+        if (needsPrompt.length > 0) {
+          this.reportRemoteWrite(needsPrompt, gist.files.size, remote.banks.size);
+          return {
+            ...IDLE_OUTCOME,
+            awaiting: needsPrompt.map((action) => action.hash),
+          };
+        }
+        // 用户已经点了「稍后」：这一轮**什么都不写**（包括别的题库）。
+        // 不能因为"没人要弹窗"就照常执行——那会把他说"等会儿"的那一份
+        // 直接覆盖掉。等他不做了 / 下一轮再按正常路径落地。
+        if (busyWrites.length > 0) {
+          return {
+            ...IDLE_OUTCOME,
+            awaiting: busyWrites.map((action) => action.hash),
+          };
+        }
+      }
+
       const outcome = await this.execute({
         client,
         plan,
@@ -1063,7 +1191,15 @@ export class SyncEngine {
       this.resolutions.clear();
       return outcome;
     } catch (error) {
+      debugLog(
+        "sync:error",
+        error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      );
       return this.fail(error);
+    } finally {
+      // 同意覆盖只对**这一轮**有效：执行完（无论成败）就作废，
+      // 否则下一次同步会替用户把新的覆盖也预先答应了。
+      this.approvedWrites.clear();
     }
   }
 
@@ -1099,12 +1235,8 @@ export class SyncEngine {
     // 走到这里说明**所有**冲突都已裁决（没裁决的在上一步就 return 了），
     // 所以不会出现「一边有冲突一边还在写数据」的情况。
     const outcome: SyncOutcome = { ...IDLE_OUTCOME };
-    /** 账本有没有记成功。失败时收尾**不能用成功状态盖掉那个错误**（见第 ④ 步）。 */
+    /** 账本有没有记成功。失败时收尾**不能用成功状态盖掉那个错误**（见第 ⑤ 步）。 */
     let metaWritten = true;
-
-    // 刷新判定要的两份事实：动手之前「当前在看哪个题库」，以及这一轮写坏了哪些题库
-    const activeBefore = readActiveBankHash();
-    const touched = new Set<string>();
 
     // ── ① general 先落地，再落题库 ──
     //
@@ -1114,46 +1246,43 @@ export class SyncEngine {
       applyRemoteValue(STORAGE_KEY_GENERAL, JSON.stringify(plan.general));
     }
 
+    // ── ② 只有这三种 kind 会写本机的题库存储 ──
+    //
+    // `upload` / `in-sync` 到这里**什么都不做**：上传是只读本地的操作，
+    // 这一支就是"本地进度已经是最新的，只把云端补上"的落点。
     for (const action of plan.actions) {
-      // **`merged` 必须排在 `pull` 前面。**
-      //
-      // 判定是 `pull` 不等于"本地那份可以丢"：blob 竞态恢复时（本地手里那份云端
-      // 没有）`decideBank` 会给出 `merged`，那时盲目下载会把本地仅存的那份盖掉。
-      // 以前这里先命中 `verdict === "pull"`，合并结果被整个丢掉（审计实测）。
-      if (action.kind === "merge") {
+      if (action.kind === "reconcile") {
         // 两边都做过这同一个题库、题目却一样：合并出来的那一份**先落到本地**，
         // 后面第 ③ 步再从本地重建分片推上去——于是两台设备的进度都在，
         // 不需要用户去「保留本地 / 保留云端」里二选一。
         const hash = action.hash;
+        const merged = action.merged as { questions: unknown[]; state?: unknown };
         applyRemoteValue(
           `quiz_app_questions_${hash}`,
-          JSON.stringify((action.merged as { questions: unknown[] }).questions),
+          JSON.stringify(merged.questions),
         );
-        applyRemoteState(hash, (action.merged as { state?: unknown }).state);
+        applyRemoteState(hash, merged.state);
         clearMtime(`quiz_app_questions_${hash}`);
         clearMtime(`quiz_app_state_${hash}`);
-        touched.add(hash);
         outcome.progressMerged += action.progressMerged === true ? 1 : 0;
       } else if (action.kind === "download") {
         const bank = remote.banks.get(action.hash);
         if (!bank) continue;
         writeBankLocally(bank);
         ensureLibraryEntry(action.hash, bank.snapshot.mode);
-        touched.add(action.hash);
-      } else if (action.verdict === "deleteLocal") {
+      } else if (action.kind === "remove-local") {
         removeBankLocally(action.hash);
-        touched.add(action.hash);
       }
     }
 
-    // ── ② 回收云端的垃圾文件（空分片 / 旧格式残留）──
+    // ── ③ 回收云端的垃圾文件（空分片 / 旧格式残留）──
     let fileCount = ctx.remoteFileCount;
     if (plan.deleteRemoteFiles.length > 0) {
       await client.deleteFiles(plan.deleteRemoteFiles);
       fileCount -= plan.deleteRemoteFiles.length;
     }
 
-    // ── ③ 按「拉取之后」的本地状态重建要上传的分片 ──
+    // ── ④ 按「拉取之后」的本地状态重建要上传的分片 ──
     const after = this.collectLocal();
     const uploads: Record<string, string> = {};
     for (const index of plan.pushShards) {
@@ -1177,7 +1306,7 @@ export class SyncEngine {
       fileCount = gist.files.size;
     }
 
-    // ── ④ 记基准线 ──
+    // ── ⑤ 记基准线 ──
     //
     // 写不进去必须**说出来**：账本写失败 ⇒ `computePendingChanges` 一直读到旧行
     // ⇒ 指示灯永远黄、每轮基于陈旧基准重规划，而"内容没变就不传"又让这一轮什么
@@ -1203,21 +1332,24 @@ export class SyncEngine {
 
     // 这一轮到底动了什么——四个数互斥：新题库只算「新增」，不算「上传 / 下载」。
     // 冲突冻住的分片不算（`settledThisRound`），和基准线的写法保持一致。
+    //
+    // `reconcile` 只报「合并进度」：它合并的是进度，不是题目内容；再算一次
+    // 「上传」会让一句「上传 1 · 合并进度 1」看起来像动了两件不同的事。
     for (const action of plan.actions) {
       if (!settledThisRound(plan, action)) continue;
-      switch (action.verdict) {
-        case "push":
+      switch (action.kind) {
+        case "upload":
           outcome.pushed += 1;
           // 云端原来没有这个题库 = 这台设备新导入的
           if (action.remoteHash === undefined) outcome.newOnCloud += 1;
           break;
-        case "pull":
+        case "download":
           outcome.pulled += 1;
           // 本地原来没有 = 别的设备新导入的
           if (action.localHash === undefined) outcome.newLocally += 1;
           break;
-        case "deleteLocal":
-        case "deleteRemote":
+        case "remove-local":
+        case "remove-remote":
           outcome.removed += 1;
           break;
         default:
@@ -1226,23 +1358,15 @@ export class SyncEngine {
     }
     outcome.settingsChanged = plan.settingsChanged;
 
-    // ── ⑤ 要不要整页刷新 ──
+    // ── ⑥ 收尾 ──
     //
-    // 判据是「**当前正在看的那个题库**被改到了没有」，而不是「本地改过没有」：
-    // 拉的是别的题库时，页面里唯一读它的地方（侧边栏列表）本来就读 localStorage，
-    // 为它刷新只会把答题打断一次。两条分别对应两种「当前视图变旧了」：
-    //   - 当前题库的内容 / 进度被拉了下来，或者被删掉了；
-    //   - 本来没有当前题库，这一轮刚拉下来一个（新设备打开就是为了这件事）。
-    // 顺序上 `activeBefore` 要在写盘之前读，`after` 是写完之后重新读的那一份。
-    const activeAfter = readActiveBankHash();
-    outcome.changedLocal =
-      (activeBefore !== null && touched.has(activeBefore)) ||
-      (activeBefore === null && activeAfter !== null);
-
+    // 这里**没有整页刷新**：落盘走的是 `applyRemoteValue`，它会广播键名，
+    // 持有内存副本的（两个会话 / 题库仓库 / 全局设置）各自重读。
+    // 以前那一版在这里 `location.reload()`，正在答题的人会看到页面自己跳一下，
+    // 作答草稿与滚动位置一起丢——用暴力掩盖缺失的通道。
     // 数据这一轮已经落好了，但**账本没记上**——那就不能报「已同步」：
     // 指示点会一直黄、下一轮还会基于陈旧基准重规划，得让用户看到"本地存储满了"。
     if (metaWritten) this.finishStatus(outcome, fileCount, remoteBankCount(plan));
-    if (outcome.changedLocal) this.reloadForAppliedChanges();
     return outcome;
   }
 
@@ -1269,6 +1393,10 @@ export class SyncEngine {
     };
     this.lastConflictSignature = "";
     this.lastErrorSignature = "";
+    // 这一轮正常收尾 = 该做的都做了：之前挂着的「要不要覆盖」和「这批冲突」
+    // 都失效了（冲突已裁决 / 用户已确认 / 不再需要）。
+    this.prompt = null;
+    this.dismissedConflictSignature = "";
 
     // 「设置也动了」也算同步出了结果——否则拖一下顺序同步完，事件里什么都不报
     if (
@@ -1287,7 +1415,57 @@ export class SyncEngine {
   }
 
   /**
-   * 进入冲突状态：冲突的题库谁都不动，等用户在设置面板里选择。
+   * 「稍后」只对"用户还在做这个题库"这段时间有效。
+   *
+   * 一旦他离开了（屏上没题了），下一次同步就该按「云端更新、用户没在用」
+   * 静默落地——所以这里把已经不在做的那些从"别再问"的名单里摘掉。
+   * 不做这一步的话，用户点过一次「稍后」，之后每次开始做题都会静默跳过更新。
+   */
+  private pruneDismissedWrites(): void {
+    for (const hash of [...this.dismissedWrites]) {
+      if (!activeWork.isBusy(hash)) this.dismissedWrites.delete(hash);
+    }
+  }
+
+  /**
+   * 云端要写本地，但用户正在做这个题库：停下来问一句。
+   *
+   * **什么都不执行**（连同别的题库也不动）：和冲突同一条规矩——宁可停一轮，
+   * 也不要把"用户还没确认的覆盖"和"别处已经写了一半"混在一起。
+   * 所以这里既不动 `lastSyncAt`，也不重算 delta（本地确实还没同步）。
+   */
+  private reportRemoteWrite(
+    actions: readonly BankAction[],
+    remoteCount: number,
+    remoteBanks: number,
+  ): void {
+    const action = actions[0];
+    const operation: "replace" | "merge" | "remove" =
+      action.kind === "reconcile"
+        ? "merge"
+        : action.kind === "remove-local"
+          ? "remove"
+          : "replace";
+
+    this.prompt = {
+      kind: "remote-write",
+      hash: action.hash,
+      name: action.name,
+      operation,
+    };
+    this.status = {
+      ...this.status,
+      phase: "awaiting",
+      message: "云端有更新，等你确认",
+      at: Date.now(),
+      remoteCount,
+      remoteBanks,
+      conflicts: [],
+    };
+  }
+
+  /**
+   * 进入冲突状态：冲突的题库谁都不动，等用户在面板里选择。
    *
    * 冲突的单位是**题库**（不是分片文件），提示里直接写题库名。
    * 同一个冲突反复出现时不重复弹提示——轮询每 3 分钟一次，会刷屏。
@@ -1342,6 +1520,17 @@ export class SyncEngine {
         kind: "conflict",
         message: `${conflicts.length} 个题库存在冲突`,
       });
+    }
+
+    // 弹窗只在**第一次看到这批冲突**时出现；用户关掉之后靠红点与设置面板，
+    // 直到这批冲突变了（新冲突冒出来 / 旧的解决了）才会再弹。
+    // 轮询每 3 分钟一次，不这么做就是每 3 分钟糊用户一脸。
+    if (signature !== this.dismissedConflictSignature) {
+      this.prompt = {
+        kind: "conflict",
+        conflicts: this.status.conflicts,
+        signature,
+      };
     }
   }
 
@@ -1402,27 +1591,7 @@ export class SyncEngine {
 
     return false;
   }
-
-  /**
-   * 拉取改到了当前正在看的题库 → 请求整页刷新。
-   *
-   * **能不能刷由 `@/features/userActivity` 说了算**：正在答题 / 开着弹窗 / 页面在
-   * 后台时这一下会抹掉内存里的会话状态（答到一半的题、刚挑好的活动池、复习进度条），
-   * 所以那时它只把刷新挂起，等用户停手之后自己补上（`attachReloadGuard` 盯着）。
-   *
-   * `outcome.changedLocal` 只认「当前题库被改到」，所以不会出现
-   * 「刷新 → 同步 → 刷新」的死循环。
-   */
-  private reloadForAppliedChanges(): void {
-    if (userActivity.requestReload("synced")) window.location.reload();
-  }
 }
 
-/**
- * 盘上记的「当前题库」。
- *
- * 直接读 general 配置而不是问 `BankStore`：引擎不认识它，而且这里要的是
- * 「此刻盘上是什么」（同一轮里写盘前后各读一次，用来判断当前视图有没有变旧）。
- */
 /** 应用级单例。 */
 export const syncEngine = new SyncEngine();

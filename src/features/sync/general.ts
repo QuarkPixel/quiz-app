@@ -37,7 +37,8 @@ export function summarize(
 ): Map<string, BankSummaryInput> {
   const result = new Map<string, BankSummaryInput>();
   for (const action of actions) {
-    if (action.verdict === "deleteLocal" || action.verdict === "deleteRemote") {
+    // 这一轮结束就消失的题库不进列表（本机删的 / 云端删的）
+    if (action.kind === "remove-local" || action.kind === "remove-remote") {
       continue;
     }
     const local = localBanks.get(action.hash);

@@ -32,6 +32,7 @@
     import { collectLocalState, filesOfState } from "@/features/sync/collect";
     import { maskToken } from "@/features/sync/target";
     import { describeSyncResult } from "@/features/sync/summary";
+    import SyncConflictPanel from "./SyncConflictPanel.svelte";
     import { mtimeOf } from "@/features/sync/storage";
     import { looksLikeSyncGist } from "@/features/sync/types";
     import {
@@ -197,45 +198,6 @@
     const cardNoteTitle = $derived(
         status.lastSyncAt ? formatAbsoluteTime(status.lastSyncAt) : undefined,
     );
-
-    /**
-     * 冲突面板上那两行小字要的时间点。
-     *
-     * **本地那行用 `detectedAt`（第一次看到冲突的时间），不是 `localAt`**：
-     * 冲突发生后用户往往还在继续改，mtime 会一直往前跑，显示的永远是「刚刚」——
-     * 那个时间没有任何信息量。`localAt` 只是没有记录时的退路（旧状态 / 测试替身）。
-     *
-     * 云端那行是 Gist 的 `updated_at`（整条 Gist 的最后改动时间）。取不到时退到
-     * `status.lastSyncAt`——上一次真的同步成功的时间，也就是云端那份最后落定的时间。
-     */
-    const conflictDetectedAt = $derived(
-        status.conflicts[0]?.detectedAt ?? status.conflicts[0]?.localAt ?? 0,
-    );
-    const conflictRemoteAt = $derived(
-        status.conflicts[0]?.remoteAt || status.lastSyncAt,
-    );
-
-    /** 冲突侧的小字：`3 分钟前`；时间点不明时退回「未知」。 */
-    function conflictTimeText(at: number): string {
-        return at ? formatRelativeTime(at, now) : "未知";
-    }
-
-    /** 悬停给绝对时间；没有时间点时不挂 title。 */
-    function conflictTimeTitle(at: number): string | undefined {
-        return at ? formatAbsoluteTime(at) : undefined;
-    }
-
-    /**
-     * 两边的改动谁更晚 —— 晚的那一边用默认（实心）variant，另一边用 outline。
-     *
-     * 实心那颗是「推荐按这个」的意思，所以它得是**内容更新**的那一边：
-     * 云端是 A 传完之后 B 又改了 → 保留本地；反过来 → 保留云端。
-     *
-     * 比的是「本地这份最后改动」和「云端那份上传」两个时刻，判据和导入时
-     * 「用文件里的进度覆盖当前进度」是一样的：谁动得晚谁新。两边相同时算本地
-     * （自己手上这份，不用猜）。
-     */
-    const localIsNewer = $derived(conflictDetectedAt >= conflictRemoteAt);
 
     /**
      * 展示页那个小按钮的「刚刚验过」：成功时图标换成绿勾，两秒后自己变回去。
@@ -521,7 +483,7 @@
         void withBusy("merge", async () => {
             const outcome = await syncEngine.sync();
             if (outcome.conflicts.length > 0) {
-                // 冲突时给出明确指引：上面会出现「保留本地 / 保留云端」的选择
+                // 冲突时给出明确指引：弹窗（以及上面面板）里会出现「保留本地 / 保留云端」
                 toastStore.show(
                     "存在题库冲突",
                     `${outcome.conflicts.length} 个题库冲突`,
@@ -529,6 +491,8 @@
                 );
                 return;
             }
+            // 「云端有更新、但你正在做这个题库」：弹窗已经问了，不再叠一条 toast
+            if (outcome.awaiting.length > 0) return;
             toastStore.show("同步完成", describeSyncResult(outcome), "success");
         });
     }
@@ -546,7 +510,7 @@
 
     function forceDownload(): void {
         void withBusy("pull", async () => {
-            // 下载成功后会整页刷新，这里不必再提示
+            // 下载成功后不整页刷新：落盘会广播，持有内存副本的地方各自重读
             await syncEngine.pullRemote();
         });
     }
@@ -1007,87 +971,7 @@
 
                 <!-- ── 冲突：同一个题库两边都改过，等用户拍板 ─────────────── -->
                 {#if status.conflicts.length > 0}
-                    <div
-                        class="border-warning/40 bg-warning/5 flex flex-col gap-2 rounded-lg border p-2.5"
-                    >
-                        <p class="text-xs font-medium">
-                            {status.conflicts.length} 个题库两边都改过，请选择保留哪一边：
-                        </p>
-                        <ul class="text-muted-foreground flex flex-col gap-0.5">
-                            {#each status.conflicts.slice(0, 5) as conflict (conflict.hash)}
-                                <li class="truncate text-[11px]">
-                                    {conflict.name}
-                                    <span class="font-mono opacity-60"
-                                        >{conflict.hash.slice(0, 8)}</span
-                                    >
-                                </li>
-                            {/each}
-                            {#if status.conflicts.length > 5}
-                                <li class="text-[11px]">
-                                    还有 {status.conflicts.length - 5} 个…
-                                </li>
-                            {/if}
-                        </ul>
-                        <div class="flex items-start gap-2">
-                            <div class="flex flex-1 flex-col gap-1">
-                                <Button
-                                    variant={localIsNewer
-                                        ? "default"
-                                        : "outline"}
-                                    size="sm"
-                                    class="w-full"
-                                    disabled={anyBusy}
-                                    onclick={() =>
-                                        void withBusy("merge", () =>
-                                            syncEngine.keepLocal(),
-                                        )}
-                                >
-                                    保留本地
-                                </Button>
-                                <!--
-                                    两个时间点各贴在它自己那个按钮下面，文字跟按钮左边缘对齐。
-                                    「保留本地」要说的是本地这份从什么时候起就和云端
-                                    不一样了——用户一边答题它一边变，所以显示的是
-                                    **冲突发生**的时间；「保留云端」说的是云端那份
-                                    什么时候传上来的。谁的时间更晚，谁的按钮就是实心的那颗。
-                                -->
-                                <p
-                                    class="text-muted-foreground text-left text-[10px] leading-tight"
-                                    title={conflictTimeTitle(
-                                        conflictDetectedAt,
-                                    )}
-                                >
-                                    冲突发生时间：{conflictTimeText(
-                                        conflictDetectedAt,
-                                    )}
-                                </p>
-                            </div>
-                            <div class="flex flex-1 flex-col gap-1">
-                                <Button
-                                    variant={localIsNewer
-                                        ? "outline"
-                                        : "default"}
-                                    size="sm"
-                                    class="w-full"
-                                    disabled={anyBusy}
-                                    onclick={() =>
-                                        void withBusy("merge", () =>
-                                            syncEngine.keepRemote(),
-                                        )}
-                                >
-                                    保留云端
-                                </Button>
-                                <p
-                                    class="text-muted-foreground text-left text-[10px] leading-tight"
-                                    title={conflictTimeTitle(conflictRemoteAt)}
-                                >
-                                    上传时间：{conflictTimeText(
-                                        conflictRemoteAt,
-                                    )}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
+                    <SyncConflictPanel conflicts={status.conflicts} />
                 {/if}
 
                 <!--

@@ -23,6 +23,7 @@ import {
   type SyncMeta,
   type SyncRowMeta,
 } from "./types";
+import { notifyStorageWrite } from "@/lib/storageBus";
 
 /** `quiz_app_sync_mtime:<键>` 前缀：记录某个可同步键最后一次本地改动的时间。 */
 const MTIME_PREFIX = "quiz_app_sync_mtime:";
@@ -364,6 +365,10 @@ export function saveSyncMeta(meta: SyncMeta): boolean {
  */
 export function applyRemoteValue(key: string, value: string): void {
   writeLocal(key, value);
+  // 外部写入（云端的内容）——持有这个键的内存副本的地方要自己重读。
+  // 这是**唯一**会广播的写入路径：用户自己的操作走普通 `setItem`，内存本来
+  // 就是最新的，不需要再来一遍（见 `@/lib/storageBus`）。
+  notifyStorageWrite(key);
 }
 
 /** 测试用：清掉所有同步元数据与 mtime 记录。 */

@@ -9,6 +9,7 @@
 
 import { mergeBankSnapshot, mergeBankState, mergeProgressMap, sameProgress } from "./model/merge";
 import { same } from "./model/same";
+import { debugLog, diffSummary, sessionSummary } from "@/lib/debug";
 
 export { mergeProgressMap, sameProgress };
 
@@ -116,6 +117,17 @@ export function planProgressMerge(params: {
     mode: modeOf(params.local),
   });
   if (same(merged ?? null, remoteOnly ?? null)) return { kind: "pull" };
+
+  // 走到这里 = 判定层会说「两边各有一份」。诊断日志把**是哪个字段**导致的
+  // 直接点出来，省得下次又靠猜（`quiz_app_debug=1` 才打印）。
+  debugLog(
+    "sync:merge-diff",
+    `vs local: ${diffSummary(merged, localOnly) || "-"}` +
+      ` | vs remote: ${diffSummary(merged, remoteOnly) || "-"}` +
+      ` | base:${sessionSummary(stateOf(params.base))}` +
+      ` local:${sessionSummary(stateOf(params.local))}` +
+      ` remote:${sessionSummary(stateOf(params.remote))}`,
+  );
 
   return {
     kind: "merge",

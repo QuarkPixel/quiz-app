@@ -65,6 +65,11 @@ export type SyncIndicator =
   | { kind: "failed"; message: string }
   /** 没网。不算「坏了」：联网后下一次同步自己就好，标红只会让人白紧张。 */
   | { kind: "offline"; message: string }
+  /**
+   * 云端有更新要写本地，但用户正在做这个题库：已经问了，等他确认。
+   * 不算错误，也不是「已同步」——只是还没落地。
+   */
+  | { kind: "awaiting" }
   /** 这台设备的本地存储写不进去，进度随时会丢。 */
   | { kind: "blocked" }
   /** 还没算过本地和基准差多少——一律说「还没同步」。 */
@@ -112,6 +117,8 @@ export function indicatorOf(facts: SyncFacts): SyncIndicator {
   if (facts.phase === "error") return { kind: "failed", message: facts.message };
   if (facts.phase === "offline") return { kind: "offline", message: facts.message };
   if (facts.storage === "blocked") return { kind: "blocked" };
+  // 云端更新在等用户确认：还没落地，绝不能显示「已同步」
+  if (facts.phase === "awaiting") return { kind: "awaiting" };
   if (facts.delta === "unknown") return { kind: "unknown" };
   if (facts.delta === "dirty") return { kind: "pending" };
   return { kind: "synced" };
@@ -181,12 +188,13 @@ export function toneOf(indicator: SyncIndicator): SyncTone {
     case "failed":
     case "blocked":
       return "danger";
-    // 关着 / 正在跑 / 离线 / 还没算过 / 有改动没推：都是「先别操心」
+    // 关着 / 正在跑 / 离线 / 还没算过 / 有改动没推 / 等用户确认：都是「先别操心」
     case "disabled":
     case "busy":
     case "offline":
     case "unknown":
     case "pending":
+    case "awaiting":
       return "pending";
   }
 }
@@ -216,6 +224,8 @@ export function labelOf(indicator: SyncIndicator): string {
       return "本地存储不可写";
     case "synced":
       return "已同步";
+    case "awaiting":
+      return "有云端更新待确认";
     // `unknown`（还没算过）与 `pending`（确实有改动没推）对用户是同一句话：
     // 都不该让人以为「已经传上去了」。区别只在引擎内部，不外露。
     case "unknown":

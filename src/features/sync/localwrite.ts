@@ -38,7 +38,8 @@ import {
   removeLocal,
   saveSyncMeta,
 } from "./storage";
-import { notifyStoredStateWritten } from "@/store";
+import { notifyStorageWrite } from "@/lib/storageBus";
+import { debugLog, sessionSummary } from "@/lib/debug";
 
 export function readActiveBankHash(): string | null {
   const raw = readLocal(STORAGE_KEY_GENERAL);
@@ -59,11 +60,11 @@ export function readActiveBankHash(): string | null {
  */
 export function remoteBankCount(plan: SyncPlan): number {
   return plan.actions.filter((action) => {
-    if (action.verdict === "deleteRemote") {
+    if (action.kind === "remove-remote") {
       // 没能删掉（分片被冲突冻住）→ 云端那份还在
       return !settledThisRound(plan, action);
     }
-    if (action.verdict === "deleteLocal") return false; // 云端本来就没有
+    if (action.kind === "remove-local") return false; // 云端本来就没有
     return true;
   }).length;
 }
@@ -76,11 +77,11 @@ export function remoteBankCount(plan: SyncPlan): number {
  * 否则下一次同步会把它误判成「云端改过」而把本地改动悄悄拉掉。
  */
 export function settledThisRound(plan: SyncPlan, action: BankAction): boolean {
-  switch (action.verdict) {
+  switch (action.kind) {
     case "conflict":
       return false;
-    case "push":
-    case "deleteRemote":
+    case "upload":
+    case "remove-remote":
       return plan.pushShards.includes(shardIndexOf(action.hash));
     default:
       return true;
@@ -130,7 +131,9 @@ export function toConflict(
   return {
     hash: action.hash,
     name: action.name,
-    detail: "这个题库本机和云端都改过",
+    // 判定层给的是具体理由（"题目两边都改过" / "云端改过题目，本机这边已经删了它"…），
+    // 比一句通用的"两边都改过"更能帮用户判断该保留哪边。
+    detail: action.reason || "这个题库本机和云端都改过",
     localAt: action.localAt,
     remoteHash: action.remoteHash ?? "",
     detectedAt,
@@ -167,12 +170,16 @@ export function applyRemoteState(hash: string, syncable: unknown): void {
     }
   })();
   const next = attachDeviceLocal(syncable, existing);
-  if (next === undefined) removeLocal(stateKey);
-  else applyRemoteValue(stateKey, JSON.stringify(next));
-  // 这是**唯一**一处「不由会话自己写盘」的入口：拉取 / 合并结果落到 localStorage
-  // 之后必须广播，否则已经挂着的会话还是它构造时那份内存快照（见 `@/store` 里
-  // `subscribeStoredStateWrite` 的说明）。
-  notifyStoredStateWritten(hash);
+  if (next === undefined) {
+    removeLocal(stateKey);
+    // 删除也是一次外部改写：不广播的话盘上没了、内存里还留着那一份。
+    // 存在的那一支由 `applyRemoteValue` 统一广播（见 `@/lib/storageBus`）。
+    notifyStorageWrite(stateKey);
+  } else {
+    applyRemoteValue(stateKey, JSON.stringify(next));
+    // 诊断：写回本地的到底是哪一份（判定说"合并"时，这里能看出合并结果长什么样）
+    debugLog("sync:write", `${hash.slice(0, 4)} ← ${sessionSummary(next)}`);
+  }
 }
 
 export function writeBankLocally(bank: {
@@ -297,9 +304,14 @@ export function nextMeta(params: {
   for (const action of plan.actions) {
     const key = bankRowKey(action.hash);
     const bank = state.banks.get(action.hash);
-    switch (action.verdict) {
-      case "pull":
-      case "push":
+    switch (action.kind) {
+      // 这一轮结束后本地与云端都是 `bank.snapshot`（download 是云端那份、
+      // reconcile 是合并出来的那份、upload / in-sync 是本地那份），
+      // 所以基准记的就是它——下一轮它就是三方合并的参照。
+      case "download":
+      case "upload":
+      case "reconcile":
+      case "in-sync":
         if (!settledThisRound(plan, action)) break; // 分片被冲突冻住了，保持旧基准
         if (bank === undefined) {
           delete rows[key];
@@ -312,32 +324,16 @@ export function nextMeta(params: {
           remoteUpdatedAt,
           shard: bank.shard,
           mode: bank.snapshot.mode,
-          // 合并过的那一份，云端与本地都已经是它了（第 ③ 步从本地重建上传），
-          // 所以基准记的就是 `bank.snapshot`——下一轮它就是三方合并的参照
           snapshot: ledgerSnapshot(bank.snapshot),
         };
         break;
 
-      case "skip":
-        // 两边内容一样，基准线怎么写都不会错
-        // （`snapshot` 每次同步都刷新：旧版记账里没有它）
-        if (bank !== undefined) {
-          rows[key] = {
-            remoteHash: bankFullHash(bank.snapshot),
-            contentHash: bank.contentHash,
-            syncedAt: now,
-            remoteUpdatedAt,
-            shard: bank.shard,
-            mode: bank.snapshot.mode,
-            snapshot: ledgerSnapshot(bank.snapshot),
-          };
-        }
-        break;
-      case "deleteLocal":
-      case "deleteRemote":
+      case "remove-local":
+      case "remove-remote":
         if (!settledThisRound(plan, action)) break;
         delete rows[key];
         break;
+
       case "conflict":
         // 保持旧基准，等用户裁决
         break;
