@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { flushSync } from "svelte";
-import { NO_REV, nextRev, revOf } from "../src/lib/rev";
+import { NO_REV, REV_COUNTER_EPOCH, nextRev, revOf } from "../src/lib/rev";
 import { normalizeMemoryProgress } from "../src/features/memory/normalize";
 import { MemorySession } from "../src/features/memory/MemorySession.svelte";
 import { loadStoredState } from "../src/store";
@@ -69,24 +69,26 @@ describe("修订戳：纯函数", () => {
     expect(revOf({ rev: "123" })).toBe(NO_REV);
   });
 
-  it("正常情况就用当前毫秒", () => {
-    expect(nextRev(1_700_000_000_000)).toBe(1_700_000_000_000);
+  it("逻辑计数：每次写入 +1，不读墙上时钟", () => {
+    const a = nextRev();
+    expect(a).toBe(REV_COUNTER_EPOCH + 1);
+    const b = nextRev(a);
+    const c = nextRev(b);
+    expect(b).toBe(a + 1);
+    expect(c).toBe(b + 1);
   });
 
-  it("同一毫秒内连写也严格递增（否则两条改动分不出先后）", () => {
-    const t = 1_700_000_000_000;
-    const a = nextRev(t);
-    const b = nextRev(t, a);
-    const c = nextRev(t, b);
-    expect(a).toBe(t);
-    expect(b).toBe(t + 1);
-    expect(c).toBe(t + 2);
+  it("老数据的毫秒时间戳不会压住新写入", () => {
+    // 旧版 rev 是 Date.now()（约 1.7e12）；新计数从更高的区间起算，
+    // 所以升级后的第一次写入一定晚于任何老记录，不需要迁移。
+    const legacy = 1_700_000_009_999;
+    expect(nextRev(legacy)).toBeGreaterThan(legacy);
+    expect(nextRev(legacy)).toBe(REV_COUNTER_EPOCH + 1);
   });
 
-  it("本机钟慢于对端时不会盖出更旧的戳", () => {
-    // 对端（钟快）那条是 t+9999；本机现在只有 t
-    const previous = 1_700_000_009_999;
-    expect(nextRev(1_700_000_000_000, previous)).toBe(previous + 1);
+  it("见过的戳越大，下一个越大", () => {
+    const previous = REV_COUNTER_EPOCH + 42;
+    expect(nextRev(previous)).toBe(previous + 1);
   });
 });
 

@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SyncEngine } from "@/features/sync/engine.svelte";
+import { activeWork } from "@/features/sync/activeWork.svelte";
 import { loadSyncMeta } from "@/features/sync/storage";
 import { encodePayload, decodePayload } from "@/features/sync/payload";
 import { stableHash } from "@/features/sync/collect";
@@ -37,6 +38,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   h.reset();
+  // 「用户正在做哪个题库」是模块级单例，跨用例会互相影响
+  activeWork.reset();
 });
 
 describe("引擎（端到端，对着替身）", () => {
@@ -82,6 +85,109 @@ describe("引擎（端到端，对着替身）", () => {
     expect(again.conflicts).toEqual([]);
     // 四件事都没发生时的说法（见 `describeSyncResult`）
     expect(engine.status.message).toBe("题库没有改动");
+  });
+
+  test("同一设备：本地是超集时只上传，云端一个字节都不写回本地", async () => {
+    // 用户报过的那条：「我就一台设备，为什么同步会把云端写回本地」。
+    // 判定只看内容：本地改了进度、云端还是旧的那份 → `upload`，本地只读。
+    h.freshDevice("A");
+    const engine = h.open("A");
+    h.seedBank(HASH_A, "英语短语", "make progress");
+    await engine.sync();
+    h.tick();
+    h.save("A");
+
+    h.studyBank(HASH_A, 3);
+    const before = localStorage.getItem(`quiz_app_state_${HASH_A}`);
+
+    const outcome = await engine.sync();
+    h.save("A");
+    expect(outcome.pushed).toBe(1);
+    expect(outcome.pulled).toBe(0);
+    // 上传不改本地：盘上那份必须**逐字节**保持原样
+    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toBe(before);
+
+    // 再同步一次：两边已经一致 → 什么都不做，本地仍然原样
+    const again = await engine.sync();
+    expect(again.pushed).toBe(0);
+    expect(again.pulled).toBe(0);
+    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toBe(before);
+  });
+
+  test("云端更新、用户没在做 → 直接落地，不弹窗", async () => {
+    h.freshDevice("A");
+    const a = h.open("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    await a.sync();
+    const gistId = h.store("A").value.gistId;
+    h.tick();
+    h.save("A");
+
+    h.freshDevice("B");
+    const b = h.open("B", { gistId });
+    await b.sync();
+    h.tick();
+    h.save("B");
+
+    // A 又改了进度并传上去
+    h.use("A");
+    h.studyBank(HASH_A, 5);
+    await a.sync();
+    h.tick();
+    h.save("A");
+
+    // B 没在做这个题库（`activeWork` 为空）→ 静默落地
+    h.use("B");
+    const outcome = await b.sync();
+    expect(outcome.pulled).toBe(1);
+    expect(outcome.awaiting).toEqual([]);
+    expect(b.prompt).toBeNull();
+
+    h.save("B");
+  });
+
+  test("云端更新、用户正在做题 → 先弹窗问，确认后才写本地", async () => {
+    h.freshDevice("A");
+    const a = h.open("A");
+    h.seedBank(HASH_A, "题库一", "first");
+    await a.sync();
+    const gistId = h.store("A").value.gistId;
+    h.tick();
+    h.save("A");
+
+    h.freshDevice("B");
+    const b = h.open("B", { gistId });
+    await b.sync();
+    h.tick();
+    h.save("B");
+
+    h.use("A");
+    h.studyBank(HASH_A, 5);
+    await a.sync();
+    h.tick();
+    h.save("A");
+
+    // B 上用户已经在这个题库里作答（例如选了一个选项还没提交）
+    h.use("B");
+    const leave = activeWork.enter(HASH_A);
+    activeWork.setBusy(HASH_A, true);
+    const before = localStorage.getItem(`quiz_app_state_${HASH_A}`);
+
+    const outcome = await b.sync();
+    expect(outcome.awaiting).toEqual([HASH_A]);
+    expect(outcome.pulled).toBe(0);
+    expect(b.prompt?.kind).toBe("remote-write");
+    // 用户没确认之前，本地一个字都不许改
+    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).toBe(before);
+
+    const applied = await b.acceptRemoteWrite();
+    expect(applied.pulled).toBe(1);
+    expect(b.prompt).toBeNull();
+    expect(localStorage.getItem(`quiz_app_state_${HASH_A}`)).not.toBe(before);
+
+    leave();
+    activeWork.reset();
+    h.save("B");
   });
 
   test("导入新题库后再同步：报「新增 1」，云端真的多出这个题库", async () => {

@@ -11,8 +11,8 @@ import { computeLearningSegments } from "../src/features/quiz/learningProgress";
 import {
   debug,
   installDebugConsoleCommands,
-  setDebugModeEnabled,
-} from "../src/debug";
+  setDebug,
+} from "../src/lib/debug";
 import {
   createActivePoolItem,
   createDefaultSettings,
@@ -75,7 +75,7 @@ function poolItem(
 }
 
 afterEach(() => {
-  setDebugModeEnabled(false);
+  setDebug(false);
   vi.restoreAllMocks();
 });
 
@@ -258,7 +258,7 @@ describe("debug console command", () => {
   it("安装浏览器控制台命令并提示开启方式", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    setDebugModeEnabled(false);
+    setDebug(false);
 
     installDebugConsoleCommands();
 
@@ -395,7 +395,7 @@ describe("selectNextFromPool", () => {
       .spyOn(console, "groupEnd")
       .mockImplementation(() => undefined);
 
-    setDebugModeEnabled(false);
+    setDebug(false);
     vi.spyOn(Math, "random").mockReturnValue(0);
     const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const state = makeState({
@@ -424,7 +424,7 @@ describe("selectNextFromPool", () => {
       .spyOn(console, "groupEnd")
       .mockImplementation(() => undefined);
 
-    setDebugModeEnabled(true);
+    setDebug(true);
     vi.spyOn(Math, "random").mockReturnValue(0);
     const questions = [makeQuestion("a"), makeQuestion("b"), makeQuestion("c")];
     const state = makeState({

@@ -29,15 +29,15 @@ function plan(pushShards: number[]): SyncPlan {
   };
 }
 
-function action(hash: string, verdict: BankAction["verdict"]): BankAction {
-  return { hash, name: "题库", verdict, kind: "skip", upload: false, localAt: 0 };
+function action(hash: string, kind: BankAction["kind"]): BankAction {
+  return { hash, name: "题库", kind, localAt: 0, reason: "测试" };
 }
 
 describe("settledThisRound", () => {
   test("要上传的分片**没**被冻结 → 可以写新基准", () => {
     const hash = "aaaabbbbccccdddd";
     const shard = shardIndexOf(hash);
-    expect(settledThisRound(plan([shard]), action(hash, "push"))).toBe(true);
+    expect(settledThisRound(plan([shard]), action(hash, "upload"))).toBe(true);
   });
 
   test("分片被冻结（不在 pushShards 里）→ **不许**写新基准", () => {
@@ -47,14 +47,16 @@ describe("settledThisRound", () => {
     const pushShards = [shardIndexOf(other)].filter(
       (index) => index !== shardIndexOf(hash),
     );
-    expect(settledThisRound(plan(pushShards), action(hash, "push"))).toBe(false);
-    expect(settledThisRound(plan(pushShards), action(hash, "deleteRemote"))).toBe(false);
+    expect(settledThisRound(plan(pushShards), action(hash, "upload"))).toBe(false);
+    expect(settledThisRound(plan(pushShards), action(hash, "remove-remote"))).toBe(
+      false,
+    );
   });
 
   test("拉取 / 跳过与分片冻结无关 → 总是可以写新基准", () => {
     const hash = "aaaabbbbccccdddd";
-    expect(settledThisRound(plan([]), action(hash, "pull"))).toBe(true);
-    expect(settledThisRound(plan([]), action(hash, "skip"))).toBe(true);
+    expect(settledThisRound(plan([]), action(hash, "download"))).toBe(true);
+    expect(settledThisRound(plan([]), action(hash, "in-sync"))).toBe(true);
   });
 
   test("冲突本身永远不算「这一轮结清了」", () => {

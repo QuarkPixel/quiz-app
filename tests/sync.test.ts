@@ -30,9 +30,9 @@ import {
   buildSyncPlan,
   forcePullPlan,
   forcePushPlan,
-  judgeBank,
   planIsEmpty,
 } from "@/features/sync/planner";
+import { decideBankSync } from "@/features/sync/decision";
 import type { RemoteBank, RemoteState } from "@/features/sync/types";
 import {
   applyRemoteValue,
@@ -182,7 +182,14 @@ function metaWith(
 ): SyncMeta {
   const map: SyncMeta["rows"] = {};
   for (const [name, hash] of Object.entries(rows)) {
-    map[name] = { remoteHash: hash, syncedAt: 500, remoteUpdatedAt: 500 };
+    // `remoteHash`（完整哈希）与 `contentHash`（题目 + 模式）在新记账里是分开的；
+    // 这个替身只关心"基准内容是谁"，两者记成同一个值即可。
+    map[name] = {
+      remoteHash: hash,
+      contentHash: hash,
+      syncedAt: 500,
+      remoteUpdatedAt: 500,
+    };
   }
   return {
     lastSyncedAt: 500,
@@ -329,200 +336,260 @@ describe("压缩往返", () => {
 });
 
 describe("逐题库三方合并", () => {
-  test("两边内容一样 → 跳过（哪怕 mtime 很新鲜）", () => {
-    // 应用一启动就会重写一遍本地配置 / 进度，mtime 常常是新鲜的；
-    // 只看 mtime 会把「其实没变」判成冲突。
+  /**
+   * 判定层只认内容：两边的题目 / 进度哈希 + 上次同步的基准。
+   *
+   * `baseContentHash` 传了就等于"上次同步时这个题库在云端"（记账里有行）；
+   * 不传就是第一次接上这个云端。`localAt` 一律不参与判定——这正是旧版
+   * 「单设备也会把云端写回本地」的根源。
+   */
+  const decide = (params: {
+    local?: BankRecord;
+    remote?: RemoteBank;
+    baseContentHash?: string;
+    baseSnapshot?: unknown;
+    cloudContentHash?: string;
+    hadBaseline?: boolean;
+  }) =>
+    decideBankSync({
+      local:
+        params.local === undefined
+          ? undefined
+          : {
+              contentHash: params.local.contentHash,
+              progressHash: params.local.progressHash,
+              snapshot: params.local.snapshot,
+              hasState: params.local.snapshot.state != null,
+            },
+      remote:
+        params.remote === undefined
+          ? undefined
+          : {
+              contentHash: params.remote.contentHash,
+              progressHash: params.remote.progressHash,
+              snapshot: params.remote.snapshot,
+              hasState: params.remote.snapshot.state != null,
+            },
+      baseContentHash: params.baseContentHash,
+      baseSnapshot: params.baseSnapshot,
+      cloudContentHash: params.cloudContentHash ?? params.remote?.contentHash,
+      hadBaseline: params.hadBaseline ?? params.baseContentHash !== undefined,
+    }).kind;
+
+  test("两边内容一样 → in-sync（哪怕 mtime 很新鲜）", () => {
     const local = localBank(HASH_A, "题库", { localAt: 999999 });
     const remote = remoteBank(HASH_A, "题库");
-    expect(judgeBank({ local, remote })).toBe("skip");
+    expect(decide({ local, remote })).toBe("in-sync");
   });
 
-  test("只有本地改过 → 上传", () => {
-    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
+  test("只有本地进度不同 → upload（本地只读，一个字都不改）", () => {
+    const local = localBank(HASH_A, "题库", {
+      localAt: 900,
+      // `currentRound` 是 `state` 里"只涨不落"的计数器，用它当"进度改了"的代表。
+      // 别再用 `round`：它已经从状态模型里删掉了，写在夹具里等于两边都没有进度。
+      state: { currentRound: 2 },
+    });
     const remote = remoteBank(HASH_A, "题库");
     expect(
-      judgeBank({
+      decide({
         local,
         remote,
-        row: { remoteHash: remote.contentHash, syncedAt: 500, remoteUpdatedAt: 0 },
+        baseContentHash: remote.contentHash,
+        baseSnapshot: remote.snapshot,
       }),
-    ).toBe("push");
+    ).toBe("upload");
   });
 
-  test("只有云端改过 → 下载", () => {
-    const local = localBank(HASH_A, "题库", { localAt: 100 });
-    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+  test("只有云端进度不同 → download", () => {
+    const local = localBank(HASH_A, "题库", {
+      localAt: 100,
+      state: { currentRound: 2 },
+    });
+    const remote = remoteBank(HASH_A, "题库", { state: { currentRound: 3 } });
     expect(
-      judgeBank({
+      decide({
         local,
         remote,
-        row: { remoteHash: "旧哈希", syncedAt: 500, remoteUpdatedAt: 0 },
+        baseContentHash: remote.contentHash,
+        baseSnapshot: local.snapshot,
       }),
-    ).toBe("pull");
+    ).toBe("download");
   });
 
   test("两边都把**题目**改了 → 冲突，绝不自动选边", () => {
-    const local = localBank(HASH_A, "题库", { marker: "本地改过的题干", localAt: 900 });
+    const local = localBank(HASH_A, "题库", {
+      marker: "本地改过的题干",
+      localAt: 900,
+    });
     const remote = remoteBank(HASH_A, "题库", { marker: "云端改过的题干" });
     expect(
-      judgeBank({
+      decide({
         local,
         remote,
-        row: { remoteHash: "旧哈希", syncedAt: 500, remoteUpdatedAt: 0 },
+        baseContentHash: "旧哈希",
+        baseSnapshot: { mode: "memory", state: { round: 1 } },
       }),
     ).toBe("conflict");
   });
 
-  test("两边都**做过题**（题目一样、进度都动过）→ 上传，交给引擎按卡合并", () => {
-    // 这是最日常的用法：手机上做了几道、电脑上也做了几道。旧版判成冲突，
+  test("题目一样、两边各做了一部分 → reconcile（合并结果写本地并推上去）", () => {
+    // 这是最日常的用法：手机上做了 a、电脑上做了 b。旧版判成冲突，
     // 而裁决是整库二选一 —— 无论选哪边都要丢掉另一边的进度。
-    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+    const card = (rev: number) => ({
+      state: "reviewing",
+      level: 2,
+      streak: 0,
+      nextDue: 100,
+      rev,
+    });
+    const local = localBank(HASH_A, "题库", {
+      localAt: 900,
+      state: { memory: { progress: { a: card(10) } } },
+    });
+    const remote = remoteBank(HASH_A, "题库", {
+      state: { memory: { progress: { b: card(11) } } },
+    });
     expect(
-      judgeBank({
+      decide({
         local,
         remote,
-        row: { remoteHash: local.contentHash, syncedAt: 500, remoteUpdatedAt: 0 },
+        baseContentHash: remote.contentHash,
+        baseSnapshot: { mode: "memory", state: {} },
       }),
-    ).toBe("push");
+    ).toBe("reconcile");
   });
 
-  test("题目一样、云端动过进度而本地没动 → 下载（合上云端那份）", () => {
-    const local = localBank(HASH_A, "题库", { localAt: 100, state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+  test("题目一样、云端那份更新 → download（本地没有云端没有的东西）", () => {
+    const local = localBank(HASH_A, "题库", {
+      localAt: 100,
+      state: { currentRound: 2 },
+    });
+    const remote = remoteBank(HASH_A, "题库", { state: { currentRound: 3 } });
     expect(
-      judgeBank({
+      decide({
         local,
         remote,
-        row: { remoteHash: local.contentHash, syncedAt: 500, remoteUpdatedAt: 0 },
+        baseContentHash: local.contentHash,
+        baseSnapshot: { mode: "memory", state: { currentRound: 1 } },
       }),
-    ).toBe("pull");
+    ).toBe("download");
   });
 
   test("没有基准时：本地没进度、云端有 → 听云端的（本地没什么可丢）", () => {
     const local = localBank(HASH_A, "题库");
     const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
-    expect(judgeBank({ local, remote })).toBe("pull");
+    expect(decide({ local, remote })).toBe("download");
   });
 
   /**
    * `state: null` 必须和「没有 state 字段」一样看待。
    *
    * 踩过：判定只判 `=== undefined`，于是 `null` 被读成「本地有进度」，
-   * 「本地没进度、云端有进度」走进 `push`，**把云端那份真进度覆盖成空**。
+   * 「本地没进度、云端有进度」走进上传，**把云端那份真进度覆盖成空**。
    * `null` 是真实存在的——`writeBankLocally` 会把云端的 `null` 原样
    * `JSON.stringify` 成字符串 `"null"` 存进 localStorage，读回来就是 `null`。
-   * 项目里另外两处（`bankProgressHash` 的 `?? null`、`progressMerge.stateOf`
-   * 的 `asRecord`）本来就把两者当同一件事，只有判定这里漏了。
    */
   test("没有基准时：本地 state 是 null、云端有进度 → 同样听云端的（别覆盖成空）", () => {
     const local = localBank(HASH_A, "题库", { state: null });
     const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
-    expect(judgeBank({ local, remote })).toBe("pull");
+    expect(decide({ local, remote })).toBe("download");
   });
 
-  test("没有基准、题目也不一样时：本地 state 是 null → 也让路（pull），不是冲突", () => {
+  test("没有基准、题目也不一样时：本地 state 是 null → 也让路（download），不是冲突", () => {
     const local = localBank(HASH_A, "题库", { state: null });
     const remote = remoteBank(HASH_A, "题库", {
       marker: "云端题干",
       state: { round: 3 },
     });
-    expect(judgeBank({ local, remote })).toBe("pull");
+    expect(decide({ local, remote })).toBe("download");
   });
 
-  test("没有基准时：只有本地有进度 → 上传", () => {
+  test("没有基准时：只有本地有进度 → upload", () => {
     const local = localBank(HASH_A, "题库", { state: { round: 2 } });
     const remote = remoteBank(HASH_A, "题库");
-    expect(judgeBank({ local, remote })).toBe("push");
+    expect(decide({ local, remote })).toBe("upload");
   });
 
-  test("没有基准时：云端 state 是 null、本地有进度 → 上传", () => {
+  test("没有基准时：云端 state 是 null、本地有进度 → upload", () => {
     const local = localBank(HASH_A, "题库", { state: { round: 2 } });
     const remote = remoteBank(HASH_A, "题库", { state: null });
-    expect(judgeBank({ local, remote })).toBe("push");
+    expect(decide({ local, remote })).toBe("upload");
   });
 
-  test("没有基准、两边都有进度但不一样：题目一样 → 上传并合并（不猜也不用问）", () => {
-    const local = localBank(HASH_A, "题库", { state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
-    expect(judgeBank({ local, remote })).toBe("push");
+  test("没有基准、两边都有进度但不一样：题目一样 → 按内容合（不由 mtime 猜方向）", () => {
+    const local = localBank(HASH_A, "题库", { state: { currentRound: 2 } });
+    const remote = remoteBank(HASH_A, "题库", { state: { currentRound: 3 } });
+    // 合并结果就是云端那份（计数器取大）→ 本地没有云端没有的东西
+    expect(decide({ local, remote })).toBe("download");
   });
 
   test("没有基准、**题目**也不一样、两边都有进度 → 还是冲突（题目没法自动合）", () => {
-    const local = localBank(HASH_A, "题库", { marker: "本地题干", state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库", { marker: "云端题干", state: { round: 3 } });
-    expect(judgeBank({ local, remote })).toBe("conflict");
+    const local = localBank(HASH_A, "题库", {
+      marker: "本地题干",
+      state: { round: 2 },
+    });
+    const remote = remoteBank(HASH_A, "题库", {
+      marker: "云端题干",
+      state: { round: 3 },
+    });
+    expect(decide({ local, remote })).toBe("conflict");
   });
 
   test("只有本地有、没有基准 → 新导入的题库，上传", () => {
-    expect(judgeBank({ local: localBank(HASH_A, "题库"), remote: undefined })).toBe(
-      "push",
-    );
+    expect(
+      decide({ local: localBank(HASH_A, "题库"), remote: undefined }),
+    ).toBe("upload");
   });
 
   test("只有本地有、但有基准 → 云端删掉了它，本地跟着删", () => {
     expect(
-      judgeBank({
+      decide({
         local: localBank(HASH_A, "题库"),
         remote: undefined,
-        row: { remoteHash: "h", syncedAt: 500, remoteUpdatedAt: 0 },
+        baseContentHash: "旧哈希",
+        hadBaseline: true,
       }),
-    ).toBe("deleteLocal");
+    ).toBe("remove-local");
   });
 
-  test("只有云端有、没有基准 → 别的设备新增的，下载", () => {
-    expect(judgeBank({ local: undefined, remote: remoteBank(HASH_A, "题库") })).toBe(
-      "pull",
-    );
-  });
-
-  test("只有云端有、但有基准 → 这台设备删过它，回收云端那一份", () => {
+  test("只有本地有、云端改过题目（改完不在题库表里）→ 冲突，删除不压过编辑", () => {
     expect(
-      judgeBank({
-        local: undefined,
-        remote: remoteBank(HASH_A, "题库"),
-        row: { remoteHash: "h", syncedAt: 500, remoteUpdatedAt: 0 },
-      }),
-    ).toBe("deleteRemote");
-  });
-
-  test("老格式（只有分片文件的基准）也能当兜底：文件没变 → 上传", () => {
-    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库");
-    expect(
-      judgeBank({
-        local,
-        remote,
-        fileRow: { remoteHash: "文件哈希", syncedAt: 500, remoteUpdatedAt: 0 },
-        remoteFileHash: "文件哈希",
-      }),
-    ).toBe("push");
-  });
-
-  test("老格式兜底：分片文件变了、本地也动过 → 冲突（题目不同）", () => {
-    const local = localBank(HASH_A, "题库", { marker: "本地题干", localAt: 900 });
-    const remote = remoteBank(HASH_A, "题库", { marker: "云端题干" });
-    expect(
-      judgeBank({
-        local,
-        remote,
-        fileRow: { remoteHash: "旧文件哈希", syncedAt: 500, remoteUpdatedAt: 0 },
-        remoteFileHash: "新文件哈希",
+      decide({
+        local: localBank(HASH_A, "题库"),
+        remote: undefined,
+        baseContentHash: "旧哈希",
+        cloudContentHash: "新哈希",
+        hadBaseline: true,
       }),
     ).toBe("conflict");
   });
 
-  test("老格式兜底：文件变了但题目一样、只有进度不同 → 不冲突", () => {
-    const local = localBank(HASH_A, "题库", { localAt: 900, state: { round: 2 } });
-    const remote = remoteBank(HASH_A, "题库", { state: { round: 3 } });
+  test("只有云端有、没有基准 → 别的设备新增的，下载", () => {
     expect(
-      judgeBank({
-        local,
-        remote,
-        fileRow: { remoteHash: "旧文件哈希", syncedAt: 500, remoteUpdatedAt: 0 },
-        remoteFileHash: "新文件哈希",
+      decide({ local: undefined, remote: remoteBank(HASH_A, "题库") }),
+    ).toBe("download");
+  });
+
+  test("只有云端有、但有基准 → 这台设备删过它，回收云端那一份", () => {
+    expect(
+      decide({
+        local: undefined,
+        remote: remoteBank(HASH_A, "题库"),
+        baseContentHash: remoteBank(HASH_A, "题库").contentHash,
+        hadBaseline: true,
       }),
-    ).toBe("push");
+    ).toBe("remove-remote");
+  });
+
+  test("只有云端有、但云端改过题目 → 冲突（本地删了它，云端却又改过）", () => {
+    expect(
+      decide({
+        local: undefined,
+        remote: remoteBank(HASH_A, "题库", { state: { round: 3 } }),
+        baseContentHash: "旧哈希",
+        hadBaseline: true,
+      }),
+    ).toBe("conflict");
   });
 });
 
@@ -538,15 +605,16 @@ describe("合并计划", () => {
       remote: remoteState([remoteA, remoteB]),
       meta: metaWith({
         [bankRowKey(HASH_A)]: remoteA.contentHash,
-        [bankRowKey(HASH_B)]: "云端改动之前的哈希",
+        // 本地没动过 B（基准 = 本地那份内容），云端改过 → 只该下载
+        [bankRowKey(HASH_B)]: localB.contentHash,
       }),
     });
 
-    const verdicts = Object.fromEntries(
-      plan.actions.map((action) => [action.hash, action.verdict]),
+    const kinds = Object.fromEntries(
+      plan.actions.map((action) => [action.hash, action.kind]),
     );
-    expect(verdicts[HASH_A]).toBe("push");
-    expect(verdicts[HASH_B]).toBe("pull");
+    expect(kinds[HASH_A]).toBe("upload");
+    expect(kinds[HASH_B]).toBe("download");
     expect(plan.conflicts).toEqual([]);
     expect(plan.pushShards).toEqual([shardIndexOf(HASH_A)]);
   });
@@ -579,10 +647,13 @@ describe("合并计划", () => {
     const plan = buildSyncPlan({
       local: localState([]),
       remote,
-      meta: metaWith({ [bankRowKey(HASH_A)]: "h" }),
+      // 基准 = 云端当前内容：云端没改过，只是本机删了它
+      meta: metaWith({
+        [bankRowKey(HASH_A)]: remote.banks.get(HASH_A)!.contentHash,
+      }),
     });
 
-    expect(plan.actions[0].verdict).toBe("deleteRemote");
+    expect(plan.actions[0].kind).toBe("remove-remote");
     expect(plan.deleteRemoteFiles).toEqual([shardFileName(shardIndexOf(HASH_A))]);
   });
 
@@ -635,12 +706,12 @@ describe("合并计划", () => {
 
     const push = forcePushPlan(localState([local]), remoteState([remote, remote2]), meta);
     expect(push.conflicts).toEqual([]);
-    expect(push.actions.find((a) => a.hash === HASH_A)?.verdict).toBe("push");
-    expect(push.actions.find((a) => a.hash === HASH_B)?.verdict).toBe("deleteRemote");
+    expect(push.actions.find((a) => a.hash === HASH_A)?.kind).toBe("upload");
+    expect(push.actions.find((a) => a.hash === HASH_B)?.kind).toBe("remove-remote");
 
     const pull = forcePullPlan(localState([local]), remoteState([remote]), meta);
     expect(pull.conflicts).toEqual([]);
-    expect(pull.actions[0].verdict).toBe("pull");
+    expect(pull.actions[0].kind).toBe("download");
   });
 
   test("冲突裁决后重算计划：keepLocal 全推、keepRemote 全拉", () => {
@@ -655,12 +726,12 @@ describe("合并计划", () => {
 
     const keepLocal = applyResolution(plan, new Map([[HASH_A, "keepLocal"]]));
     expect(keepLocal.conflicts).toEqual([]);
-    expect(keepLocal.actions[0].verdict).toBe("push");
+    expect(keepLocal.actions[0].kind).toBe("upload");
     expect(keepLocal.pushShards).toEqual([shardIndexOf(HASH_A)]);
 
     const keepRemote = applyResolution(plan, new Map([[HASH_A, "keepRemote"]]));
     expect(keepRemote.conflicts).toEqual([]);
-    expect(keepRemote.actions[0].verdict).toBe("pull");
+    expect(keepRemote.actions[0].kind).toBe("download");
     expect(keepRemote.pushShards).toEqual([]);
   });
 
@@ -686,8 +757,8 @@ describe("合并计划", () => {
 
     // 用户只对题库一做了选择
     const resolved = applyResolution(plan, new Map([[hash1, "keepLocal"]]));
-    expect(resolved.actions.find((a) => a.hash === hash1)?.verdict).toBe("push");
-    expect(resolved.actions.find((a) => a.hash === hash2)?.verdict).toBe("conflict");
+    expect(resolved.actions.find((a) => a.hash === hash1)?.kind).toBe("upload");
+    expect(resolved.actions.find((a) => a.hash === hash2)?.kind).toBe("conflict");
     expect(resolved.conflicts.map((c) => c.hash)).toEqual([hash2]);
     // 还剩冲突 → 那一片不能动
     expect(resolved.pushShards).toEqual([]);
@@ -719,9 +790,10 @@ describe("general 的合并", () => {
         {
           hash: HASH_A,
           name: "题库一",
-          verdict: "pull",
+          kind: "download",
           remoteHash: "h",
           localAt: 0,
+          reason: "测试",
         },
       ],
       localBanks: new Map(),
@@ -746,8 +818,8 @@ describe("general 的合并", () => {
       remote: remoteGeneral,
       base: null,
       actions: [
-        { hash: HASH_A, name: "题库一", verdict: "pull", localAt: 0 },
-        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+        { hash: HASH_A, name: "题库一", kind: "download", localAt: 0, reason: "测试" },
+        { hash: HASH_B, name: "题库二", kind: "in-sync", localAt: 0, reason: "测试" },
       ],
       localBanks: new Map([[HASH_B, localBank(HASH_B, "题库二")]]),
       remoteBanks: new Map([[HASH_A, remoteBank(HASH_A, "题库一")]]),
@@ -768,8 +840,8 @@ describe("general 的合并", () => {
       remote: remoteGeneral,
       base: null,
       actions: [
-        { hash: HASH_A, name: "题库一", verdict: "skip", localAt: 0 },
-        { hash: HASH_B, name: "题库二", verdict: "deleteLocal", localAt: 0 },
+        { hash: HASH_A, name: "题库一", kind: "in-sync", localAt: 0, reason: "测试" },
+        { hash: HASH_B, name: "题库二", kind: "remove-local", localAt: 0, reason: "测试" },
       ],
       localBanks: new Map([[HASH_B, localBank(HASH_B, "题库二")]]),
       remoteBanks: new Map([[HASH_A, remoteBank(HASH_A, "题库一")]]),
@@ -830,8 +902,8 @@ describe("general 的合并", () => {
       remote,
       base,
       actions: [
-        { hash: HASH_A, name: "题库一", verdict: "skip", localAt: 0 },
-        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+        { hash: HASH_A, name: "题库一", kind: "in-sync", localAt: 0, reason: "测试" },
+        { hash: HASH_B, name: "题库二", kind: "in-sync", localAt: 0, reason: "测试" },
       ],
       localBanks: new Map([
         [HASH_A, localBank(HASH_A, "题库一")],
@@ -867,8 +939,8 @@ describe("general 的合并", () => {
       remote,
       base,
       actions: [
-        { hash: HASH_A, name: "题库一", verdict: "skip", localAt: 0 },
-        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+        { hash: HASH_A, name: "题库一", kind: "in-sync", localAt: 0, reason: "测试" },
+        { hash: HASH_B, name: "题库二", kind: "in-sync", localAt: 0, reason: "测试" },
       ],
       localBanks: new Map([
         [HASH_A, localBank(HASH_A, "题库一")],
@@ -901,8 +973,8 @@ describe("general 的合并", () => {
       remote,
       base,
       actions: [
-        { hash: HASH_A, name: "题库一", verdict: "deleteLocal", localAt: 0 },
-        { hash: HASH_B, name: "题库二", verdict: "skip", localAt: 0 },
+        { hash: HASH_A, name: "题库一", kind: "remove-local", localAt: 0, reason: "测试" },
+        { hash: HASH_B, name: "题库二", kind: "in-sync", localAt: 0, reason: "测试" },
       ],
       localBanks: new Map([[HASH_B, localBank(HASH_B, "题库二")]]),
       remoteBanks: new Map([
@@ -929,7 +1001,7 @@ describe("general 的合并", () => {
       local,
       remote,
       base,
-      actions: [{ hash: HASH_A, name: "新名字", verdict: "skip", localAt: 0 }],
+      actions: [{ hash: HASH_A, name: "新名字", kind: "in-sync", localAt: 0, reason: "测试" }],
       localBanks: new Map([[HASH_A, localBank(HASH_A, "旧名字")]]),
       remoteBanks: new Map([[HASH_A, remoteBank(HASH_A, "新名字")]]),
       localHasEdits: true,
@@ -982,7 +1054,7 @@ describe("「设置也变了」这条信号", () => {
       ),
     });
 
-    expect(plan.actions.every((action) => action.verdict === "skip")).toBe(true);
+    expect(plan.actions.every((action) => action.kind === "in-sync")).toBe(true);
     expect(plan.settingsChanged, "顺序也是要同步的东西").toBe(true);
     expect(plan.generalPush).toBe(true);
   });
@@ -995,7 +1067,7 @@ describe("「设置也变了」这条信号", () => {
 
     const plan = buildSyncPlan({ local, remote, meta: emptySyncMeta() });
 
-    expect(plan.actions[0].verdict).toBe("push");
+    expect(plan.actions[0].kind).toBe("upload");
     expect(plan.generalPush, "列表里多一条，云端那份 general 当然要更新").toBe(
       true,
     );
@@ -1067,7 +1139,7 @@ describe("「设置也变了」这条信号", () => {
       ),
     });
 
-    expect(plan.actions[0].verdict).toBe("skip");
+    expect(plan.actions[0].kind).toBe("in-sync");
     expect(plan.settingsChanged).toBe(true);
   });
 });

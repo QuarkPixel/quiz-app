@@ -18,7 +18,6 @@ import { flushSync, mount, unmount, type Component } from "svelte";
 import MemoryViewHarness from "./MemoryViewHarness.svelte";
 import { BankStore } from "@/source/bankStore";
 import { Router, type RouterEnv } from "@/features/routing/router.svelte";
-import { userActivity } from "@/features/userActivity.svelte";
 import { toastStore } from "@/features/toast.svelte";
 import { STORAGE_KEY_GENERAL } from "@/config";
 import { createDefaultSettings, createDefaultUiPreferences } from "@/store";
@@ -153,7 +152,6 @@ let mounted: Mounted | null = null;
 
 beforeEach(() => {
   localStorage.clear();
-  userActivity.reset();
   toastStore.dismiss();
 });
 
@@ -164,7 +162,6 @@ afterEach(() => {
     mounted = null;
   }
   localStorage.clear();
-  userActivity.reset();
   toastStore.dismiss();
 });
 
@@ -202,10 +199,6 @@ describe("地址 → 会话", () => {
     mounted = openAt(`/${HASH}/learn`, memoryState(["m1", "m2"]));
 
     expect(questionOnScreen()).toBe(true);
-    expect(
-      userActivity.answering,
-      "屏上有题 = 正在答题（云同步的刷新要让路）",
-    ).toBe(true);
     // 地址不变：这就是「刷新以后还在这儿」
     expect(mounted.env.url.pathname).toBe(`/${HASH}/learn`);
   });
@@ -261,6 +254,5 @@ describe("会话 → 地址", () => {
     expect(questionOnScreen()).toBe(false);
     expect(mounted.router.route).toEqual({ bank: HASH, mode: "home" });
     expect(mounted.env.url.pathname).toBe(`/${HASH}`);
-    expect(userActivity.answering, "回首页之后就不再是「正在答题」").toBe(false);
   });
 });

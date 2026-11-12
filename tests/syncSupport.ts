@@ -16,7 +16,6 @@ import type { AddressInfo } from "node:net";
 import { SyncEngine } from "@/features/sync/engine.svelte";
 import { SyncConfigStore } from "@/features/sync/config.svelte";
 import { installStorageHook, writeLocal } from "@/features/sync/storage";
-import { userActivity } from "@/features/userActivity.svelte";
 import { decodePayload } from "@/features/sync/payload";
 import {
   GIST_GENERAL_FILE,
@@ -181,13 +180,6 @@ export class SyncHarness {
     this.apiBase = `http://127.0.0.1:${port}`;
     vi.spyOn(Date, "now").mockImplementation(() => this.clock);
     installStorageHook();
-    // 拉取到新内容时引擎会整页刷新；测试里拦下来，免得真的跳走
-    vi.stubGlobal("location", {
-      ...globalThis.location,
-      reload: () => {
-        this.reloads += 1;
-      },
-    });
   }
 
   async stop(): Promise<void> {
@@ -208,8 +200,6 @@ export class SyncHarness {
     localStorage.clear();
     this.reloads = 0;
     this.clock = 1_700_000_000_000;
-    // 「正在答题 / 弹窗开着」是模块级单例，跨用例会互相影响
-    userActivity.reset();
   }
 
   /** 时间往前走一点（真实使用里每一步之间都有间隔）。 */
