@@ -124,13 +124,14 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     `syncFromSource`（题库被删等）。**读 URL 时会摘掉 `import.meta.env.BASE_URL` 前缀，写回去时再加回来**
   - `context.ts`：`provideRouter` / `useRouter`（组件测试可以塞假的进来）
   - **`Router.setActiveBank` 与 URL 里那一个相同时什么都不做**：写一次盘会让 `App.svelte` 用 `{#key}` 重建整个会话
-- `src/features/userActivity.svelte.ts` — **「现在能不能打断用户」+ 挂起的那笔刷新**（`userActivity` 单例）。
-  三条理由：`answering`（屏上有题）、`overlayOpen`（按名字记账的弹窗占位）、`hidden`（页面在后台）。
-  同步拉到当前题库的新内容时 `requestReload()`：能打断就返回 `true`（调用方自己 `location.reload()`），
-  否则挂起 → `attachReloadGuard()`（模块级 `$effect.root`）等状态回到空闲再补上，补之前弹一句提示。
-  视图侧只有两个 effect（`setAnswering(session.currentQuestion !== null)` / `setOverlay(OVERLAY_KEYS.…, open)`）；
-  **`setOverlay` 必须包在「值真的变了才写」的 `untrack` 判断里**，否则 effect 读写同一块 state 会
-  `effect_update_depth_exceeded`（踩过）
+- `src/features/sync/activeWork.svelte.ts` — **「此刻正在做哪个题库」**（`activeWork` 单例）。
+  只有两个字段：`hash`（当前挂载的视图）与 `busy`（有没有**未提交的投入**：
+  刷题是"已判分 / 选过选项 / 填过空"，记忆模式是"这一轮不在首页"——**不是**"屏上有题"，
+  刚打开还没作答时换题不该打扰）。视图挂载时 `enter(hash)`、`session.hasWorkInProgress`
+  变化时 `setBusy(hash, …)`、卸载时执行 `enter` 返回的清理函数。
+  同步只在写本地之前问一句 `isBusy(hash)`。
+  **不要**从落盘状态里猜（`quizSession` 存在只说明"上次停在这道题"），也不要再长成
+  `answering` / `overlayOpen` / `hidden` 那种多布尔单例——那正是被删掉的旧 `userActivity`。
 - `src/features/globalSettingsShortcut.ts` — **⌘⇧I（Ctrl+Shift+I）打开全局设置**（`isGlobalSettingsShortcut` / `handleGlobalSettingsShortcut`）。
   应用级：跟具体题库无关，窗口监听挂在 `Sidebar.svelte` 的 `<svelte:window onkeydown>` 上（它始终挂载，且已经持有对话框开关）；
   焦点在对话框里时不吃这次按键，免得在题库设置上面再叠一个全局设置。与 `SHORTCUTS.toggleSettings`（⌘I = 当前题库设置）只差一个 ⇧，别写混。
@@ -145,9 +146,13 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `collect.ts`：`collectLocalState`（键 → **逐题库**）、`filesOfState` / `collectLocalFiles`（题库装进分片后的样子）、
     **三个哈希**（`bankContentHash` 只含题目 + 模式、`bankProgressHash` 只含 `state`、`bankFullHash` 两者都含）、`stableHash`。
     **冲突判定只认第一个**，`computePendingChanges` 用第三个——混用会让「两台设备各答各的题」变成一次冲突（踩过）
-  - `planner.ts`：**逐题库**三方合并的计划层（`judgeBank` / `buildSyncPlan` / `applyResolution` / `forcePushPlan` / `forcePullPlan`），重点测试对象。
-    「题目一样、进度两边都动过」时它只返回 `push`，真正的合并交给 `progressMerge.ts`（见下一条）。
-    单个题库的判定在 `plan.ts`（`decideBank`），云端读回来的快照在 `remote.ts`（`buildRemoteState` / `remoteReadDamage`），
+  - `decision.ts`：**一个题库这一轮做什么的唯一决定处**（`decideBankSync` → `BankSyncKind`）。
+    只看内容（两边的题目 / 进度哈希 + 上次同步的基准），不看 mtime；输出是一支判别联合，
+    调用方不许改写。完整判定表见「云同步」章节
+  - `planner.ts`：把上面的决定装成计划（`buildSyncPlan` / `applyResolution` / `forcePushPlan` / `forcePullPlan`），
+    并算出哪些分片要重建上传、哪些云端文件该回收。
+    「题目一样、进度两边都动过」交给 `progressMerge.ts`（见下一条）。
+    云端读回来的快照在 `remote.ts`（`buildRemoteState` / `remoteReadDamage`），
     general 段的合并与「一轮同步说成人话」在 `general.ts`（`mergeGeneral` / `summarize`）
   - `progressMerge.ts`：**进度按卡合并**（`planProgressMerge` / `mergeBankSnapshots`；底层算子
     `mergeProgressMap` / `mergeBankState` / `sameProgress` 在同目录 `model/merge.ts`，只有这里用）。
@@ -394,7 +399,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     `sessionHash` / `sessionQuestions` / `sessionState` / `applyImportedState`。
     **凡是两个模式一模一样的行为都加在这里**，不要再往两个 Session 里各抄一份（记忆模式曾因此漏过 ⌘N / ⌘S）
   - `QuizSession.svelte.ts`：持有 reactive state，继承上面那个基类；`globalSettings` 是**指向共享 store 的 getter**（不自己持有副本）。屏上状态机在 `quizFlow.ts`（`empty` / `asking` / `judged` / `preview`），**跨刷新的那一份在 `StoredState.quizSession`**（见「刷题模式的屏上会话」）
-  - `quizFlow.ts`：刷题模式的状态机（纯函数，只活在内存里）；`quizSession.ts`：跨刷新的那条记录（纯函数，落盘 / 同步）
+  - `quizFlow.ts`：刷题模式的状态机（纯函数，只活在内存里）；`quizSession.ts`：跨刷新的那条记录（纯函数，**只落盘、不同步**）
   - `types.ts`：两个 session 共享的类型（复制题目相关、`KeyboardUiActions`）。
     **不要**再从 `QuizSession.svelte.ts` 里 import 类型——记忆模式并不依赖刷题会话
 - 设置面板分两处（入口与图标都不同，避免混淆）：
@@ -427,7 +432,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 
 **重置会传播**：`StoredState.resetRev`（`nextRev` 盖的戳）。`masteredIds` 是 highWaterSet（只涨不落），没有它一次重置会被另一台设备的旧值原样复活。合并时戳大的那一侧整段赢：它的 `masteredIds` / `masteredMistakes` 作基，另一侧只贡献 `rev > resetRev` 的池子条目。代价（有意接受）：重置后在**另一台**设备上新掌握的题会被这次覆盖丢掉（`masteredIds` 没有逐条时间戳）。**重置与导入都盖戳**（`resetStoredState` / `MemorySession.reset` / 两个 `applyImportedState`）。
 
-**新增 `StoredState` 字段要同时看四处**：`persistedState`（`store.ts`，落盘白名单）、`toStoredStateLike`（`features/quiz/settings.ts`）、`rebuildRuntimeState` / `rebuildRuntimeStateForFilterChange`（`features/quiz/runtime.ts`）、以及同步的登记表。后三处以前都是手抄字段，漏了 `quizSession` / `resetRev` 的后果分别是「调一下连对门槛就换了一道题」和「切筛选 / 导入把重置戳抹掉」。
+**新增 `StoredState` 字段要同时看四处**：`persistedState`（`store.ts`，落盘白名单）、`toStoredStateLike`（`features/quiz/settings.ts`，设置变更后的重建）、`rebuildRuntimeState` / `rebuildRuntimeStateForFilterChange`（`features/quiz/runtime.ts`，切筛选 / 导入）、以及同步登记表。`resetRev` 漏在任何一处都会让重置失效（旧进度又被并集回来）；`quizSession` 有意**不**进 `rebuildRuntimeState`（导入后应该重新开始），但必须进 `toStoredStateLike`（调一下连对门槛不该换一道题）。
 
 ### 刷题模式的「屏上会话」（`StoredState.quizSession`）
 
@@ -437,7 +442,9 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 - `initialize()` 先试 `restoreQuizSession()`：这道题还在 `activePool` 里就恢复（题干页 / 答案页）；否则正常出题。`fillActivePool` 在恢复**之前**跑，所以「刚被补回池子的题」也会恢复——它确实在池子里
 - 选项顺序（`optionOrder`）必须原样还原：答案页要标「你选了哪个」，顺序变了等于换了一道题。题库改过（数量对不上 / 下标越界）就重新打乱
 - 判分页可以恢复（对错 + 作答），但**判分前快照不落盘**（它是一整份 `RuntimeState`），所以恢复之后「视作正确」不可用：`canTreatAsCorrect` 为 `false`，`QuestionActions` 不渲染那个按钮（不是点了没反应）
-- 整条 LWW（`rev` 大的赢；同戳按 `currentId` 字典序裁决，保证交换律）：它是「屏上」的单值状态，没有可以逐字段拼的语义
+- **设备本地**（`DEVICE_LOCAL_BANK_FIELDS`）：它是「我在哪」，和 `activeBank` / `ui` 同族。
+  不跨设备，也不参与 `progressHash`——否则换一道题就被判成「这个题库变了」，
+  每轮白传一次分片、还会把正在做题的人弹一次「云端有更新」。写回时 `attachDeviceLocal` 贴回本机那份
 - **不进进度备份**（`exportProgress` 只装长期进度）；`buildRuntimeState` 会丢掉指向已删除题目的记录
 - `advanceQuestionFlow()` 进入「新题预告」时清掉记录——那是展示，不是「停在某道题等作答」
 
@@ -457,6 +464,11 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `MemoryReviewSession = { day, queue, currentId, answered, doneIds, touchedIds, targets, failed, streaks, rev }`。`day` 是 `DayKey`；`doneIds` = 今天**过关**的卡（进度条分子，也是墓碑），`touchedIds` = 今天**答过**的卡（含忘记 / 模糊），`targets` = 本轮还要连对几次，`streaks` = 本轮已连对几次
   - 两者都**可同步**（`memory.sessions` 已登记进 `SYNCED_BANK_FIELDS`），换设备能接着 3 / 5；合并规则见 `mergeSessionsWithBase`
   - **不进进度备份**：它们是「今天 / 本轮」的短周期状态（`exportProgress` 只装长期进度）
+  - 读盘时按题库现有 id **收敛**（`store.ts` 的 `cleanMemoryState`）：`progress` 与
+    `sessions` 里指向已删题目 / 已改 id 的条目一起剔掉，否则队列里永远走不完那几张。
+    旧的 `memory.retry` / `memory.review` 必须**显式 `delete`**——用 `{ ...memory }`
+    会把它们原样带下去，于是「删了一道题」之后那道题的待办仍挂在盘上，同步一次还可能
+    被旧快照复活
 - `MemoryBankSettings`（按题库，记忆模式）— `{ graduateLevel: 7, roundTarget: 5, lockRoundPool: false }`（掌握阶梯阈值 M / 一轮要掌握几题 / **每轮限定题数**），由 `sanitizeMemorySettings` 净化（`lockRoundPool` 只认真正的 `true`）
   - 连对次数 / 顺序**不重复存**，直接复用刷题模式的 `BankSettings`（`correctStreakToMaster` / `selectionMode`）；UI 在同一个面板里，但落的是同一个 `settings` 对象
   - 记忆模式**不用** `BankSettings.activePoolSize`：池子容量与本轮目标共用 `roundTarget`（见「两条流」）
@@ -518,12 +530,16 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   `deflateRaw` + base64url 包一层 `{v, d}`。实测 200 张卡 44.2 KB → 5.6 KB。
   **不要**用字典树之类的方式再压缩：实测只省 13.6% raw，deflate 之后归零
   （deflate 本来就是靠引用前面出现过的字符串工作的）。
-- **同步单元是「题库」，不是「文件」**（`merge.ts`，纯函数，重点测试对象）。
-  分片只是容器：合并 / 冲突 / 删除都按题库逐条判定。两个独立信号：
-  - 本地改过没有 → 比 `SyncRowMeta.syncedAt` 与该题库的 mtime（题目键 / 进度键里最晚的）
-  - 云端改过没有 → 比 `SyncRowMeta.contentHash` 与该题库重新算出来的**内容哈希**
-    （只含题目与模式；老记账里没有这个字段时退回 `remoteHash`，那时它正好就是内容哈希）
-  用哈希而不是 `updated_at`，是因为 Gitee 的时间戳只在 Gist 级别：改了题库 A，
+- **同步单元是「题库」，不是「文件」**（`decision.ts` + `merge.ts`，纯函数，重点测试对象）。
+  分片只是容器：合并 / 冲突 / 删除都按题库逐条判定。
+  **判据只有内容，不看时钟**（旧版这里写的是「本地 mtime vs `syncedAt`」+「云端
+  `contentHash`」两个信号，那正是单设备被回写的根源，已经删掉）：
+  - 题目是不是同一份 → `contentHash`（只含 `{mode, questions}`）
+  - 进度是不是一样 / 谁是谁的超集 → `progressHash` + 三方比较，见下面
+    `planProgressMerge` 那条
+  - 上次同步时它长什么样 → `SyncRowMeta.snapshot`（三方参照）与 `contentHash`
+  `localAt` / `syncedAt` 现在**只用于展示**，不参与方向判定。
+  用内容哈希而不是 `updated_at`，是因为 Gitee 的时间戳只在 Gist 级别：改了题库 A，
   整个 Gist 时间就变，题库 B 不该被误判成冲突。内容哈希 = `bankContentHash`，
   只覆盖 `{mode, questions}`，**不含题库名**（名字在 general 的题库列表里，
   算进去会让「改个名」变成「题库内容变了」），**也不含进度**——见下一条。
@@ -546,37 +562,85 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     用随机卡片两两组合钉住）。违反它就会出现"A 算出 X、B 算出 Y"的隐形 bug。
     注意排序兜底键**要排除 `lapses`**（它选完赢家再取大），否则结合律会破。
   - 已掌握是**终态**（排在比较的第一位），`lapses` 取两边最大值。
-  **「一样」的判据必须与键序无关**：`sameValue` 走 `stableHash`（`collect.ts`），
-  不要用 `JSON.stringify` 比——本地那份是内存对象、云端那份是解码出来的 JSON 文本，
-  键序天然可能不同（`stableHash` 就是为此递归排序键名）。用 stringify 比的话，
+  **「一样」的判据必须与键序无关**：`model/same.ts` 的 `same()` 走 `canonicalJson`
+  （递归排序键名），不要用 `JSON.stringify` 比——本地那份是内存对象、云端那份是
+  解码出来的 JSON 文本，键序天然可能不同。用 stringify 比的话，
   「其实一模一样」会被判成「变了」：多写一次盘、多传一次分片，还会报成一次
-  「合并进度」；更糟的是 `pickField` 里本地只是键序不同却被当成「改过」，
-  落到「两边都改过 → 听本地」那条分支就会**丢掉云端真正的改动**。
-- **`state` 的 `null` 与「缺字段」是同一件事**（`hasNoState`）：
+  「合并进度」；更糟的是 `pickScalar` 里本地只是键序不同却被当成「改过」，
+  落到「两边都改过 → 取规范化 JSON 较大的那份」那条分支就会**丢掉云端真正的改动**。
+- **`state` 的 `null` 与「缺字段」是同一件事**（`hasNoState` / `hasState`）：
   `bankProgressHash` 用 `state ?? null` 归一（两者哈希相同）、`progressMerge.stateOf`
-  用 `asRecord`（`null` → `undefined`）——判定这里也必须一起归一，别只判 `=== undefined`。
+  用 `asRecord`（`null` → `undefined`）——判定这里也必须一起归一，别只判 `=== undefined`
+  （`BankView.hasState` 用的是 `state != null`）。
   它真的会出现：`writeBankLocally` 拉取云端那份 `state: null` 时若只判 `undefined`，
   会把 `null` 原样 `JSON.stringify` 成字符串 `"null"` 写进 localStorage，再收集起来
   就成了一份「有进度」的空壳。后果是「本地没进度、云端有进度」被读成「本地有进度」，
-  走 `push` 把云端那份真进度**覆盖成空**（数据丢失）。
+  走 `upload` 把云端那份真进度**覆盖成空**（数据丢失）。
   归一的位置一共四层，缺一层就会漏：收集本地（`collectLocalState`）、解云端分片
-  （`buildRemoteState`）、判定（`judgeBank`）、写回（`writeBankLocally`）。
+  （`buildRemoteState`）、判定（`decideBankSync`）、写回（`writeBankLocally`）。
 - **`SyncRowMeta` 的四个字段各管一件事**（往它加字段时**同时改 `storage.ts` 的
   `normalizeRowMeta`**，否则写进去读不回来——这个坑真踩过）：
   `remoteHash` = 完整哈希（有没有没推上去的东西，`computePendingChanges` 用）、
-  `contentHash` = 只含题目（冲突判定用）、`syncedAt` = 本地改动的基准线、
-  `snapshot` = 进度合并的三方参照、`mode` = 拉取时保住题库模式
+  `contentHash` = 只含题目（判定"云端有没有改过内容"用）、`syncedAt` = 本机记账时间
+  （**不再用于判方向**：方向只由内容决定）、`snapshot` = 进度合并的三方参照、
+  `mode` = 拉取时保住题库模式
   （`collectLocalState` 是从库列表取 `mode` 的，库列表还没有这个题库时会按 `quiz`
   算内容哈希，同一份题库于是在两边算出两个哈希）。
-- **「本地怎么改」与「要不要上传」是两个独立的问题**（`plan.ts` 的 `decideBank`）：
-  `BankDecision { action, upload, merged?, progressMerged }`——`action` 说本地这一轮做什么
-  （`skip` / `download` / `merge` / `deleteLocal` / `deleteRemote` / `conflict`），
-  `upload` 说要不要把这个题库传上去。**`action === "skip"` 时 `upload` 照样可以是 `true`**
-  （本地改过、云端没有 → 只需要上传，本地不用改写）。
-  以前这两件事被塞进一个 `verdict`，然后 `buildSyncPlan` 用一句
-  `action.verdict = "skip"` **把它改掉**——那就是线上「复习完的卡又变回待复习」的根因：
-  本地改动永远传不上去，而基准线照常刷新，下一轮判成 pull、云端旧进度反手覆盖回来。
-  **判定结果不许再被调用方改写**，要加语义就加字段。
+- **一个题库这一轮做什么，只有一支判别联合**（`decision.ts` 的 `decideBankSync`
+  → `types.ts` 的 `BankSyncKind`）：
+
+  | kind | 含义 | 会不会写本地 |
+  |---|---|---|
+  | `in-sync` | 两边内容 + 进度都一致 | 否 |
+  | `upload` | 本地是云端的超集 | **否**（只上传） |
+  | `download` | 云端是本地的超集 | 是（用云端覆盖） |
+  | `reconcile` | 两边各有一份对方没有的 | 是（写合并结果 + 上传） |
+  | `conflict` | 题目分叉且两边都改过 / 没有可信基准 | 否 |
+  | `remove-local` | 云端删了它 | 是（删本地） |
+  | `remove-remote` | 本机删了它 | 否（删云端） |
+
+  **判据只有内容**：两边的 `contentHash`（题目 + 模式）、`progressHash`、上次同步的
+  `snapshot` / `contentHash`。`localAt`（mtime）只用于展示，**不参与判定**。
+  旧版先按 `mtime > syncedAt` 猜 `verdict`、再用内容改判、最后还可能被
+  `buildSyncPlan` 改一次——三个地方都能"决定"，于是单设备也会被判成 pull、
+  把云端写回本地。现在没有 `verdict`，也没有 `upload` 布尔：要不要上传由
+  `actionUploads(kind)` 推出来，要不要写本地由 `actionWritesLocal(kind)` 推出来。
+  **判定结果不许再被调用方改写**。
+- **「超集」是三方比较算出来的，不是靠大小猜的**（`progressMerge.ts` 的
+  `planProgressMerge`）：把「只有本地」「只有云端」各自跟自己合一遍当基线，再看
+  真合并结果 `merge(base, local, remote)` 落在哪边——
+  `== 只有本地` → 云端没给出新东西（`upload`，本地只读）；
+  `== 只有云端` → 本地没给出新东西（`download`）；
+  两边都不是 → 各有一份对方没有的（`reconcile`）。
+  拿「跟自己合」当基线是为了抵消 `mergeBankState` 补齐缺省字段（`settings: {}`、
+  `masteredIds: []`）的影响，否则「其实没从云端取到东西」会被误报成一次合并，
+  用户只在一台设备上做过题却看到「合并进度 1」。
+  **这条依赖一个不变量**：合并算子对「只有一侧有」与「两侧都有」必须产出同一种
+  形状，见下面「合并结果必须与这份数据出现在几侧无关」。
+- **本地默认只读**：`upload` 那一支在 `execute` 里**什么都不做**——不重写状态、
+  不清 mtime、不动池子。这是"我在同一台设备上做题，云端不该反过来覆盖我"的
+  结构性保证：上传成功后本地与云端内容相等，下一轮必然落在 `in-sync`。
+  只有 `download` / `reconcile` / `remove-local` 会写本机的题库存储。
+- **只有两种情况会打断用户**（`SyncPromptState`，弹窗是 `SyncPromptDialog`，
+  冲突列表 `SyncConflictPanel` 由它和设置面板共用）：
+  - `conflict`：题目分叉、两边都改过（或没有可信基准）→ 选保留哪一边；
+  - `remote-write`：云端要写本地，但 `activeWork.isBusy(hash)`（屏上正在做这个题库）
+    → 先问"现在更新 / 稍后"。
+  云端更新而用户没在做 → **直接落地，不弹**；本地是超集 → 只上传，不弹。
+  「稍后」只在"还在做这个题库"期间生效（`dismissedWrites`），离开后下一次同步
+  静默落地；同一批冲突关掉弹窗后也不重复弹（`dismissedConflictSignature`）。
+  **等用户点的那一轮要显式收尾**：被问到的题库记进 `outcome.awaiting`
+  （`SyncStatus.phase = "awaiting"`，指示点是黄的、**不显示「已同步」**），
+  这一轮不算完成；用户点「现在更新」→ `acceptRemoteWrite()` 记进 `approvedWrites`
+  再跑一轮，`execute` 跳过 `busyWrites` 里被批准的那些。
+  `approvedWrites` 只对当前这一轮有效（`finally` 里清空，否则等于替用户把以后
+  每次覆盖都预先答应了）；所以 `resolveConflicts` 若赶上有一轮在跑，必须**先
+  `await` 它结束再记**——提前记会被那轮的 `finally` 顺手抹掉，表现成「点了保留
+  云端却什么都没发生」（线上踩过）。
+- **`activeWork` 是唯一回答"用户正在做哪个题库"的地方**（`sync/activeWork.svelte.ts`）：
+  视图挂载时 `enter(hash)`、`currentQuestion` 变化时 `setBusy(hash, …)`、卸载时清理。
+  **不要**再从落盘状态里猜（`quizSession` 存在只说明"上次停在这道题"），也不要
+  再造一套 `userActivity` 式的多布尔单例。
 - **设备本地的字段不参与同步，也不能被同步擦掉**（`model/policy.ts` 的
   `DEVICE_LOCAL_BANK_FIELDS`）：只剩 `ui` / `filterType`（纯视图：面板开合、题型筛选）；
   general 那侧的 `activeBank` 同理（`DEVICE_LOCAL_GENERAL_FIELDS`——「当前打开哪个题库」
@@ -587,15 +651,40 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   **收集本地与解云端都要剥**（只剥一边会让进度哈希永远对不上 → "永远待同步"，
   而且老快照会把别的设备的界面状态灌回本地），写回本地统一走引擎的
   `applyRemoteState`（唯一落盘入口），它用 `attachDeviceLocal` 贴回**本机那份**。
+- **修订戳是逻辑计数，不是墙上时钟**（`src/lib/rev.ts`）：
+  `nextRev(previous) = previous + 1`，从 `REV_COUNTER_EPOCH + 1`（4e12+1）起算，
+  保证任何新写入都晚于旧版存下的毫秒时间戳，不需要迁移。以前是
+  `max(Date.now(), previous + 1)`——手机的表快几秒，它写出的每个戳就永远更大，
+  电脑每次同步都算"云端更新"。戳表达的是**因果顺序**，不是"几点几分"。
 - **合并算子的具体规矩**（归属表在 `model/policy.ts` 文件头，实现在 `merge.ts`）：
   - `activePool` 按 id 合，**逐字段**：`consecutiveCorrect` 先比 `rev`（大的那侧赢），
     `rev` 相等时看 `hasEverMistaken`（答错的那侧一定更新，它会把连对清零），
     双方都答错过取 `min`、都没答错过取 `max`；`hasEverMistaken` / `hasBeenShown` 取 OR，
     `lastSelectedRound` 取 max。**不能拿 `lastSelectedRound` 当排序依据**——它是本地计数器，跨设备不可比
-  - `memory.sessions`：同一 `learning.id` 并 `masteredIds` / `cardIds`、队列 = 并集 − 已掌握；
-    不同 `id`（两台各开了一轮）取 `rev` 大的那一轮。`review` 同一天并集合、不同天把昨天
-    没完成的队列并进今天；`doneIds` 是墓碑，旧 `targets` 复活不了已过关的卡。
-    `mergeSessionsWithBase` 还要处理「一边把会话删了」——结束过的一轮不能被另一边的旧快照复活
+  - `memory.sessions`：**先按基准裁决「谁改过」，再决定要不要合**（`mergeSessionsWithBase`
+    → `mergeLearningSession` / `mergeReviewSession`，内部统一走 `resolveSide`）：
+    云端那份 == 基准 → 云端没动，合并结果就是本地那份；本地 == 基准 → 用云端；
+    两边都相对基准改过（真并发）或没有基准 → 才逐字段合。
+    **这一步不能省**：`targets`（答对一次 -1）/ `streaks`（答错清零）/ `queue`（过关后收缩）
+    都是**会变小**的量，逐字段「取大 / 并集」等于假设它们只涨不落，于是「本地在推进、
+    云端还是上次同步的旧快照」会被算成"两边各有一份" ⇒ `reconcile` ⇒ 复习中途弹
+    「云端也有新进度」并把旧 `targets` 写回本地（要求反而变多）。
+    真并发时：同一天集合类（`doneIds` / `touchedIds` / `failed`）取并集，
+    `targets` / `streaks` **整组取 `rev` 较大那侧**（它们是"现在还差几次"，不是计数器）；
+    不同天则新的一天赢计数、旧那天的未完成队列并进今天。
+    `doneIds` 是墓碑，旧 `targets` 复活不了已过关的卡。
+    学习轮那边：同一 `learning.id` 并 `masteredIds` / `cardIds`、队列 = 并集 − 已掌握；
+    不同 `id`（两台各开了一轮）取 `rev` 大的那一轮。
+    「一边把会话删了」（学完 / 复习轮结束）也由同一套裁决处理：另一侧**就是基准那份**
+    说明它只是还没拉到删除 → 删除赢，结束过的一轮不会被旧快照复活。
+  - **合并结果必须与「这份数据出现在几侧」无关**（这条踩过，别再犯）：
+    `mergeProgressMap` / `mergeActivePool` / `mergeSessionsWithBase` 的「只有一侧有」分支
+    也必须走同一个构造器（`mergeCard(x, x)` / `poolItem(x, x)` / `merge(x, x)`），
+    不能原样返回输入。因为 `planProgressMerge` 判断「本地是不是云端的超集」用的是
+    **三方比较**：拿「只有本地跟自己合一遍」当基线，再看真合并结果是否等于它。
+    只要两边的形状不同（单侧原样 = 没补 `lapses` / 没排序），基线就永远对不上
+    ⇒ 每轮都判成「两边各有一份」（`reconcile`）：既不上报上传也不上报下载，
+    本地还会被多余地写回一次。
 - **新增可同步字段必须登记**（`model/policy.ts`）：那里有**编译期穷尽护栏**，
   给状态加字段忘了登记 → `pnpm check` 直接不过。四项（卡片 / `StoredState` 顶层 /
   `MemoryStoredState` / `GeneralSnapshot`）都验证过会红。
@@ -603,32 +692,25 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   `tests/` 根本不参与类型检查（这是流水线里一个既有缺口，写在测试里等于没有护栏）。
 - **只在一侧存在的题库**（对称的两条，删除靠它们传播）：
   - 有题库行的基准、且**另一边相对基准没动** → 那边删过它 → 跟着删
-    （`deleteRemote` / `deleteLocal`）
-  - 没有基准 → 那边新导入的 → 传过去（`push` / `pull`）
+    （`remove-remote` / `remove-local`）
+  - 没有基准 → 那边新导入的 → 传过去（`upload` / `download`）
   **绝不能反过来**：把「云端有、本地没有、又没见过」当成删除，就会把别的设备
   刚导入的题库删掉。
-- **删除不能压过编辑**（两条对称的判定，`judgeBank` 里那两段）：
+- **删除不能压过编辑**（`decideBankSync` 里那两段）：
   「有基准行」只说明上次同步时两边都有它，**不说明另一边是删了它还是改了它**。
   直接跟着删就会出现「A 删掉题库、B 改过它的题目 → B 的编辑从本地和云端一起消失」
   （真的踩过，最坏的一种数据丢失）。所以还要比一次**另一边的内容哈希**：
-  - 只有云端有：`row.contentHash !== remote.contentHash` → 云端在基准之后被改过
-    → `conflict`（让用户裁决），否则才是 `deleteRemote`。这里直接用云端题库的
-    `contentHash`（它本来就在 `remote.banks` 里）
-  - 只有本地有：云端解析出的题库表里已经没有它了，得从**当前云端分片快照**里按
-    hash 再查一次（`bankContentHashInRemoteFiles`）——那边改了题目就匹配不上
+  - 只有云端有：`baseContentHash !== remote.contentHash` → 云端在基准之后被改过
+    → `conflict`（让用户裁决），否则才是 `remove-remote`
+  - 只有本地有：云端题库表里已经没有它了，得从**当前云端分片快照**里按 hash
+    再查一次（`bankContentHashInRemoteFiles`）——那边改了题目就匹配不上
     `remote.banks`，但分片里仍在。查得到且与基准不同 → `conflict`
-  - 老格式只有分片文件的 `remoteHash`，跟单个题库不是一个口径，比不出结论：
-    那种情况按「纯删除」处理，不冒险报假冲突
-  - **试过但行不通的判据**：用 `mtime > syncedAt` 判「本地是删了还是改完再删」。
-    删除自己就会把 mtime 推到现在，这个信号在任何删除场景下都成立，结果把所有
-    正常的跨设备删除传播都判成了冲突。要区分它得另存「删掉的是什么内容」，那是
-    另一个改动。
-- **没有任何基准时先看「哪边是空的」**：内容不同但本地没有进度、云端有 → 下载；
-  只有本地有进度 → 上传；两边都有进度且不同 → 冲突。这样「同一份题库 + 一边刚导入」
+- **没有任何可信基准时先看「哪边是空的」**：内容不同但本地没有进度、云端有 → `download`；
+  只有本地有进度 → `upload`；两边都有进度且不同 → `conflict`。这样「同一份题库 + 一边刚导入」
   不会平白撞冲突，又不会丢掉任何一边的进度。
-- **老格式的元数据当兜底基准**：升级上来的设备 `rows` 里只有 `banks-N.json`
-  （文件级），第一次同步时用 `fileRow` + 该分片文件当前的哈希来判断方向；
-  这一次同步结束后文件级的行会被题库行替换掉。
+- **不再有文件级兜底**：旧版元数据里 `banks-N.json` 的行（文件级哈希）不能冒充
+  题库级的 `contentHash`——口径不同，比出来的"改过"是假的。这种行第一次同步后
+  会被题库行替换；在那之前，内容一致的题库照常按内容合并，内容真的分叉时问一次。
 - **新设备的空壳绝不能推上云端**（`mergeGeneral`）：刚打开应用时本地 general 是个
   默认空壳（题库列表为空），而 `_general.json` 一启动就被重写过、mtime 永远是新鲜的。
   只看 mtime 会把它判成「本地改过」并推上去，于是**所有设备的题库列表被清空**——
@@ -640,15 +722,15 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - **顺序也要三方合并**：只比较「还活着的题库」的顺序，谁动过听谁的（都动过听本地）。
     早期版本无脑用本地顺序，于是「在 A 上把题库拖到最前面」永远传不到 B——
     两边条目内容一模一样，只有数组顺序变了，逐条比字段是看不出来的。
-- **推上去的必须是「应用完拉取之后」重新收集的内容**（`engine.execute` 的第 ③ 步）：
+- **推上去的必须是「应用完拉取之后」重新收集的内容**（`engine.execute` 的第 ④ 步）：
   先落 general、再落题库，最后用 `collectLocalState()` 的结果重建分片才上传。
   拿同步开始时那份旧快照去推，就会把刚拉下来的东西又推回旧版本（同上，线上踩过）。
   重建之后**内容没变就不传**（同片的别的题库可能刚好把内容凑回原样）。
 - **只要还有未裁决的冲突，这一轮同步什么都不做**（`runOnce` 里直接 return）：
-  不拉、不推、不改本地、不写元数据——所以也不会 `location.reload()`。
+  不拉、不推、不改本地、不写元数据——只弹冲突对话框（同一批冲突只弹一次），
+  红点与设置面板里的选择项一直留着。
   这一点是踩出来的：早期版本「冲突的题库不动、其余照常同步」，于是拉到别的题库之后
-  立刻整页刷新，**内存里的冲突提示跟着没了**，用户看到的就是「还没选就自己刷过去了」。
-  宁可停一轮，也不能让用户的选择落空。
+  用户看到的是「还没选就自己过去了」。宁可停一轮，也不能让用户的选择落空。
 - **裁决按题库记账**（`resolutions: Map<hash, ConflictResolution>`），不是一次性开关：
   用户只对他在面板上**看见过**的那些冲突负责；两次同步之间新冒出来的冲突继续问。
   `applyResolution(plan, resolutions)` 只改这些题库的判定，剩下的仍是 `conflict`。
@@ -700,7 +782,9 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   `dirty`（在 `onLocalChange` 里，便宜），每次同步正常收尾后由 `computePendingChanges()`
   按**内容哈希**重算（比 mtime 准：应用启动会把配置原样重写一遍，mtime 永远新鲜，
   只看 mtime 会一直黄着）。它默认 `unknown`：没验证过之前绝不上来就报「已同步」。
-  冲突 / 报错 / 离线 / 正在跑各有自己的一支，谁也盖不住谁。
+  冲突 / 待裁决（`awaiting`：云端要写本地但用户正在做，等一句「现在更新」）/
+  报错 / 离线 / 正在跑各有自己的一支，谁也盖不住谁。`awaiting` 落黄点，
+  **不算「已同步」**——事情还没落地。
 - **拉取不写 mtime**（`applyRemoteValue` 只写内容）：拉下来的内容不是这台设备改的，
   记成「本地改动」会让下一轮白推一遍甚至撞成冲突。拉取还会顺手清掉该题库的 mtime。
   连带的：`schedulePush()` 先看一眼「本地到底动过没有」（`mtime > 0`），拉取不排队上传。
@@ -709,13 +793,20 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - **强制覆盖是显式计划**：`forcePushPlan` / `forcePullPlan` 无条件按一边来，
   不算冲突、不做三方判定。用逐题库判定实现「用本地覆盖云端」是不对的——
   没有基准时它会认为「本地改过、该上传」，于是「用云端覆盖本地」变成空操作。
-- **拉到「当前题库」的新内容才会整页刷新，而且忙的时候挂起**（`execute` 第 ⑤ 步 +
-  `@/features/userActivity.svelte`）：`SyncOutcome.changedLocal` 的数法变了——它只认
-  「**正在看的那个题库**被改到（或本来没有当前题库、这一轮刚拉下来一个）」，
-  不是「本地有没有被改过」。拉的是别的题库时页面里没有一处是旧的（侧边栏读的是
-  localStorage），刷新纯属打断；是当前题库时再走 `userActivity.requestReload()`，
-  正在答题 / 开着弹窗 / 页面在后台就挂起，等停手后由 `attachReloadGuard` 补上并弹一句提示。
-  护栏在 `tests/syncRefreshGuard.test.ts`（9 条：别的题库不刷 / 当前题库挂起再补 / 空闲立刻刷 / 删除要刷 / 新设备要刷）。
+- **写本地之前先看「用户是不是正在做这个题库」**（`runOnce` 的让路判断 +
+  `@/features/sync/activeWork.svelte`）：只有 `actionWritesLocal(kind)` 的那些动作
+  需要问。用户正在做（屏上有题 / 卡）→ 弹 `remote-write` 问"现在更新 / 稍后"；
+  没在做 → 直接落地，**不弹窗**。点了「稍后」之后，只要用户还在做这个题库，
+  这一轮就整个不执行（连别的题库也不动，免得"等会儿"的那一份被顺手覆盖）；
+  离开之后下一次同步静默落地。**没有整页刷新**：落盘走 `applyRemoteValue`，
+  它广播键名，持有内存副本的各自重读（见 `@/lib/storageBus`）。
+- **判定出问题时先开取证开关**：Console 里
+  `localStorage.setItem("quiz_app_debug", "1")` → 刷新（关掉就 `removeItem`）。
+  `src/lib/debug.ts` 只打三类一行式摘要，默认零噪声：
+  `[sync:decide]` 每个题库这一轮的 kind / reason / 三侧会话摘要；
+  `[sync:merge-diff]` 判成 `reconcile` 时**具体是哪个字段**让合并结果既不同于本地、
+  也不同于云端（`vs local: memory.sessions.review.targets | vs remote: ...`）；
+  `[sync:write]` / `[session:reload]` 写回了哪份会话、重读之后队列多长。
 - **`tests/syncEngine.test.ts` / `tests/syncTwoDevice.test.ts` 是这一层的护栏**：
   用真模块 + 内存替身 Gitee 跑完整的推送 / 拉取 / 双设备来回。上面这些 bug
   几乎都是它们抓出来的，改同步逻辑前先看它们。
@@ -1051,6 +1142,31 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - **答过 ≠ 过关**：答「忘记 / 模糊」只进 `touchedIds`，不进 `doneIds`；那张卡留在队列里等连对。否则会出现「进度条 5 / 5，但队列里还有卡、首页说还有一道待复习」。
 - `doneIds` 同时是**墓碑**：一张卡一旦过关，任何旧 `targets` 都不能把它复活。
 
+### 会话要跟着盘上那份走（外部写入必须广播）
+
+`MemorySession` / `QuizSession` 都持一份**内存快照**：构造时读一次盘，之后靠自己的
+`save()` 单向下写。而同步（`applyRemoteState`）是**第二个写入方**——它写完盘，
+内存里那份不知道。线上表现就是「手机上复习到 1 / 10，同步到电脑还是 0 / 9」：
+屏上还是构造时那份「今天没开过复习」，点「复习」便按旧快照新建一轮（今天到期 9 道），
+还把盘上的 1 / 10 覆盖回去。
+
+所以规矩是：**任何外部落盘都要广播，持有副本的一方自己重读**。
+
+- `applyRemoteState`（唯一的外部落盘入口）写完后 `notifyStorageWrite(key)`
+  （`src/lib/storageBus.ts`）；`store.ts` 的 `subscribeStoredStateWrite` 把键级
+  通知转给订阅者
+- `MemoryView` / `QuizView` 在 `onMount` 订阅、卸载退订；键对得上就调
+  `reloadFromStorage()`
+- 会话里那些要驱动界面的字段（`MemorySession.savedSessions`）必须是 `$state`：
+  普通字段即使内容换了也不会触发重渲染，表现成「盘上已经 1 / 10，屏上还是旧的那份」
+- `reloadFromStorage()`：**空闲时以盘上为准**（这才是「换设备接着做」的落点）；
+  正在跑（学习 / 复习进行中）时与盘上那份 `mergeSessions` 合并且**保留本机队列
+  顺序**，不打断用户
+- 重读期间 `isReloading = true`，`save()` 一律不写——否则半成品会把刚合并好的
+  那份盖回去
+- `startLearning` / `startReview` 入口**再读一次盘**：判据只能是「盘上有没有能
+  接上的会话」，不能信内存里那份旧快照
+
 ### 两条流（`MemorySession.svelte.ts`）
 
 会话骨架与 `QuizSession` 一致：`appState: RuntimeState` + `currentQuestion` / `showResult` / `isCorrect` / `selectedAnswers` / `submit()` / `advanceQuestionFlow()` / `copyCurrentQuestion()`，所以 `QuestionBody` / `QuestionActions` 式的 UI 可以直接套用（每个动作要在同一帧内写入 `selectedAnswers` 再 `submit()`，答案页才会出现）。额外多一个 `run: "idle" | "learning" | "reviewing"`（首页 / 学习 / 复习），它是 `flow.run.kind` 的投影。
@@ -1065,6 +1181,13 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - **活动题目池 = 本轮这一批还没学完的卡**：`syncPoolToRound()` 按 `round.cardIds - round.masteredIds`
     重建 `activePool`（保留原有的 `consecutiveCorrect`）。池子**不是**第二份真相，别直接往里加卡；
     **记忆模式的 `activePool` 不落盘**（`save()` 永远写空池子），学习池由 `round` 重建、复习队列由 `sessions.review` 恢复
+  - **任何「整份替换 appState」之后都要把运行态池子接回来**（同步写回、导入、重读）：
+    `reloadFromStorage` 里先留一份内存里的 `activePool`，学习轮再按新的 `round` 走一遍
+    `syncPoolToRound()`。盘上那份池子对记忆模式恒为空，直接整份替换会丢轮内连对
+  - **出题判据不能看池子**（`selectNext`）：复习看 `review.reviewed`（今天已过关）、
+    学习看 `round.masteredIds`（本轮已掌握）、题目不存在就看 `lookupQuestion`。
+    以前要求「id 必须还在 `activePool` 里」，于是同步写回把池子清空之后，队列里每一张卡
+    都被判成"不在池子里"逐个丢弃——点完「现在合并」，点「下一题」就说今天复习完了
   - **每掌握一题就补一题**（默认）：`graduateInLearning()` 记进 `round.masteredIds` 后调 `refillRound()`，
     从「没学过的 + 学到一半的」里补一道进 `round.cardIds`（`selectionMode` 只决定补进来的顺序，
     **池内出题一律随机**），新卡同时排进本轮队列
@@ -1186,7 +1309,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 
 `MemorySession.updateBankSettings` / `updateMemorySettings` 改完立即 `saveState`；`reset()` 只清 `progress`、保留设置，并把调试用的时间偏移一起清零。
 
-调试用的「时间修改」控件（`src/features/memory/devClock.ts` + `MemorySession.debugAddDay/debugDayOffset/debugResetDays`）只在 `isDebugModeEnabled()`（即 `import.meta.env.DEV`）时显示；删掉这三处即与原始代码一致。
+调试用的「时间修改」控件（`src/features/memory/devClock.ts` + `MemorySession.debugAddDay/debugDayOffset/debugResetDays`）只在 `debugOn()`（`@/lib/debug`）时显示；删掉这三处即与原始代码一致。
 
 ### UI
 
@@ -1305,8 +1428,11 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - `tests/route.test.ts` / `tests/router.test.ts` — 路由的纯函数与壳（假 `history` / `location`）：
   没参数打开时读本地 `activeBank`、URL 里的题库失效时退回、`push` 还是 `replace`、
   子模式不被仓库变动抹平、子路径挂载前缀。
-- `tests/syncRefreshGuard.test.ts` / `tests/userActivity.test.ts` — **刷新前先看「能不能打断」**：
-  拉别的题库不刷、当前题库挂起并在停手后补上、空闲立刻刷、冲突与删除的边界。
+- `tests/syncSettled.test.ts` — **分片冻结时不给别的题库写新基准**（`settledThisRound`）。
+- `tests/sync.test.ts` 的「逐题库三方合并」——判定表的纯函数护栏：
+  内容一致 / 本地超集 / 云端超集 / 两边各有一份 / 题目分叉 / 删除传播 /
+  没有基准时"哪边是空的"。**它是"本地什么时候会被写"的唯一真相**，改 `decision.ts`
+  必须同步改它。
 - `tests/ViewHarness.svelte` / `tests/ViewShellHarness.svelte` / `tests/SharedListHarness.svelte` /
   `tests/SettingsPrimitivesHarness.svelte` /
   `tests/MemoryOverviewHarness.svelte` / `tests/ToolbarIconButtonHarness.svelte` /
