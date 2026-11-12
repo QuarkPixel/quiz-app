@@ -65,7 +65,6 @@ import {
   createLearningProgress,
   createReviewProgress,
   fuzzyReview,
-  isDue,
   memoryIntervalDays,
   resetReview,
 } from "@/features/memory/algorithm";
@@ -75,7 +74,6 @@ import {
   createMemoryRound,
   isMemoryRoundComplete,
   markMemoryRoundMastered,
-  memoryRoundDone,
   memoryRoundRemaining,
   pruneMemoryRound,
 } from "@/features/memory/round";
@@ -121,6 +119,26 @@ import {
   withProgress,
   withSyncedMasteredIds,
 } from "@/features/memory/sessionStore";
+import {
+  dueCountOf,
+  hasOngoingRoundOf,
+  isLearnableOf,
+  learnableCountOf,
+  learnedTodayOf,
+  learningCountOf,
+  masteredCountOf,
+  newCountOf,
+  nextBatchSizeOf,
+  pendingRetryCountOf,
+  reviewQueueTodayOf,
+  reviewableCountOf,
+  reviewedTodayOf,
+  reviewingCountOf,
+  roundMasteredOf,
+  targetPerRoundOf,
+  touchedTodayOf,
+  type MemoryQueryInput,
+} from "@/features/memory/sessionQueries";
 import { nextRev } from "@/lib/rev";
 import { debugLog, sessionSummary } from "@/lib/debug";
 import {
@@ -391,6 +409,24 @@ export class MemorySession extends ProgressSessionBase {
 
   // ── 会话流（只读投影） ──────────────────────────────────────────────
 
+  /**
+   * 只读查询的输入。
+   *
+   * 每次读都会碰到 `appState` / `flow` / `round` / `savedSessions`，所以函数内部
+   * 怎么算都仍然在 Svelte 的依赖图里——投影搬到 `sessionQueries.ts` 之后，
+   * 「盘上那份被同步改写 → 数字跟着变」这条链没有断。
+   */
+  private get query(): MemoryQueryInput {
+    return {
+      appState: this.appState,
+      flow: this.flow,
+      questions: this.questions,
+      now: this.now,
+      round: this.round,
+      savedSessions: this.savedSessions,
+    };
+  }
+
   /** 当前会话：首页 / 学习 / 复习 */
   get run(): MemoryRunKind {
     return runKindOf(this.flow);
@@ -460,7 +496,7 @@ export class MemorySession extends ProgressSessionBase {
    * 中途退出 / 刷新 / 换设备后，两个数都从 `sessions.review` 接着数。
    */
   get reviewTotal(): number {
-    return this.reviewedToday().total;
+    return reviewedTodayOf(this.query).total;
   }
 
   /**
@@ -470,38 +506,13 @@ export class MemorySession extends ProgressSessionBase {
    * 答过的清单另有一份 `touchedIds`，只用于统计。
    */
   get reviewedIds(): readonly string[] {
-    return this.reviewedToday().reviewed;
+    return reviewedTodayOf(this.query).reviewed;
   }
 
   /**
-   * 「今天过了哪几道 / 一共几道」——**两个主人在同一份事实上接力**。
-   *
-   * - 复习轮跑着时，实时值长在会话流上（`flow.run.review`），跟着流一起走；
-   * - 轮收尾（「退出本轮」/ 队列走完）后流回到 `idle`，那份就没了，
-   *   但「今天过了这几道」是**事实**，不会因为退出而变回没过。
-   *   它还留在盘上（`sessions.review`），隔天由跨天合并接手。
-   *
-   * 所以投影统一走这里：会话里有就读会话，没有就读盘上今天的那份。
+   * 「今天过了哪几道 / 一共几道」的实现在 `sessionQueries.reviewedTodayOf`：
+   * 复习轮跑着时读会话流，退回首页后读盘上今天那份。
    */
-  private reviewedToday(): {
-    reviewed: readonly string[];
-    total: number;
-  } {
-    const live = reviewOf(this.flow);
-    if (live) {
-      return {
-        reviewed: live.reviewed,
-        total: live.reviewed.length + queueOf(this.flow).length,
-      };
-    }
-    const stored = this.storedReviewToday();
-    return stored
-      ? {
-          reviewed: stored.doneIds,
-          total: stored.doneIds.length + stored.queue.length,
-        }
-      : { reviewed: EMPTY_IDS, total: 0 };
-  }
 
   /**
    * 本轮复习里被降级过的题（「忘记」→ 阶梯归零；「模糊」→ 阶梯退一级）。
@@ -569,29 +580,20 @@ export class MemorySession extends ProgressSessionBase {
   // 这几个计数写成 getter：它们要读 constructor 里赋值的 this.questions，
   // 用 $derived 字段会被 TS 判成「used before initialization」。
   get newCount(): number {
-    return this.questions.filter((q) => this.progress[q.id] === undefined)
-      .length;
+    return newCountOf(this.query);
   }
   get reviewingCount(): number {
-    return Object.values(this.progress).filter(
-      (p) => p.state === "reviewing",
-    ).length;
+    return reviewingCountOf(this.query);
   }
   get learningCount(): number {
-    return Object.values(this.progress).filter((p) => p.state === "learning")
-      .length;
+    return learningCountOf(this.query);
   }
   get masteredCount(): number {
-    return Object.values(this.progress).filter((p) => p.state === "mastered")
-      .length;
+    return masteredCountOf(this.query);
   }
   /** 今日到期待复习数量 */
   get dueCount(): number {
-    const now = this.now;
-    return this.questions.filter((q) => {
-      const item = this.progress[q.id];
-      return item ? isDue(item, now) : false;
-    }).length;
+    return dueCountOf(this.query);
   }
 
   /**
@@ -601,10 +603,7 @@ export class MemorySession extends ProgressSessionBase {
    * 但本轮还没完成——今天重新进复习时必须继续出现。
    */
   get pendingRetryCount(): number {
-    const targets = this.retryTargetsToday();
-    const ids = Object.keys(targets);
-    if (ids.length === 0) return 0;
-    return this.questions.filter((q) => targets[q.id] !== undefined).length;
+    return pendingRetryCountOf(this.query);
   }
 
   /**
@@ -616,11 +615,7 @@ export class MemorySession extends ProgressSessionBase {
    * 这里多算一次队列很便宜（题量级的一次 filter），换来的是两边不会各说各话。
    */
   get reviewableCount(): number {
-    // 今天已经**过关**的卡不再算「待复习」：首页这个数字与点进复习之后
-    // 真正会出现的队列必须是同一个判据，否则「首页说还有 12 道、
-    // 点进去却说今天没有需要复习的题目」（真踩过）。
-    const done = new Set(this.storedReviewToday()?.doneIds ?? []);
-    return this.reviewQueueToday().filter((q) => !done.has(q.id)).length;
+    return reviewableCountOf(this.query);
   }
 
   /**
@@ -642,13 +637,12 @@ export class MemorySession extends ProgressSessionBase {
    * 没有就用设置里的 `roundTarget`（首页「每轮 N 道」的文案）。
    */
   get targetPerRound(): number {
-    if (this.round) return this.round.goal;
-    return Math.max(1, this.memorySettings.roundTarget);
+    return targetPerRoundOf(this.query);
   }
 
   /** 本轮已经掌握了几道（UI / 测试都用它，读的是轮模型） */
   get roundMastered(): number {
-    return this.round ? memoryRoundDone(this.round) : 0;
+    return roundMasteredOf(this.query);
   }
 
   /** 本轮目标；没有进行中的一轮时是 0（`MemoryHome` 据此判断「是不是在续轮」） */
@@ -673,18 +667,12 @@ export class MemorySession extends ProgressSessionBase {
    * 这个数字只用于统计口径（「今天看过 12 张、过了 9 张」）。
    */
   get touchedCount(): number {
-    return this.touchedToday().length;
-  }
-
-  private touchedToday(): readonly string[] {
-    const live = reviewOf(this.flow);
-    if (live) return live.touched;
-    return this.storedReviewToday()?.touchedIds ?? EMPTY_IDS;
+    return touchedTodayOf(this.query).length;
   }
 
   /** 首页「学习新的题目」这次会学几道 */
   get nextBatchSize(): number {
-    return Math.min(this.learnableCount, this.targetPerRound);
+    return nextBatchSizeOf(this.query);
   }
 
   /**
@@ -695,15 +683,12 @@ export class MemorySession extends ProgressSessionBase {
    * 复习」会让首页以为还有半轮）。
    */
   get hasOngoingRound(): boolean {
-    const round = this.round;
-    if (!round) return false;
-    return memoryRoundRemaining(round).some((id) => this.isLearnable(id));
+    return hasOngoingRoundOf(this.query);
   }
 
   /** 这道卡还能学吗（没学过，或者学到一半）。与 `poolCandidates` 同一份判据。 */
   private isLearnable(id: string): boolean {
-    const progress = this.progress[id];
-    return progress === undefined || progress.state === "learning";
+    return isLearnableOf(this.query, id);
   }
 
   /**
@@ -714,13 +699,12 @@ export class MemorySession extends ProgressSessionBase {
    * `learnedDay` 是 DayKey（YYYYMMDD），比较的是日期而不是绝对时刻。
    */
   get learnedToday(): boolean {
-    const learned = this.appState.memory?.learnedDay;
-    return learned !== undefined && learned === dayKeyOf(this.now);
+    return learnedTodayOf(this.query);
   }
 
   /** 「学习新的题目」还能学几道：没学过的 + 学到一半的 */
   get learnableCount(): number {
-    return this.newCount + this.learningCount;
+    return learnableCountOf(this.query);
   }
 
   private lookupQuestion(id: string | null): Question | null {
@@ -869,21 +853,7 @@ export class MemorySession extends ProgressSessionBase {
    * 是完全正常的需求，分母会跟着长。
    */
   private reviewQueueToday(): MemoryQuestion[] {
-    const now = this.now;
-    const due = this.questions.filter((q) => {
-      const item = this.progress[q.id];
-      return item ? isDue(item, now) : false;
-    });
-
-    // 答错后还没补完连对的卡：它们已经不在「到期」里了（`nextDue` 被推到明天），
-    // 但仍留在本轮（今天），否则「答错后必须连对 N 次」一出会话就没了
-    const retryTargets = this.retryTargetsToday();
-    const dueIds = new Set(due.map((q) => q.id));
-    const retryQuestions = this.questions.filter(
-      (q) => retryTargets[q.id] !== undefined && !dueIds.has(q.id),
-    );
-
-    return [...due, ...retryQuestions];
+    return reviewQueueTodayOf(this.query);
   }
 
   /**
@@ -987,13 +957,6 @@ export class MemorySession extends ProgressSessionBase {
     ) {
       this.advanceQuestionFlow();
     }
-  }
-
-  /** 今天那一份复习会话；今天还没进过复习时是 null。 */
-  private storedReviewToday(): MemoryReviewSession | null {
-    const review = this.savedSessions?.review;
-    if (!review || review.day !== dayKeyOf(this.now)) return null;
-    return review;
   }
 
   /** 回到首页。 */
@@ -1129,35 +1092,8 @@ export class MemorySession extends ProgressSessionBase {
 
   // ── 本轮「答错后重新连对」的待办 ────────────────────────────────────
   //
-  // 答错 / 模糊时把「这道卡本轮还要连对 N 次」写进会话的 `targets`
-  // （落盘、同步）。退出 / 刷新 / 换设备回来时它还在；跨过凌晨 5 点时由
-  // `rolloverReviewSession` 把它并进今天的新会话，不会整份丢掉。
-
-  /**
-   * 今天仍然有效的「重新连对」要求：题目 id → 还要连对几次。
-   *
-   * 只认今天或更早的会话（昨天的未完成部分今天还要补），并且卡片必须还在
-   * 复习中（可能已被重置 / 已掌握）。
-   */
-  private retryTargetsToday(
-    base: RuntimeState = this.appState,
-  ): Record<string, number> {
-    const session = this.savedSessions?.review;
-    if (!session) return {};
-    // 只认**今天**的会话：昨天答错留下的「还要连对 N 次」跨天就作废
-    // （那张卡今天按常规到期重来，答对一次即过）。时钟偏快读到的「未来」
-    // 会话同理，不带进今天。
-    if (session.day !== dayKeyOf(this.now)) return {};
-
-    const done = new Set(session.doneIds);
-    const targets: Record<string, number> = {};
-    for (const [id, target] of Object.entries(session.targets)) {
-      if (done.has(id) || target < 1) continue;
-      const item = base.memory?.progress[id];
-      if (item?.state === "reviewing") targets[id] = target;
-    }
-    return targets;
-  }
+  // 实现在 `sessionQueries.retryTargetsTodayOf`：只认今天的会话，且卡片必须
+  // 还在复习中（可能已被重置 / 已掌握）。
 
   // ── 答题流 ──────────────────────────────────────────────────────────
 
