@@ -461,7 +461,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
 - `StoredState.memory.learnedDay?: DayKey` — 最近一次「学完一轮」发生在哪个学习日（`YYYYMMDD`）。首页据此把学习入口降一档颜色（今天学过一轮 → 白底按钮但仍可点）；跨过凌晨 5 点自然失效
 - `MemorySessionsState = { learning?, review? }`（`StoredState.memory.sessions`）— **两份「当日 / 本轮」会话**，模型在 `src/features/memory/session.ts`。没有进行中的会话时整个字段不存在
   - `MemoryLearningSession = { id, day, round, queue, currentId, answered, rev }`。`round` 就是原来的 `{ goal, cardIds, masteredIds }`；`id` 标识「是不是同一轮」，`rev` 用于合并裁决
-  - `MemoryReviewSession = { day, queue, currentId, answered, doneIds, touchedIds, targets, failed, streaks, rev }`。`day` 是 `DayKey`；`doneIds` = 今天**过关**的卡（进度条分子，也是墓碑），`touchedIds` = 今天**答过**的卡（含忘记 / 模糊），`targets` = 本轮还要连对几次，`streaks` = 本轮已连对几次
+  - `MemoryReviewSession = { day, queue, currentId, answered, doneIds, touchedIds, targets, failed, streaks, rev }`。`day` 是 `DayKey`；`doneIds` = 今天**过关**的卡（进度条分子，也是墓碑），`touchedIds` = 今天**答过**的卡（含忘记 / 模糊），`targets` = 本轮还要连对几次，`streaks` = 本轮已连对几次。`queue` **只是「上次排的顺序 / 停在哪张」**，不是「今天要复习哪些卡」——那个由 `reviewQueueToday()` 在开轮时算
   - 两者都**可同步**（`memory.sessions` 已登记进 `SYNCED_BANK_FIELDS`），换设备能接着 3 / 5；合并规则见 `mergeSessionsWithBase`
   - **不进进度备份**：它们是「今天 / 本轮」的短周期状态（`exportProgress` 只装长期进度）
   - 读盘时按题库现有 id **收敛**（`store.ts` 的 `cleanMemoryState`）：`progress` 与
@@ -671,7 +671,8 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     「云端也有新进度」并把旧 `targets` 写回本地（要求反而变多）。
     真并发时：同一天集合类（`doneIds` / `touchedIds` / `failed`）取并集，
     `targets` / `streaks` **整组取 `rev` 较大那侧**（它们是"现在还差几次"，不是计数器）；
-    不同天则新的一天赢计数、旧那天的未完成队列并进今天。
+    不同天则**新的一天全赢**（计数 + 队列都只认新的那天）。队列只是「上次排的顺序」，
+    旧那天的队列里会留着已经推到未来的卡，并进来只会让一份计划越滚越大。
     `doneIds` 是墓碑，旧 `targets` 复活不了已过关的卡。
     学习轮那边：同一 `learning.id` 并 `masteredIds` / `cardIds`、队列 = 并集 − 已掌握；
     不同 `id`（两台各开了一轮）取 `rev` 大的那一轮。
@@ -1136,9 +1137,14 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 |---|---|---|
 | `doneIds` | 今天**过关**的卡（连对达标） | `sessions.review.doneIds`（进度条分子） |
 | `touchedIds` | 今天**答过**的卡（含忘记 / 模糊） | `sessions.review.touchedIds`（只做统计） |
-| `queue` | 今天**还没过**的卡（顺序即出题顺序） | `sessions.review.queue`（进度条分母的另一半） |
+| `queue` | 上次排的顺序 / 停在哪一张 | `sessions.review.queue`（**只是顺序提示**） |
 
-- 进度条分子 = `doneIds.length`，分母 = `doneIds + queue`。100% ⇔ 队列空了 ⇔ 首页 `reviewableCount === 0`。
+- 分子 = `doneIds.length`；分母 = 分子 + **今天还能复习的数量**（`reviewQueueToday` − `doneIds`）。
+  首页 `reviewableCount`、复习入口的队列、进度条分母**必须是同一个判据**，
+  否则就会出现「首页说 3 道、点进去 39 道」（真踩过）。
+- **盘上的 `queue` 不是计划本身**：跨天续做时它会留着已经被推到未来的卡。
+  开轮时按 `reviewQueueToday` 重建（盘上那份只贡献顺序与 `currentId`），
+  不能拿 `queue.length` 当分母。
 - **答过 ≠ 过关**：答「忘记 / 模糊」只进 `touchedIds`，不进 `doneIds`；那张卡留在队列里等连对。否则会出现「进度条 5 / 5，但队列里还有卡、首页说还有一道待复习」。
 - `doneIds` 同时是**墓碑**：一张卡一旦过关，任何旧 `targets` 都不能把它复活。
 
@@ -1226,12 +1232,12 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - `Esc` = 退出本轮（回首页，下次接着这一轮）；`⌘/Ctrl+C/W/E/I/O` = 复制题目 / 导入 / 导出 / 设置 / 总览；`⌘/Ctrl+⇧+I` = 全局设置（应用级，必须赶在下面那个 `mod` 分支前放行，否则会连记忆设置一起切了）
   - 「该不该拦这次按键」的判定**只有一份**：`src/features/appShortcuts.ts` 的 `createAppKeyboardHandler`，两个视图各自装上（`createAppKeyboardHandler(session, uiActions)`）。输入框 / 对话框 / 输入法组词不介入，`Space` / `Enter` 落在按钮等交互目标上时让给原生点击。**不要**在组件里重写一套判定——漏掉 `isInteractiveTarget` 会让答案页的 `Space` 双触发（原生点击 + 全局处理器各跳一题），而两份实现分头演化正是 ⌘S / ⌘N 在记忆模式里失效的原因
 - **复习**（`startReview` → `run = "reviewing"`）
-  - 进入时按 `sessions.review.day` 分三种：
+  - 进入时按 `sessions.review.day` 分两种：
     - **今天**的 → 接着打开：队列顺序、当前题、`doneIds` / `targets` / `streaks` 全部留着（这就是「3 / 5，换设备还是 3 / 5」）
-    - **昨天**的 → `rolloverReviewSession`：把昨天**没完成的队列**并进今天，**计数归零**（`doneIds` / `touchedIds` / `targets` / `failed` / `streaks` 全部清空）——今天是一轮新的，卡片按常规到期重来。连对要求跨天作废，别让「昨天差一次没补完」变成今天的包袱
-    - **没有**（或时钟偏快留下的未来记录）→ 新建今天这一份，队列 = 今天到期的卡打散
+    - **不是今天**（昨天 / 没有 / 时钟偏快留下的未来记录）→ 新建今天这一份，**计数归零**（`doneIds` / `touchedIds` / `targets` / `failed` / `streaks` 全部清空）——今天是一轮新的，卡片按常规到期重来。连对要求跨天作废，别让「昨天差一次没补完」变成今天的包袱
+  - **队列一律由 `reviewQueueToday()` 重建**：盘上那份 `queue` 只贡献顺序与 `currentId`，里面不属于今天这一批的 id（已经被推到未来的 / 已掌握的）必须剔掉。以前跨天时把旧队列整份并进来，于是它每天只增不减，出现「首页说 3 道、进度条 1 / 39」
   - `createReviewSession` **保持传入的顺序**，只有合并（`mergeReviewSession`）时才为了收敛而排序——`doneIds` 的顺序就是「今天先过了哪几道」，别在创建时顺手排掉
-  - 队列 = 今天到期的（`state === "reviewing"` 且 `nextDue` ≤ 今天）+ 今天还没补完连对的（`retryTargetsToday()`，**只认今天的会话**）。`reviewQueueToday()` 是唯一判据，首页 `reviewableCount` = 它减去今天的 `doneIds`
+  - 队列 = 今天到期的（`state === "reviewing"` 且 `nextDue` ≤ 今天）+ 今天还没补完连对的（`retryTargetsToday()`，**只认今天的会话**）。`reviewQueueToday()` 是唯一判据，首页 `reviewableCount` = 它减去今天的 `doneIds`，进度条分母 = `doneIds` + 它
   - 答对：只把本轮连对次数 +1（`sessions.review.streaks`），**不动掌握阶梯**；连对达到本轮目标（默认 1）才算「复习完成」→ 加进 `doneIds`
     - **本轮没失败过** → 完成时才推进阶梯（`level + 1`，下次隔 `2^(level-1)` 天）；`level` 超过 M → 已掌握（`level` / `streak` 清零，不再出现）
     - **本轮失败过** → 阶梯保持 `resetReview` 写下的 `level = 1`、明天到期，**完成时不再推进**（并把轮内连对清零）。否则答错那张会被推成和一次答对那张同样的间隔
@@ -1239,7 +1245,7 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   - 模糊：`fuzzyReview` 把阶梯**退一级**（`level = max(1, level - 1)`，最低停在第 1 级）并按新阶梯安排下次复习；**轮内连对次数不变**，但和「忘记」一样把本轮目标提到 N、计入 `failed`——补完连对时同样不推进阶梯。`lapses` 不动
   - **降级的卡不推进阶梯**：`failed` 只用来决定「本轮完成时要不要推进阶梯」；它和 `targets` / `streaks` 一起落盘，退出 / 刷新 / 换设备后仍然生效
   - 失败**不会**回到「学习中」
-  - **收尾不删会话**：队列走完后 `sessions.review` 留着（`doneIds` 就是「今天过了哪几道」这个事实，进度条停在 5 / 5）。真正清掉它的时机是**跨天**（`rolloverReviewSession`）
+  - **收尾不删会话**：队列走完后 `sessions.review` 留着（`doneIds` 就是「今天过了哪几道」这个事实，进度条停在 5 / 5）。第二天开轮时整份换成新的一天（`startReview` 里按 `day !== today` 重建），不并旧队列
   - **首页标熟要同时剔落盘会话**（`dropFromSavedReview`）：`buildReviewSession` 只在复习轮跑着时读 `flow`，在首页点「标熟」时 `flow` 是 `idle`，那条路径不经过它。不直接改盘上那份的话，「标熟一张还欠连对的卡」之后待办仍在，下次复习又把它拉回来（并带上新的 `rev`，否则同步时被旧快照盖掉）
   - `reset()` / 导入进度会清掉整份 `sessions`（先 `finishRun()` 再清，否则 `exitSession` 的第一步会把「重置前那一轮」又写回盘上）
   - 判分流里**不要**先改 `appState` 再 `writeProgress`：后者是从 `base` 重建整个 `memory` 段的。会话记账一律走 `flow`（`setReviewTarget` / `addTouched` / `addReviewed`），由 `save()` 的 `buildReviewSession` 收成落盘那份
