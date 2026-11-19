@@ -1545,6 +1545,121 @@ describe("记忆模式：复习进度条的跨会话续做", () => {
     expect(nextDay.reviewTotal).toBe(2);
   });
 
+  it("线上数据复现：盘上队列 38 道、今天只到期 3 道 → 进度条 1 / 4，不是 1 / 39", () => {
+    const hash = "memory_review_stale_queue_hash";
+    const today = startOfDay(dayAfterBase);
+    const future = addDays(today, 40);
+    // a / b / c 今天到期；d…j 是被推到未来的（旧队列把它们留在盘上）；
+    // z 今天已经过了一次（分子那 1 道）；m 已掌握但还赖在旧队列里
+    const dueIds = ["a", "b", "c"];
+    const futureIds = ["d", "e", "f", "g", "h", "i", "j"];
+    const allIds = [...dueIds, ...futureIds, "z", "m"];
+    saveState(hash, {
+      ...emptyState(),
+      masteredIds: ["m"],
+      memory: {
+        progress: {
+          ...Object.fromEntries(
+            dueIds.map((id) => [
+              id,
+              { ...createReviewProgress(BASE_TIME), level: 4, nextDue: today },
+            ]),
+          ),
+          ...Object.fromEntries(
+            futureIds.map((id) => [
+              id,
+              { ...createReviewProgress(BASE_TIME), level: 7, nextDue: future },
+            ]),
+          ),
+          z: { ...createReviewProgress(BASE_TIME), level: 6, nextDue: future },
+          m: { state: "mastered", level: 0, streak: 0, nextDue: 0, lapses: 0 },
+        },
+        settings: createDefaultMemorySettings(),
+        sessions: {
+          review: createReviewSession({
+            day: dayKeyOf(dayAfterBase),
+            // 旧版本跨天续做时越滚越大的那条队列：今天到期的 + 已推到未来的 + 已掌握
+            queue: [...dueIds, ...futureIds, "m"],
+            currentId: "a",
+            doneIds: ["z"],
+            touchedIds: ["z"],
+          }),
+        },
+      },
+    });
+
+    const session = makeSession(allIds, { hash, now: dayAfterBase });
+
+    // 首页：今天只有 3 道
+    expect(session.dueCount).toBe(3);
+    expect(session.reviewableCount).toBe(3);
+    // 进度条分母 = 今天过关的 1 + 今天还能复习的 3（不是盘上那条 38 道的队列）
+    expect(session.reviewDoneCount).toBe(1);
+    expect(session.reviewTotal).toBe(4);
+
+    session.startReview();
+    expect(session.run).toBe("reviewing");
+    expect(session.appState.activePool.map((item) => item.id).sort()).toEqual(
+      [...dueIds].sort(),
+    );
+    expect(session.reviewDoneCount).toBe(1);
+    expect(session.reviewTotal).toBe(4);
+
+    // 开轮时把盘上那份队列收敛掉：再存一次就只剩今天这一批
+    expect(
+      loadStoredState(hash).memory?.sessions?.review?.queue.sort(),
+    ).toEqual([...dueIds].sort());
+  });
+
+  it("跨天不把昨天队列里已经推到未来的卡带进今天", () => {
+    const hash = "memory_review_rollover_future_hash";
+    const today = startOfDay(dayAfterBase);
+    const future = addDays(today, 40);
+    const dueIds = ["a", "b"];
+    const futureIds = ["c", "d", "e"];
+    const allIds = [...dueIds, ...futureIds];
+    saveState(hash, {
+      ...emptyState(),
+      memory: {
+        progress: {
+          ...Object.fromEntries(
+            dueIds.map((id) => [
+              id,
+              { ...createReviewProgress(BASE_TIME), level: 5, nextDue: today },
+            ]),
+          ),
+          ...Object.fromEntries(
+            futureIds.map((id) => [
+              id,
+              { ...createReviewProgress(BASE_TIME), level: 7, nextDue: future },
+            ]),
+          ),
+        },
+        settings: createDefaultMemorySettings(),
+        sessions: {
+          review: createReviewSession({
+            day: addDayKeys(dayKeyOf(dayAfterBase), -1),
+            queue: [...dueIds, ...futureIds],
+            currentId: "c",
+            doneIds: ["x"],
+          }),
+        },
+      },
+    });
+
+    const session = makeSession(allIds, { hash, now: dayAfterBase });
+    expect(session.reviewableCount).toBe(2);
+    // 今天还没进过复习，进度条还没开始（分子分母都为 0）
+
+    session.startReview();
+    expect(session.reviewTotal).toBe(2);
+    expect(session.appState.activePool.map((item) => item.id).sort()).toEqual(
+      [...dueIds].sort(),
+    );
+    // 昨天停在哪张只当提示：它今天不到期就不会排进来
+    expect(session.currentQuestion?.id).not.toBe("c");
+  });
+
   it("复习收尾（队列走完）后，今天复习过的那份记录还在", () => {
     const hash = "memory_review_bar_finish_hash";
     seedDue(hash, 1);
