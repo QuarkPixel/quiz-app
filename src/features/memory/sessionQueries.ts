@@ -59,7 +59,12 @@ export function storedReviewTodayOf(
  *
  * - 复习轮跑着时，实时值长在会话流上（`flow.run.review`），跟着流一起走；
  * - 轮收尾后流回到 `idle`，那份就没了，但「今天过了这几道」是事实，
- *   还留在盘上（`sessions.review`），隔天由跨天合并接手。
+ *   还留在盘上（`sessions.review`），直到下一天开轮时换成新的一份。
+ *
+ * 分母**不读盘上的 `queue`**：那份队列是「上次开轮时排的计划」，跨天续做时
+ * 可能留着已经被推到未来的卡（曾经出现「首页说 3 道、进度条 39 道」）。
+ * 分母 = 今天已经过关的 + **今天还能复习的**（与首页 `reviewableCount`、
+ * 「复习」入口的队列同一个判据 `reviewQueueTodayOf`）。
  */
 export function reviewedTodayOf(input: MemoryQueryInput): {
   reviewed: readonly string[];
@@ -73,12 +78,11 @@ export function reviewedTodayOf(input: MemoryQueryInput): {
     };
   }
   const stored = storedReviewTodayOf(input);
-  return stored
-    ? {
-        reviewed: stored.doneIds,
-        total: stored.doneIds.length + stored.queue.length,
-      }
-    : { reviewed: EMPTY_IDS, total: 0 };
+  if (!stored) return { reviewed: EMPTY_IDS, total: 0 };
+  return {
+    reviewed: stored.doneIds,
+    total: stored.doneIds.length + reviewableCountOf(input),
+  };
 }
 
 /** 今天**答过**的卡（含「忘记 / 模糊」）。 */
@@ -116,6 +120,11 @@ export function retryTargetsTodayOf(
  * 刻意**不看** `doneIds`：那份清单只回答「进度条现在是多少」，不回答「这道卡
  * 今天还能不能练」。到期就得能复习——今天的卡今天想再过一遍是正常需求，
  * 分母会跟着长。
+ *
+ * **这是「今天要复习哪些卡」的唯一判据**：首页数字、复习入口的队列、进度条
+ * 分母都从它出。盘上的 `sessions.review.queue` 只是「上次排的顺序 / 停在哪」，
+ * 不是计划本身——曾经把它当计划，于是跨天续做时越滚越大，首页说 3 道、
+ * 进度条却是 39 道。
  */
 export function reviewQueueTodayOf(
   input: MemoryQueryInput,

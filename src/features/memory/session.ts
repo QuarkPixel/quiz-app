@@ -352,12 +352,12 @@ export function normalizeReviewSession(
   };
 }
 
-/** 今天这一轮的进度条分母：过关 + 还在队列里的。 */
-export function reviewSessionTotal(session: MemoryReviewSession): number {
-  return session.doneIds.length + session.queue.length;
-}
-
-/** 这一轮复习完了没有（队列空了，且没有未补完的连对）。 */
+/**
+ * 这一轮复习完了没有（队列空了，且没有未补完的连对）。
+ *
+ * 判据是**会话事实**：`queue` 已经被 `startReview` 收敛成今天这一批，
+ * 所以「队列空」= 今天没有可复习的了。
+ */
 export function isReviewSessionComplete(session: MemoryReviewSession): boolean {
   return session.queue.length === 0 && Object.keys(session.targets).length === 0;
 }
@@ -395,9 +395,11 @@ export function isReviewSessionComplete(session: MemoryReviewSession): boolean {
  * `targets` / `streaks` **整组取 `rev` 较大那侧**——它们描述"这张卡现在还差
  * 几次"，只有最新那份才是事实，取大会把已经答对的要求又提回去。
  *
- * 不同天：**新的一天赢计数**（`doneIds` / `touchedIds` 只认新的那天），
- * 但旧那天的**未完成部分**（`queue` / `targets` / `failed` / `streaks`）
- * 并进新的一天——这就是「第二天打开，把昨天的进度合并到今天」。
+ * 不同天：**新的一天赢**（`doneIds` / `touchedIds` / `queue` 都只认新的那天）。
+ * 旧那天的 `targets` / `failed` / `streaks` 本来就是跨天作废的。这里不再把
+ * 旧那天的队列并进来：队列只是「上次排的顺序」，今天该复习哪些卡由
+ * `reviewQueueToday` 在开轮时重算；并进来只会让一份计划越滚越大
+ * （「首页说 3 道、进度条 39 道」就是这么来的）。
  */
 export function mergeReviewSession(
   local: MemoryReviewSession | undefined,
@@ -429,9 +431,11 @@ function combineReviewSessions(
     ? sortedUnique([...local.touchedIds, ...remote.touchedIds])
     : sortedUnique(newerDay.touchedIds);
 
-  const queue = sortedUnique([...local.queue, ...remote.queue]).filter(
-    (id) => !done.has(id),
-  );
+  const queue = (
+    sameDay
+      ? sortedUnique([...local.queue, ...remote.queue])
+      : sortedUnique(newerDay.queue)
+  ).filter((id) => !done.has(id));
 
   // 不同天时，旧那天的 targets / streaks 只对「还在队列里」的卡有意义。
   const keepOld = (id: string) =>
@@ -480,42 +484,6 @@ function combineReviewSessions(
     failed,
     streaks: latestNumbers("streaks", 0),
     rev: Math.max(local.rev, remote.rev),
-  };
-}
-
-/**
- * 跨天：把昨天没用完的**队列**并进今天的新一轮。
- *
- * - 昨天已经过关的卡不进来（它们已经排到未来）
- * - 昨天没过的卡保留顺序，追加今天新到期的卡
- * - 计数归零：今天是从 0 / N 开始的新一轮
- * - **连对要求 / 降级记录 / 轮内连对一律作废**：今天是一轮新的，卡片按常规
- *   到期重来（答对一次即过）。把它们带过来等于让「昨天差一次没补完」
- *   变成今天的包袱，也和「学习日一切归零」的约定冲突
- */
-export function rolloverReviewSession(
-  previous: MemoryReviewSession,
-  todayKey: DayKey,
-  todayQueue: readonly string[],
-): MemoryReviewSession {
-  const done = new Set(previous.doneIds);
-  const queue: string[] = [];
-  for (const id of [...previous.queue, ...todayQueue]) {
-    if (done.has(id)) continue;
-    if (!queue.includes(id)) queue.push(id);
-  }
-  const inQueue = new Set(queue);
-  return {
-    day: todayKey,
-    queue,
-    currentId: previous.currentId && inQueue.has(previous.currentId) ? previous.currentId : null,
-    answered: false,
-    doneIds: [],
-    touchedIds: [],
-    targets: {},
-    failed: [],
-    streaks: {},
-    rev: previous.rev,
   };
 }
 

@@ -145,7 +145,6 @@ import {
   createReviewSession,
   createSessionId,
   mergeSessions,
-  rolloverReviewSession,
 } from "@/features/memory/session";
 import {
   devAddDay,
@@ -370,14 +369,18 @@ export class MemorySession extends ProgressSessionBase {
    * 队列保留本机顺序（用户正在答的那一串不该因为一次同步跳位），远端新过关的卡
    * 从队列里剔掉、新到期的补到队尾；`doneIds` / `targets` / `streaks` 一律以合并
    * 结果为准——进度条的分子分母就是从这里读的。
+   *
+   * **远端那份队列只当顺序提示**：它可能来自旧版本 / 旧的一天，里面会留着已经
+   * 推到未来的卡。只接受「今天这一批」里还有的 id，否则一次同步就能把队列撑大。
    */
   private adoptReviewSession(session: MemoryReviewSession | undefined): void {
     if (!session) return;
 
     const done = new Set(session.doneIds);
+    const today = new Set(this.reviewQueueToday().map((q) => q.id));
     const queue = queueOf(this.flow).filter((id) => !done.has(id));
     for (const id of session.queue) {
-      if (done.has(id) || queue.includes(id)) continue;
+      if (done.has(id) || !today.has(id) || queue.includes(id)) continue;
       queue.push(id);
     }
 
@@ -491,9 +494,13 @@ export class MemorySession extends ProgressSessionBase {
   /**
    * 复习：今天这一轮的总题数（进度条分母）。
    *
-   * 分母 = **已过关 + 队列里还剩的**。答错补回来的卡本来就在队列里，
-   * 不会把它撑大；只有题库被改（卡没了）时才收敛。
-   * 中途退出 / 刷新 / 换设备后，两个数都从 `sessions.review` 接着数。
+   * 分母 = **今天已过关的 + 今天还能复习的**（后者与首页 `reviewableCount`、
+   * 「复习」入口的队列同一份判据）。答错补回来的卡本来就在这一批里，不会把它撑大；
+   * 只有题库被改（卡没了）时才收敛。
+   *
+   * 跑着时读会话流（一轮之内分母稳定，中途退出 / 刷新 / 换设备都接着数）；
+   * 回到首页后读盘上今天那份 + 今天到期的——**不读盘上 `queue` 的长度**，
+   * 那份队列只是顺序提示，跨天时会留着已经推到未来的卡。
    */
   get reviewTotal(): number {
     return reviewedTodayOf(this.query).total;
@@ -861,10 +868,16 @@ export class MemorySession extends ProgressSessionBase {
    *
    * - 盘上有**今天**的会话 → 接着打开：队列顺序、当前题、过关清单、连对次数都留着
    *   （这就是「复习到 3 / 5，换设备打开还是 3 / 5」）
-   * - 盘上是**昨天**的 → 把昨天没完成的部分并进今天的新一轮（`rolloverReviewSession`）
+   * - 盘上是**昨天**的 → 今天重新排一轮，计数归零（`doneIds` / `targets` / `failed` /
+   *   `streaks` 全部清空）。昨天没做完的卡如果今天仍然到期，本来就在今天的队列里；
+   *   已经被推到未来的那些不属于今天，不带进来
    * - 盘上没有 → 新建今天这一份
    *
-   * 出题顺序：新开一轮打散；续做保留原顺序（否则「停在第 3 张」就成了一句空话）。
+   * **队列一律由今天这一批重新算**（`reviewQueueToday`），盘上那份 `queue` 只贡献
+   * 顺序与「停在哪张」：它是一份计划，不是事实——跨天续做时它会留着已经被推到
+   * 未来的卡，于是出现「首页说 3 道、点进去 39 道」。
+   *
+   * 出题顺序：同一天续做保留原顺序；新的一天 / 新开一轮打散。
    */
   startReview(): void {
     // 进入前先以盘上为准：同步可能刚把另一台设备的进度写下来，而这里的
@@ -872,52 +885,38 @@ export class MemorySession extends ProgressSessionBase {
     // 视图挂载之前就完成了」这类时序只能靠入口这一次重读兜住）。
     this.reloadFromStorage();
     const today = dayKeyOf(this.now);
-    const queueQuestions = this.reviewQueueToday();
-    if (queueQuestions.length === 0 && (this.savedSessions?.review?.queue.length ?? 0) === 0) {
+    const todayIds = this.reviewQueueToday().map((q) => q.id);
+    if (todayIds.length === 0) {
       this.deps.toast("今天没有需要复习的题目");
       return;
     }
 
     const stored = this.savedSessions?.review;
-    const dueIds = queueQuestions.map((q) => q.id);
-    let session: MemoryReviewSession;
+    const sameDay = stored !== undefined && stored.day === today;
 
-    if (stored && stored.day === today) {
-      // 同一天续做：保留存下来的顺序，把今天新到期的卡追加在后面。
-      const done = new Set(stored.doneIds);
-      const queue: string[] = [];
-      for (const id of [...stored.queue, ...dueIds]) {
-        if (done.has(id) || queue.includes(id)) continue;
-        queue.push(id);
-      }
-      session = createReviewSession({
-        day: today,
-        queue: promoteToHead(queue, stored.currentId),
-        currentId: stored.currentId,
-        answered: stored.answered,
-        doneIds: stored.doneIds,
-        touchedIds: stored.touchedIds,
-        targets: stored.targets,
-        failed: stored.failed,
-        streaks: stored.streaks,
-        rev: stored.rev,
-      });
-    } else if (stored && stored.day < today) {
-      // 新的一天：昨天没完成的队列 / 待办 / 连对并进来，计数归零。
-      const rolled = rolloverReviewSession(stored, today, dueIds);
-      session = createReviewSession({
-        ...rolled,
-        rev: nextRev(rolled.rev),
-      });
-    } else {
-      // 没有记录（或时钟偏快留下的未来记录）：新建今天这一份。
-      session = createReviewSession({
-        day: today,
-        queue: shuffle(dueIds),
-        rev: nextRev(stored?.rev ?? 0),
-      });
-    }
+    // 盘上的顺序（同一天才有意义）→ 补上今天新到期的（新的一天打散）→ 当前题回队头
+    const allowed = new Set(todayIds);
+    const queue = (stored?.queue ?? []).filter((id) => allowed.has(id));
+    const fresh = todayIds.filter((id) => !queue.includes(id));
+    queue.push(...(sameDay ? fresh : shuffle(fresh)));
+    const orderedQueue = promoteToHead(queue, stored?.currentId ?? null);
 
+    const session = createReviewSession({
+      day: today,
+      queue: orderedQueue,
+      currentId: stored?.currentId ?? null,
+      // 跨天：计数归零，卡片按常规到期重来（昨天差一次没补完不是今天的包袱）
+      answered: sameDay ? stored?.answered : false,
+      doneIds: sameDay ? stored?.doneIds : [],
+      touchedIds: sameDay ? stored?.touchedIds : [],
+      targets: sameDay ? stored?.targets : {},
+      failed: sameDay ? stored?.failed : [],
+      streaks: sameDay ? stored?.streaks : {},
+      rev: sameDay ? (stored?.rev ?? 0) : nextRev(stored?.rev ?? 0),
+    });
+
+    // 今天到期的都过完了（`doneIds` 会从队列里剔掉），就不要再开一轮空会话：
+    // 首页这时显示「今日已复习完」，两边说的是同一件事。
     if (session.queue.length === 0) {
       this.deps.toast("今天没有需要复习的题目");
       return;
@@ -950,9 +949,8 @@ export class MemorySession extends ProgressSessionBase {
 
     // 上次停在答案页：答案已经写进 `progress`，恢复时先走一次结算。
     if (
-      stored &&
-      stored.day === today &&
-      stored.answered &&
+      sameDay &&
+      stored?.answered &&
       stored.currentId === cardIdOf(this.flow)
     ) {
       this.advanceQuestionFlow();
@@ -1694,8 +1692,8 @@ export class MemorySession extends ProgressSessionBase {
     // 排到未来）。删掉的话「答完最后一道 → 收尾说共 5 道 → 进度条却归零」，
     // 而且今天再打开复习也说不清今天到底复习了几道。
     //
-    // 真正清掉它的时机是**跨天**：第二天打开时 `rolloverReviewSession` 把没完成
-    // 的部分并进新一天，`doneIds` / `touchedIds` 归零（见 `startReview`）。
+    // 真正换成新的一天是在下次 `startReview`：`day` 不是今天时计数归零、队列按
+    // `reviewQueueToday` 重排（见 `startReview`）。
     this.appState = { ...this.appState, activePool: [] };
     this.save();
     this.deps.toast(

@@ -270,8 +270,11 @@ export interface MemoryLearningSession {
  *   - 今天已经真正过关几道（`doneIds`，进度条分子）
  *   - 答错后每张卡还要连对几次、已经连对几次（`targets` / `streaks`）
  *
- * `day` 是过期依据：跨过凌晨 5 点后，昨天的**未完成部分**会并进今天的新记录
- * （见 `rolloverReviewSession`），不会整份丢掉。
+ * `day` 是过期依据：跨过凌晨 5 点后计数归零，今天要复习哪些卡由
+ * `reviewQueueToday` 重新算（`nextDue` ≤ 今天的 + 今天还没补完连对的）。
+ * **`queue` 只是「上次排的顺序 / 停在哪张」，不是计划本身**——不能拿它的长度
+ * 当进度条分母，否则跨天续做时会留着已经推到未来的卡
+ * （「首页说 3 道、点进去 39 道」）。
  */
 export interface MemoryReviewSession {
   day: DayKey;
