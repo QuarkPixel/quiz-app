@@ -3,7 +3,7 @@
 ```json
 {
   "mode": "quiz",
-  "title": "计算机基础",
+  "title": "常识考察",
   "questions": [
     {
       "id": "judgment_1",
