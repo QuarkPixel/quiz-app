@@ -11,6 +11,12 @@
  * 为什么不在每次 `play` 时都 `unlock()`：`unlock()` 是异步的，放在异步流程
  * 之后调用已经脱离用户手势，Safari 不会认。手势监听装在 window 的捕获阶段，
  * 比业务 handler 先跑，所以同一次点击里的 `play()` 已经可以出声。
+ *
+ * iOS 上还有一个坑（就是「切后台回来之后一直没声音」）：页面进后台 / 来电 /
+ * 锁屏时系统会把 AudioContext 打断，它不会自己回到 running，而 uisfx 的
+ * `play()` 根本不检查上下文状态——声音就这么静默失败了。所以回到前台时要
+ * **把解锁状态作废**，让下一次手势重新 `unlock()`（`resume()` 必须在用户
+ * 手势里调用才被 WebKit 接受）。
  */
 
 import {
@@ -102,6 +108,42 @@ export function createSoundService(
     }
   }
 
+  /**
+   * 在用户手势里（或回到前台后顺手）尝试解锁。
+   *
+   * 失败时 `unlocked` 保持 false，下一次手势会再试——iOS 打断之后往往要
+   * 试上第二次才真的恢复。
+   */
+  function attemptUnlock(): void {
+    if (disposed) return;
+    preferAmbientAudioSession();
+    try {
+      void ensurePlayer()
+        .unlock()
+        .then((ok) => {
+          if (ok) unlocked = true;
+        })
+        .catch(() => {
+          // 解锁失败就保持监听：下一次手势再试一次。
+        });
+    } catch {
+      // 没有 Web Audio 的环境（旧浏览器 / 测试）直接当静音。
+    }
+  }
+
+  /**
+   * 页面重新可见：作废解锁状态。
+   *
+   * 只作废、不在这里 `resume()` 也能修好（下一次点击会重建），但回到前台
+   * 就先试一次：有的实现回到前台就允许恢复，用户什么都不用点。
+   * 播放器还没创建过就别试——那会平白造一个 AudioContext。
+   */
+  function rearmUnlock(): void {
+    if (disposed) return;
+    unlocked = false;
+    if (player !== null) attemptUnlock();
+  }
+
   const service: SoundService = {
     attachUnlockGesture(target: SoundGestureTarget = window) {
       if (disposed) return () => {};
@@ -110,19 +152,7 @@ export function createSoundService(
       const onGesture = (): void => {
         gestureSeen = true;
         if (unlocked || disposed) return;
-        preferAmbientAudioSession();
-        try {
-          void ensurePlayer()
-            .unlock()
-            .then((ok) => {
-              if (ok) unlocked = true;
-            })
-            .catch(() => {
-              // 解锁失败就保持监听：下一次手势再试一次。
-            });
-        } catch {
-          // 没有 Web Audio 的环境（旧浏览器 / 测试）直接当静音。
-        }
+        attemptUnlock();
       };
 
       for (const type of GESTURE_EVENTS) {
@@ -132,11 +162,26 @@ export function createSoundService(
         });
       }
 
+      // 回到前台的两个入口：`visibilitychange` 在 document 上（iOS 切后台），
+      // `pageshow` 在 window 上（bfcache 恢复时不一定有 visibility 变化）。
+      const doc = typeof document === "undefined" ? null : document;
+      const win = typeof window === "undefined" ? null : window;
+      const onVisibilityChange = (): void => {
+        if (doc !== null && doc.visibilityState !== "visible") return;
+        rearmUnlock();
+      };
+      const onPageShow = (): void => rearmUnlock();
+
+      doc?.addEventListener("visibilitychange", onVisibilityChange);
+      win?.addEventListener("pageshow", onPageShow);
+
       const detach = (): void => {
         if (detachGesture !== detach) return;
         for (const type of GESTURE_EVENTS) {
           target.removeEventListener(type, onGesture, { capture: true });
         }
+        doc?.removeEventListener("visibilitychange", onVisibilityChange);
+        win?.removeEventListener("pageshow", onPageShow);
         detachGesture = null;
       };
       detachGesture = detach;

@@ -936,6 +936,12 @@ rail、页头按钮、⌘B 各挂一次点击监听：入口多一个就漏一�
 `setEnabled(false)`，音量与开关都只存在 general 配置里（uisfx 自带的 localStorage 用空
 存储关掉）。`appSound` 在 HMR dispose 时销毁；测试用 `createSoundService` + 假播放器。
 
+**iOS 切后台回来会静音**：系统会打断 AudioContext，它不会自己回到 `running`，而 uisfx
+的 `play()` 不检查上下文状态——听起来就是「回来之后一直没声」。所以 `service.ts` 还盯
+`visibilitychange`（回到 `visible`）与 `pageshow`（bfcache 恢复）：把 `unlocked` 作废并
+顺手试一次 `unlock()`，失败就保持作废，**下一次手势**（捕获阶段，仍在用户手势里）再
+`resume()`。别把这件事挪进 `play()` 之外的地方，也别指望「解锁过一次就永远好了」。
+
 ### 构建约束
 
 - 题库文件最外层必须是 `{ "questions": [...] }` 对象；裸数组会被 `parseBankFile` 拒绝
@@ -1561,8 +1567,8 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - `tests/progressBar.test.ts` — 进度条：可交互形态的聚焦语义、非交互形态的
   `role="progressbar"` 数值、`label` / `rightValue` 覆盖、完成时的庆祝动效，以及记忆模式适配器的夹取
 - `tests/sound.test.ts` / `tests/soundWiring.test.ts` — 音效服务（手势前静音、单一播放器、
-  开关 / 音量同步、关闭先 stopAll、`play()` 返回 null、dispose）与「业务事件 → cue」接线
-  （答对 / 答错 / 视作正确 / 标熟 / 记忆会话开始结束）
+  开关 / 音量同步、关闭先 stopAll、`play()` 返回 null、dispose、回到前台重新解锁）与
+  「业务事件 → cue」接线（答对 / 答错 / 视作正确 / 标熟 / 记忆会话开始结束）
 - `tests/overlaySound.test.ts` — 浮层开合音的两条「不要叠音」规则：`skipOpen`（跳转已经响过
   swipe，窗口不再补 open）与 `skipClose`（删除 / 重命名带结果音，不再补 close）
 - `tests/globalSettingsActions.test.ts` — 音效 / 音量 / 自动下一题的统一实现：落盘、提示文案、试听顺序，

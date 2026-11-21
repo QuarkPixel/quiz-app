@@ -32,8 +32,11 @@ export interface SoundService {
   /**
    * 在第一个真实手势（pointerdown / keydown / click）上解锁 Web Audio。
    *
+   * 除了手势，还会盯「页面重新可见」（`visibilitychange` / `pageshow`）：
+   * iOS 切后台会打断 AudioContext，回到前台必须重新解锁，否则之后一直静音。
+   *
    * 幂等：重复调用返回同一个解绑函数。应用里由 `appSound` 在模块加载时装上；
-   * 测试可以传一个假 target。
+   * 测试可以传一个假 target（前台事件仍然来自真实的 document / window）。
    */
   attachUnlockGesture(target?: SoundGestureTarget): () => void;
 

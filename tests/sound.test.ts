@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRecipe,
   cueNames,
@@ -12,6 +12,7 @@ import { createSoundService } from "../src/sound/service";
 import type {
   SoundGestureTarget,
   SoundPreferences,
+  SoundService,
 } from "../src/sound/types";
 
 /**
@@ -34,6 +35,8 @@ function createFakePlayer(options: { returnNull?: boolean } = {}) {
     destroy: 0,
     stopped: 0,
   };
+  /** `unlock()` 的结果：模拟 iOS 打断之后「非手势里 resume 不成功」。 */
+  const state = { unlockOk: true };
   let enabled = true;
   let volume = 0.7;
 
@@ -41,7 +44,7 @@ function createFakePlayer(options: { returnNull?: boolean } = {}) {
     async unlock() {
       calls.unlock += 1;
       calls.ops.push("unlock");
-      return true;
+      return state.unlockOk;
     },
     play(cue, playOptions) {
       calls.cues.push(cue);
@@ -81,7 +84,7 @@ function createFakePlayer(options: { returnNull?: boolean } = {}) {
     },
   };
 
-  return { player, calls };
+  return { player, calls, state };
 }
 
 function createFakeTarget() {
@@ -105,6 +108,18 @@ function createFakeTarget() {
   };
 }
 
+/**
+ * 每个 service 都会往真实的 document / window 上挂「回到前台」监听。
+ * 测试之间不清理就会互相串（A 的假播放器被 B 的事件戳到），所以统一收尾。
+ */
+const live: SoundService[] = [];
+
+afterEach(async () => {
+  while (live.length > 0) await live.pop()!.dispose();
+  // 还原 visibilityState（测试里用 defineProperty 覆写过）
+  delete (document as { visibilityState?: string }).visibilityState;
+});
+
 function setup(options: {
   enabled?: boolean;
   volume?: number;
@@ -120,6 +135,7 @@ function setup(options: {
     getPreferences: () => prefs,
     createPlayer,
   });
+  live.push(service);
   return { service, prefs, createPlayer, ...fake };
 }
 
@@ -223,6 +239,96 @@ describe("手势解锁", () => {
       cue: "hover",
       options: { cooldownMs: 55, retrigger: "restart" },
     });
+  });
+});
+
+describe("回到前台重新解锁（iOS 切后台后静音）", () => {
+  function setVisibility(next: "visible" | "hidden"): void {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => next,
+    });
+  }
+
+  /** 装好手势监听并完成第一次解锁（= 正常在用）。 */
+  async function startPlaying() {
+    const ctx = setup();
+    const gesture = createFakeTarget();
+    const detach = ctx.service.attachUnlockGesture(gesture.target);
+    gesture.fire("pointerdown");
+    await Promise.resolve();
+    expect(ctx.calls.unlock).toBe(1);
+    return { ...ctx, gesture, detach };
+  }
+
+  it("回到前台先顺手恢复一次，不用等用户点", async () => {
+    const { calls } = await startPlaying();
+
+    setVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    setVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+
+    expect(calls.unlock, "回到前台要重新 resume 一次").toBe(2);
+  });
+
+  it("前台自动恢复失败时，下一次手势必须再解一次", async () => {
+    const { calls, gesture, state } = await startPlaying();
+    // iOS 打断之后，不在手势里的 resume 往往不成功
+    state.unlockOk = false;
+
+    setVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+    expect(calls.unlock, "先试一次").toBe(2);
+
+    gesture.fire("pointerdown");
+    await Promise.resolve();
+    expect(calls.unlock, "resume 只在手势里被接受，必须再试").toBe(3);
+  });
+
+  it("还在后台（hidden）时不动解锁状态", async () => {
+    const { calls } = await startPlaying();
+
+    setVisibility("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+
+    expect(calls.unlock).toBe(1);
+  });
+
+  it("pageshow（从 bfcache 回来）同样重新解锁", async () => {
+    const { calls } = await startPlaying();
+
+    window.dispatchEvent(new Event("pageshow"));
+    await Promise.resolve();
+
+    expect(calls.unlock).toBe(2);
+  });
+
+  it("解绑之后回到前台不再解锁", async () => {
+    const { calls, detach } = await startPlaying();
+    detach();
+
+    setVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("pageshow"));
+    await Promise.resolve();
+
+    expect(calls.unlock).toBe(1);
+  });
+
+  it("还没播过东西时回到前台，不会凭空创建播放器", async () => {
+    const { service, createPlayer } = setup();
+    service.attachUnlockGesture(createFakeTarget().target);
+
+    window.dispatchEvent(new Event("pageshow"));
+    setVisibility("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await Promise.resolve();
+
+    expect(createPlayer).not.toHaveBeenCalled();
   });
 });
 
