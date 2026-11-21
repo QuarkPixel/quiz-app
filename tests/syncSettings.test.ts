@@ -11,6 +11,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 
 import SyncSettings from "./SyncSettingsHarness.svelte";
+// 预热抽屉模块：`SyncSettings` 里是动态 import，但这条用例只守「点开才渲染」，
+// 不守 chunk 什么时候下载。整套几十个文件并发跑时动态 import 会排队到超时；
+// 静态 import 在收集阶段就把模块放进缓存，点击后只剩渲染。
+import "../src/components/settings/SyncGuideDrawer.svelte";
 import { SyncHarness } from "./syncSupport";
 import { syncConfigStore } from "@/features/sync/config.svelte";
 import { syncEngine } from "@/features/sync/engine.svelte";
@@ -934,7 +938,8 @@ describe("云同步设置面板", () => {
           "点开之后说明抽屉要出来",
         ).toContain("它是做什么的");
       },
-      { timeout: 4000 },
+      // 模块已在文件顶部静态预热；8s 是给满载并发留的余量，不是等下载。
+      { timeout: 8000 },
     );
   });
 
