@@ -277,6 +277,8 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   不写 cue 名、不直接 new 播放器；`settings.ts` 收口设置面板的三类交互音
   （开关 / 单选 / 数值档位），`overlay.svelte.ts` 的 `attachOverlaySound(() => open)`
   给对话框开合配音。
+  **`app.ts` 是懒加载门面、`service.ts` 才是引擎**（唯一 import uisfx 的地方，见「首屏体积」）：
+  业务只认识 `appSound`，引擎由 `preloadSound()` 在页面空闲时动态加载。
 - `src/App.svelte` — 根组件。按 `activeBank.mode` 收窄：`quiz` 渲染 `QuizView`，`memory` 渲染 `MemoryView`（用 `{#key bank.hash}` 重建会话）。
   **当前题库由路由决定**：`provideRouter(router)` + `router.start(source)`（打开页面就对一次账，见「路由」），
   `source.subscribe` 里除了读 `activeBank` 还要 `router.syncFromSource()`（反向：仓库变了 URL 跟上）；
@@ -931,10 +933,19 @@ rail、页头按钮、⌘B 各挂一次点击监听：入口多一个就漏一�
 `QuizSession.togglePool` / `setPoolOpen` 里（展开 `drag-start`、收起 `drop`），
 工具栏按钮、键盘 P、抽屉下滑 / 遮罩 / Esc 自动一致；不要在按钮上再挂一次。
 
+**引擎本身也是懒加载的**：`app.ts` 只是一层门面，`uisfx` + `service.ts` 在
+`preloadSound()` 的 `import()` 之后才进页面（页面 `load` 之后走
+`requestIdleCallback`，2s 超时兜底；没有这个 API 的老 Safari 用 `setTimeout`）。
+主包里只有几十行路由代码，所以 `src/sound/index.ts` **不要**再 export `service.ts`
+的任何东西，门面里也**不要**静态 import 它——那会把整份合成配方拉回首屏（实测
+12.4 kB gzip）。加载之前 `play()` 一律返回 `false`（丢弃、不排队），页面照常可用；
+加载完成后的那次点击就是引擎眼里的「第一次手势」，解锁不会漏。
+
 生命周期：播放器**懒创建**（模块加载 / SSR / 测试都不碰 AudioContext）；第一次真实手势
 之前 `play()` 一律返回 `false`（不排队，避免补播过期反馈）；关闭音效时 `stopAll()` →
 `setEnabled(false)`，音量与开关都只存在 general 配置里（uisfx 自带的 localStorage 用空
-存储关掉）。`appSound` 在 HMR dispose 时销毁；测试用 `createSoundService` + 假播放器。
+存储关掉）。`appSound` 在 HMR dispose 时销毁；测试用 `createSoundService` + 假播放器，
+门面的路由由 `tests/soundLazy.test.ts` 单独守。
 
 **iOS 切后台回来会静音**：系统会打断 AudioContext，它不会自己回到 `running`，而 uisfx
 的 `play()` 不检查上下文状态——听起来就是「回来之后一直没声」。所以 `service.ts` 还盯
@@ -960,6 +971,7 @@ rail、页头按钮、⌘B 各挂一次点击监听：入口多一个就漏一�
 | `@dicebear/core` + `slice` 样式 | 只有头像（`$lib/identicon.ts`） | **用户打开云同步**（`SyncSettings` 里 `enabled` 一为真就 `preloadIdenticon()`；`<Identicon>` 自己也会兜底拉） | 28.8 kB |
 | `GlobalSettings.svelte`（设置 + 云同步两整块 UI） | 侧边栏那个对话框 | 首屏之后 `requestIdleCallback` 预热；点齿轮 / ⌘⇧I 时确保加载，chunk 到了才挂载 | 10.3 kB |
 | `SyncGuideDrawer.svelte`（+ `vaul-svelte`） | 说明抽屉 | 点「云同步说明」时 `import()` | 16.3 kB |
+| `uisfx` + 音效引擎（`src/sound/service.ts`） | 全应用的反馈音 | 页面 `load` 之后 `requestIdleCallback` → `preloadSound()`；加载前 `play()` 返回 false | 12.4 kB |
 
 - **`@lucide/svelte` 已经全部换成 `@tabler/icons-svelte`**（两个图标库同时进包纯属浪费，
   差的 24 kB gzip 就在那儿）。改 shadcn 生成组件里的图标时记得继续用 tabler。
@@ -1569,6 +1581,8 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - `tests/sound.test.ts` / `tests/soundWiring.test.ts` — 音效服务（手势前静音、单一播放器、
   开关 / 音量同步、关闭先 stopAll、`play()` 返回 null、dispose、回到前台重新解锁）与
   「业务事件 → cue」接线（答对 / 答错 / 视作正确 / 标熟 / 记忆会话开始结束）
+- `tests/soundLazy.test.ts` — 懒加载门面：加载前 `play()` 返回 false 且不建引擎、空闲后
+  自己加载、加载后原样转发、并发只建一个
 - `tests/overlaySound.test.ts` — 浮层开合音的两条「不要叠音」规则：`skipOpen`（跳转已经响过
   swipe，窗口不再补 open）与 `skipClose`（删除 / 重命名带结果音，不再补 close）
 - `tests/globalSettingsActions.test.ts` — 音效 / 音量 / 自动下一题的统一实现：落盘、提示文案、试听顺序，
