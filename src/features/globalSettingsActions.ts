@@ -13,14 +13,14 @@
 import type { GlobalSettingsStore } from "@/features/globalSettings.svelte";
 import type { Toast } from "@/features/toast.svelte";
 import { sanitizeSoundVolume } from "@/globalSettings";
-import type { SoundService } from "@/sound";
+import type { SoundPlayer } from "@/sound";
 
 /** 设成指定值：开启时试听一声，并提示结果。 */
 export function applySoundEnabledPreference(
   store: GlobalSettingsStore,
   next: boolean,
   toast: Toast,
-  sound: SoundService,
+  sound: SoundPlayer,
 ): void {
   if (store.value.soundEnabled === next) return;
 
@@ -36,7 +36,7 @@ export function applySoundEnabledPreference(
 export function toggleSoundPreference(
   store: GlobalSettingsStore,
   toast: Toast,
-  sound: SoundService,
+  sound: SoundPlayer,
 ): void {
   applySoundEnabledPreference(store, !store.value.soundEnabled, toast, sound);
 }
@@ -54,7 +54,7 @@ export function toggleSoundPreference(
 export function setSoundVolumePreference(
   store: GlobalSettingsStore,
   next: number,
-  sound: SoundService,
+  sound: SoundPlayer,
 ): void {
   const volume = sanitizeSoundVolume(next, store.value.soundVolume);
   if (store.value.soundVolume === volume) return;
@@ -73,7 +73,7 @@ export function setSoundVolumePreference(
 export function toggleAutoNextPreference(
   store: GlobalSettingsStore,
   toast: Toast,
-  sound: SoundService,
+  sound: SoundPlayer,
 ): void {
   const next = !store.value.autoNextOnCorrect;
   store.update({ autoNextOnCorrect: next });
