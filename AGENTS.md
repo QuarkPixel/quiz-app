@@ -270,7 +270,13 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   再交给 `transition:slide` 做进出场（试过官方 Collapsible / 原生 `<details>`，
   都没有进出场动画）。展开后**就一行**：`自动同步 [switch] ｜ 覆盖按钮 ×2`，
   自动同步的说明 Tooltip 直接挂在它的 `<Label>` 上（不再单独放一个问号按钮）。
-- `src/sound/` — 音效播放器（`createSoundPlayer`）与全局设置驱动的播放判断
+- `src/sound/` — 音效服务（uisfx `minimal` 包）。`appSound` 是全应用**唯一**的播放器：
+  首个真实手势（pointerdown / keydown / click）解锁 Web Audio，手势之前丢弃 cue 而不是排队；
+  开关 / 音量从 `GlobalSettings` 同步，关闭时先 `stopAll()` 再 `setEnabled(false)`。
+  `cues.ts` 是「语义事件 → cue」的**唯一映射表**，业务代码只说 `appSound.play("answer-correct")`，
+  不写 cue 名、不直接 new 播放器；`settings.ts` 收口设置面板的三类交互音
+  （开关 / 单选 / 数值档位），`overlay.svelte.ts` 的 `attachOverlaySound(() => open)`
+  给对话框开合配音。
 - `src/App.svelte` — 根组件。按 `activeBank.mode` 收窄：`quiz` 渲染 `QuizView`，`memory` 渲染 `MemoryView`（用 `{#key bank.hash}` 重建会话）。
   **当前题库由路由决定**：`provideRouter(router)` + `router.start(source)`（打开页面就对一次账，见「路由」），
   `source.subscribe` 里除了读 `activeBank` 还要 `router.syncFromSource()`（反向：仓库变了 URL 跟上）；
@@ -323,11 +329,10 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
       靠 `filter: brightness(2)` 提亮、同时 `scale 1 → 1.5 → 1` 弹一下、
       光晕跟着放到 20px。成功失败**都亮**：这是「点过了」的回执，
       落点是什么颜色由那一轮的结果决定（红了就亮红）
-    - **成功时再加一声「答对」音效**（`maybePlaySyncSuccessSound` → `playAnswer(true)`，
-      也就是答题时答对的那一个 `answer-correct.webm`，**不是**「一轮学完」的
-      `success` 音）：音效开关关着就只亮不响；失败 / 冲突时同样只亮不响——
-      那会儿响「答对」是说反话。音效开关读 `globalSettingsStore`（同步跟具体题库无关，
-      指示点也不属于任何 session，所以在 AppShell 里自己 `createSoundPlayer()`）
+    - **成功时再加一声轻量确认**（`appSound.play("sync-succeeded")` → uisfx 的 `reaction`，
+      不是答对的 `check`，也不是「一轮学完」的 `complete`）：音效开关关着就只亮不响；
+      失败 / 冲突时同样只亮不响——那会儿响确认音是说反话。指示点与 QuizView / MemoryView
+      共用 `appSound`，不再自己创建播放器，也不再有「页头一份、答题区一份」的重复实例。
     - **缩放只能写在关键帧里**：动画一跑 `transform` 整条归关键帧管，同一元素上的
       `scale-*` class 会被按住不动，所以别用「加个 `scale-110` class」来实现这一跳
       （`syncIndicator.test.ts` 直接读 `app.css` 把这条钉住了），
@@ -385,14 +390,17 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
     本轮操作（退出 / 结束本轮）。拆开的理由与刷题模式那三个一样：以前 `MemoryQuestionArea`
     把版面、交互、动效写在一个文件里，换版面时两个模式各改一遍
   - `MemoryHome.svelte`：首页，两个入口 + 一排卡片。那排卡片**就是总览那一排**
-    （`components/overview/MemoryOverviewCards.svelte`，连热力图一起；只不传 `onJump`，
-    首页没有列表可跳），外面套 `OverviewRail` 所以窄屏也能横向滚；每种状态各配水印图标
+    （`components/overview/MemoryOverviewCards.svelte`，连热力图一起；首页也传 `onJump`，
+    点了由 `MemoryView` 打开总览并跳到那张卡，同时把 `overviewOpenedByJump` 置位——
+    总览不再补一声开窗音），外面套 `OverviewRail` 所以窄屏也能横向滚；每种状态各配水印图标
   - 总览对话框**已迁出**：`src/components/overview/MemoryOverview.svelte`（两个模式共用同一套外壳，见「总览窗口」一节）
   - `MemoryMasteryButton.svelte`：卡片右侧那句状态文字，**它同时是「标熟」按钮**（点两下确认，
     形态照刷题模式的 `StreakIndicator`）。只出现在总览里——答题区不给记忆模式掌握入口
   - `MemoryProgressBar.svelte`：**只是 `ProgressBar` 的适配器**（把「本轮已完成 / 总数」映射成
     stats），数字滚动动画、完成时的庆祝高亮、细条样式全部来自那一份实现
   - `src/components/settings/MemorySettings.svelte`：设置面板，与 `Settings.svelte` 同构（`Input` / `Switch` / `Separator` / `ConfirmActionButton` / 复用 `QuestionOrder`），掌握阈值用 `$lib/components/ui/slider`，最底部是共用那份快捷键说明
+    - 掌握阈值是**离散档位**：`onValueChange` 先 `Math.round` 再与当前档比较，只有真的换档才响；
+      音高随档位升高（3→10 = 0→7 个半音），拖动中同一档反复发值不会再响
 - `src/quiz/session/` — 答题流状态层（Pinia 等价物，纯 Svelte 5 runes）
   - `ProgressSessionBase.svelte.ts`：**两个模式共用的会话外壳**（`exportProgress` / `startImport` / `commitImport` /
     `copyQuestion` 的剪贴板出口 / `toggleSound` / `toggleAutoNext` / 复制状态计时器）。子类只回答四个问题：
@@ -406,6 +414,10 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `src/components/settings/Settings.svelte` — **当前题库设置**（刷题模式），答题界面底部工具栏左侧的齿轮图标；只有按库设置 + 进度备份/重置
   - `src/components/settings/MemorySettings.svelte` — **记忆模式设置**，记忆界面底部的齿轮图标（与刷题模式工具栏同位置）；每轮学习数 / 顺序 / N / M + 让题库名 + 快捷键说明 + 重置记忆进度
   - `src/components/settings/GlobalSettings.svelte` — **全局设置**，侧边栏左下角滑块图标（`IconAdjustments`）；直接读写 `globalSettingsStore`，不依赖 QuizSession
+    - 音效开关是主项，**音量只在音效打开时出现**（`mt-1.5` 的子项；关掉时整行不渲染，与其他项恢复统一间距）
+    - 音量滑杆按**每一档**落盘并试听（`volume-changed`，45ms 冷却 + `restart`），不是松手才响；这是「所见即所听」的刻意选择，别改回 commit-only
+    - 设置里的 switch / 单选 / 数值档位分别走 `playSettingToggle` / `playSettingChoice` / `playSettingStep`
+      （`src/sound/settings.ts`）；普通按钮不要用这三声，它们有自己的结果音
 - `src/components/layout/Sidebar.svelte` — 题库列表 + 导入（文件选择 / 剪贴板 / 拖入文件）/ 导出 / 重命名 / 删除 / 排序 / 复制 Prompt（子菜单：生成刷题题库 / 生成记忆题库） + 左下角全局设置入口（开关走 `globalSettingsDialog`，收成图标栏时 tooltip 里带 ⌘⇧I 提示；那个快捷键的窗口监听也挂在这个组件的 `<svelte:window>` 上）
   - 有未裁决的**冲突**或同步**报错**时，「全局设置」图标右上角点一个**红点**（`bg-destructive`，与页头指示点
     同一个颜色语义），悬浮提示写明是什么问题；点那个按钮本来就是打开全局设置，正好对上。
@@ -420,7 +432,7 @@ src/generalConfig.ts      general 配置读写（含旧版拆分键的一次性�
   - `activeBank: string | null`
   - `defaultSettings: BankSettings` — 新题库的按库设置模板
   - `library: BankSummary[]` — 题库索引（含 `mode`）
-  - `globalSettings: GlobalSettings` — `{ soundEnabled, autoSubmitOnSelection, autoNextOnCorrect }`
+  - `globalSettings: GlobalSettings` — `{ soundEnabled, soundVolume, autoSubmitOnSelection, autoNextOnCorrect }`
 - `BankSettings`（按题库，刷题模式）— `{ activePoolSize, correctStreakToMaster, correctStreakAfterMistake, selectionMode, notifyNewQuestionInPool }`
 - `StoredState`（按题库）— `masteredIds` / `masteredMistakes` / `activePool` / `currentRound` / `filterType` / `settings` / `ui` / `memory?`。
   顶层的 `round` 已经是**历史字段**：读盘时由 `normalizeStoredLearningSession` 一次性搬进 `memory.sessions.learning`，写盘不再产出
@@ -864,12 +876,72 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 - `selectionMode === "sequential"`：题库原顺序，跳过当前题
 - 否则加权随机：权重 = 平滑斜坡 `1 - exp(-4x/(L/2))` 关于「距离上次选中轮次（封顶 2L）减 L/3」
 
+### 音效
+
+音效只走 `appSound` 一个出口，包是 uisfx 的 `minimal`（干、准、几乎不可见，和这个
+文字密集的系统 UI 同构）。**不新增 hover / 普通点击 / 滚动音**；设置与总览筛选里的
+开关 / 单选 / 数值档位是明确要配的（见 `src/sound/settings.ts`），其余「选项选中」
+仍然不配。一次交互通常只响一声，破坏性操作只在**提交之后**响。
+
+| 事件 | 触发点 | cue |
+|---|---|---|
+| `answer-correct` | 刷题判分正确 / 记忆「知道」/ 视作正确 | `check` |
+| `answer-wrong` | 刷题判分错误 / 记忆「忘记」/ 改判 | `error` |
+| `question-mastered` | 手动标熟（顶栏 / 活动池 / 总览） | `checkpoint` |
+| `round-complete` | 记忆一轮学完 / 复习完 | `complete` |
+| `session-start` / `session-end` | 进入 / 退出记忆学习或复习 | `start` / `stop` |
+| `bank-switch` | 侧边栏点了**另一个**题库 | `select` |
+| `bank-renamed` | 重命名已保存 | `reaction` |
+| `banks-moved` | 题库（或选中项）移到顶部 | `swipe` |
+| `bank-exported` | 题库导出成功且没有汇总对话框 | `success` |
+| `bank-deleted` | 删除题库已提交 | `delete` |
+| `sidebar-expand` / `sidebar-collapse` | 侧边栏展开 / 收起（rail、页头按钮、⌘B、移动端抽屉） | `open` / `close` |
+| `pool-expand` / `pool-collapse` | 活动池展开 / 收起（工具栏、键盘 P、抽屉下滑 / 遮罩 / Esc） | `drag-start` / `drop` |
+| `dialog-open` / `dialog-close` | 全局设置 / 题库设置 / 总览 / 侧边栏四张对话框（重命名、导入汇总、删除确认、覆盖询问）开合 | `open` / `close` |
+| `clipboard-copy` | 复制题目 / 导出进度 / 复制 Prompt | `copy` |
+| `data-imported` | 进度导入成功 | `success` |
+| `sync-succeeded` | 手动同步成功（不是自动同步） | `reaction` |
+| `heatmap-hover` | 鼠标划过一格热力图（换格才响，55ms 冷却） | `hover`（不变调） |
+| `heatmap-jump` | 点击热力图格子跳转 | `swipe` |
+| `next-question` | 手动「下一题 / 我知道了」（按钮与键盘） | `forward` |
+| `progress-reset` | 重置当前题库进度已提交 | `delete` |
+| `setting-toggle-on` / `setting-toggle-off` | 设置里的 switch、总览筛选面板展开 / 收起（按结果状态） | `toggle-on` / `toggle-off` |
+| `setting-choice` | 设置里的单选 / 分段选择（顺序、筛选、Gist）、总览筛选的每个选项 | `select` |
+| `setting-step` | 设置里的数值档位（掌握阈值、池大小、连对次数） | `snap`（掌握阈值按档位升调） |
+| `sound-enabled` / `volume-changed` | 打开音效的试听 / 音量拖动（每一档都试听） | `toggle-on` / `volume-change` |
+| `action-failed` | 复制 / 导入 / 导出失败 | `error` |
+
+`next-question` 只由「用户主动按下一题」的三处发出（两个模式的按钮 + `appShortcuts`
+的 `next` 分支）；**不要塞进 `advanceQuestionFlow()`**——答对自动下一题、标熟后自动推进
+也走那条路，它们已经有自己的结果音，塞进去就会一次操作响两声。
+
+「一次交互只响一声」落到 `attachOverlaySound` 的两个一次性开关上：
+
+- `skipOpen`：记忆首页点热力图 → 已经响过 `heatmap-jump`（swipe），紧接着打开的
+  总览不再补 `dialog-open`。调用方在 `open` 变 true **之前同步置位**（`MemoryView`
+  的 `overviewOpenedByJump`），**不要**在窗口 effect 里从 `focusId` 现推——那个值
+  会被跳转处理立刻清掉，推出来永远是 false；
+- `skipClose`：删除 / 重命名在关闭对话框的同一下给结果音（`bank-deleted` /
+  `bank-renamed`），不再叠 `dialog-close`。侧边栏四张对话框共用一个 `anyDialogOpen`
+  状态，`closeSoundHandled` 标记只活到本次 effect 之后。
+
+侧边栏开合音**盯状态**（`sidebar.open` / 移动端的 `sidebar.openMobile`），不要给
+rail、页头按钮、⌘B 各挂一次点击监听：入口多一个就漏一次。活动池同理——声音放在
+`QuizSession.togglePool` / `setPoolOpen` 里（展开 `drag-start`、收起 `drop`），
+工具栏按钮、键盘 P、抽屉下滑 / 遮罩 / Esc 自动一致；不要在按钮上再挂一次。
+
+生命周期：播放器**懒创建**（模块加载 / SSR / 测试都不碰 AudioContext）；第一次真实手势
+之前 `play()` 一律返回 `false`（不排队，避免补播过期反馈）；关闭音效时 `stopAll()` →
+`setEnabled(false)`，音量与开关都只存在 general 配置里（uisfx 自带的 localStorage 用空
+存储关掉）。`appSound` 在 HMR dispose 时销毁；测试用 `createSoundService` + 假播放器。
+
 ### 构建约束
 
 - 题库文件最外层必须是 `{ "questions": [...] }` 对象；裸数组会被 `parseBankFile` 拒绝
 - 题目 `id` 必须唯一
 - `Bank = QuizBank | MemoryBank` 是判别联合：新增消费 `bank.questions` 的代码时，先按 `bank.mode` 收窄
-- 音效资源在 `assets/sounds/`，通过 `/assets/sounds/*.webm` 静态 import
+- 音效由 `uisfx`（Web Audio 合成，运行时不需要静态音频文件）提供；旧的
+  `assets/sounds/*.webm` 已不再被任何代码引用，不要恢复那条静态 import 路径
 
 ### 首屏体积（别再往主包里塞东西）
 
@@ -964,7 +1036,8 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
   「未学习 / 学习中 / 已掌握 + 今日待复习 + 卡片热力图」「已掌握 / 活动题池 / 未学习 + 正确率 + 答题次数 +
   答题热力图」。卡片里的 DOM 一张一张手写（不走「每张卡一个对象 + 一个模板」，那样字号与间距会走形）。
   卡片**自己取数据**（`useMemorySession` / `useQuizSession`），所以没有「传不传热力图」这种分支：
-  首页用的就是总览那一排，连热力图一起，一个像素都不差（只少一个 `onJump`，首页没有列表可跳）
+  首页用的就是总览那一排，连热力图一起，一个像素都不差；`onJump` 也是同一个：
+  首页点了打开总览并跳到那张卡，不另做一套「点了没反应」的分支
 - `HeatmapCard.svelte` — 卡片内热力图（壳来自 `OverviewCard`）。格子**列优先**（每列 `OVERVIEW_CELL_ROWS` 格），
   宽度随题量增长 → 正好交给 rail 去滚；只渲染视口附近的列（视口信息经 `railContext` 注入）；
   首帧只画占位，下一帧之后才算颜色。**占位与真格子是同一批 DOM**，只换 class / style，不重建节点
@@ -979,10 +1052,15 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
     去重**每次从数据现算**，不要假设「只有 1..7 档」——档位数来自 `graduateLevel` / 连对目标，用户随时能改
   - **hover 只有一块高亮元素**（`animate-heat-pop`）：格子身上没有 `transition` / `hover:` 规则，
     `{#key}` 让高亮块换格子时重新挂载、重放一次动画。300 个节点各挂一条 transition 变成 1 个
+  - **hover 音与跳转音**：换格且没有按住鼠标时 `playHeatmapHover()`（就是那一个
+    `hover`，55ms 冷却，**不做变调**，触摸滑动不响）；点击跳转是 `playHeatmapJump()`。
+    两者都在 `src/sound/heatmap.ts` 里，**不要**在模板里直接写 cue 名或另算一套音阶
   - 每列挂 `contain: layout paint style`，视口外的列浏览器可以直接跳过（虚拟化之外的第二道）
   - 网格是 `role="img"` + 一句 `aria-label`（读屏当它是一张图）；点击/指针事件在非交互元素上，
     三个 a11y 提示是**有意 ignore** 的，别当 bug 去"修"
-- `OverviewFilterBar.svelte` / `OverviewList.svelte` — 两个模式共用的筛选栏与虚拟列表（`list/` 下是布局数学）
+- `OverviewFilterBar.svelte` / `OverviewList.svelte` — 两个模式共用的筛选栏与虚拟列表（`list/` 下是布局数学）。
+  筛选栏的交互音都落在 `FilterBar` 外壳里：面板展开 / 收起是 `playSettingToggle`，每个分组选项是
+  `playSettingChoice`——两个模式自动一致，不要加到各自的适配器里
 - `QuizOverview.svelte` / `MemoryOverview.svelte` — 适配器：数字怎么算、格子怎么上色、每行画什么
 
 几条硬约束：
@@ -1475,19 +1553,26 @@ memoryPayload = [progress[][], memorySettings[], trailing]
 - `tests/settingsPrimitives.test.ts` — `SettingsDialog` / `SettingsSection` / `SettingNumberRow`：
   `label.for === input.id`、`bind:value` 双向、`onChange` 只由 `change` 触发、
   `class` 覆盖间距、`open` 双向（子 → 父的关闭也算）
-- `tests/sharedList.test.ts` — 共享筛选栏（折叠态、勾选回传、`scopeApplied` 的图标与配色）
-  与虚拟列表的**无分组头模式**（记忆模式不要那条 sticky 标题条）、自定义行、空态文案
+- `tests/sharedList.test.ts` — 共享筛选栏（折叠态、勾选回传、`scopeApplied` 的图标与配色，
+  以及展开 / 选项的两种交互音）与虚拟列表的**无分组头模式**（记忆模式不要那条 sticky 标题条）、自定义行、空态文案
 - `tests/progressBar.test.ts` — 进度条：可交互形态的聚焦语义、非交互形态的
   `role="progressbar"` 数值、`label` / `rightValue` 覆盖、完成时的庆祝动效，以及记忆模式适配器的夹取
-- `tests/globalSettingsActions.test.ts` — 音效 / 自动下一题的统一实现：落盘、提示文案、试听，
+- `tests/sound.test.ts` / `tests/soundWiring.test.ts` — 音效服务（手势前静音、单一播放器、
+  开关 / 音量同步、关闭先 stopAll、`play()` 返回 null、dispose）与「业务事件 → cue」接线
+  （答对 / 答错 / 视作正确 / 标熟 / 记忆会话开始结束）
+- `tests/overlaySound.test.ts` — 浮层开合音的两条「不要叠音」规则：`skipOpen`（跳转已经响过
+  swipe，窗口不再补 open）与 `skipClose`（删除 / 重命名带结果音，不再补 close）
+- `tests/globalSettingsActions.test.ts` — 音效 / 音量 / 自动下一题的统一实现：落盘、提示文案、试听顺序，
   且**两个 session 的可观察结果逐字一致**
+- `tests/globalSettingsPanel.test.ts` — 音量子项只在音效打开时渲染（更小更淡 + 额外上边距）、
+  音量滑杆每一档落盘并试听、普通开关按结果状态响开 / 关
 - `tests/heatmapCard.test.ts` — 卡片内热力图：首帧只画占位（不算颜色）、占位与真格子是同一批节点、
   一格一个 `div`（没有 `button`）、列优先 5 格一列、调色板 `--heat-N` 去重且档位数现算、
   命中按坐标（缝里也算）、tooltip 钉在格子正上方且不跟鼠标跑、触摸不触发 hover、点击跳转
 - `tests/overviewRail.test.ts` / `tests/overviewModels.test.ts` — rail 的滚轮判定
   （触控板的连续小数增量不算「鼠标滚轮」）+ 热力图版面常量自洽，以及两个模式的热力图「状态 → 颜色」
 - `tests/importProgressDialog.test.ts` / `tests/memoryOverview.test.ts` / `tests/memoryFilters.test.ts` —
-  导入确认弹窗；记忆总览的「导出为新题库」（含只导出筛选结果）与「关闭后重置搜索 / 筛选」
+  导入确认弹窗；记忆总览的「导出为新题库」（含只导出筛选结果）、首页热力图 `focusId` 跳转与高亮、关闭后重置搜索 / 筛选
 
 **领域逻辑**
 
