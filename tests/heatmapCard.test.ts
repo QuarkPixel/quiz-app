@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import HeatmapCard from "../src/components/overview/HeatmapCard.svelte";
 import type { HeatmapCell } from "../src/features/overview/types";
+import { appSound } from "../src/sound";
 
 /**
  * 卡片内的热力图。
@@ -141,6 +142,7 @@ function tooltip(): HTMLElement | null {
 }
 
 afterEach(() => {
+    vi.restoreAllMocks();
     while (mounted.length > 0) mounted.pop()?.destroy();
     document.body.innerHTML = "";
 });
@@ -289,17 +291,43 @@ describe("命中与 tooltip", () => {
     });
 
     it("触摸不触发 hover", async () => {
+        const play = vi.spyOn(appSound, "play").mockReturnValue(false);
         const view = mountCard();
         await waitForCells(view.grid, CELLS.length);
 
         pointerAt(view.grid, 0, 0, "touch");
         expect(hoverBox(view.grid)).toBeNull();
         expect(tooltip()).toBeNull();
+        expect(play).not.toHaveBeenCalled();
+    });
+});
+
+describe("热力图音效", () => {
+    it("换格才响 hover，同一格里重复移动不叠加", async () => {
+        const play = vi.spyOn(appSound, "play").mockReturnValue(false);
+        const view = mountCard();
+        await waitForCells(view.grid, CELLS.length);
+
+        pointerAt(view.grid, 8, 8);
+        expect(play).toHaveBeenLastCalledWith("heatmap-hover", {
+            cooldownMs: 55,
+        });
+        const callsAfterFirstCell = play.mock.calls.length;
+
+        // 同一格内晃：不再响
+        pointerAt(view.grid, 10, 10);
+        expect(play).toHaveBeenCalledTimes(callsAfterFirstCell);
+
+        // 下一行：换格，但音色还是同一个 hover（不做变调）
+        pointerAt(view.grid, 8, STRIDE + 8);
+        expect(play).toHaveBeenCalledTimes(callsAfterFirstCell + 1);
+        expect(play.mock.calls.at(-1)?.[0]).toBe("heatmap-hover");
     });
 });
 
 describe("点击跳转", () => {
-    it("点格子把 id 交给 onJump", async () => {
+    it("点格子把 id 交给 onJump，并响跳转音", async () => {
+        const play = vi.spyOn(appSound, "play").mockReturnValue(false);
         const onJump = vi.fn();
         const view = mountCard({ onJump });
         await waitForCells(view.grid, CELLS.length);
@@ -309,12 +337,15 @@ describe("点击跳转", () => {
 
         expect(onJump).toHaveBeenCalledTimes(1);
         expect(onJump).toHaveBeenCalledWith("e");
+        expect(play).toHaveBeenCalledWith("heatmap-jump");
     });
 
-    it("不传 onJump 时点击不抛错", async () => {
+    it("不传 onJump 时点击不抛错，也不响跳转音", async () => {
+        const play = vi.spyOn(appSound, "play").mockReturnValue(false);
         const view = mountCard();
         await waitForCells(view.grid, CELLS.length);
 
         expect(() => clickAt(view.grid, 8, 8)).not.toThrow();
+        expect(play).not.toHaveBeenCalledWith("heatmap-jump");
     });
 });

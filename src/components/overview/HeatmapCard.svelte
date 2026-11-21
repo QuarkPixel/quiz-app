@@ -9,6 +9,7 @@
         OVERVIEW_HEATMAP_HEIGHT,
     } from "@/config/overview";
     import type { HeatmapCell } from "@/features/overview/types";
+    import { playHeatmapHover, playHeatmapJump } from "@/sound";
     import { useOverviewRail } from "./railContext";
     import OverviewCard from "./OverviewCard.svelte";
 
@@ -264,6 +265,11 @@
             return;
         }
         hovered = next;
+        // 换格才响：同一格里怎么晃都不重复。按住鼠标拖动（滚 rail / 准备点击）
+        // 时不出声——那不是「浏览」，而且松手还会再触发一次 click。
+        if (event.buttons === 0) {
+            playHeatmapHover();
+        }
     }
 
     function onPointerLeave(): void {
@@ -272,7 +278,10 @@
 
     function onClick(event: MouseEvent): void {
         const hit = cellAt(event);
-        if (hit) onJump?.(hit.cell.id);
+        // 首页那张热力图没有 onJump（点了不跳），这时不该有一声「跳转」。
+        if (!hit || !onJump) return;
+        onJump(hit.cell.id);
+        playHeatmapJump();
     }
 
     /**

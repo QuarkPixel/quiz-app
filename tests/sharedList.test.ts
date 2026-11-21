@@ -4,6 +4,7 @@ import SharedListHarness from "./SharedListHarness.svelte";
 import type { FilterGroupDef } from "../src/components/shared/FilterBar.svelte";
 import type { QuestionGroup } from "../src/components/overview/list/types";
 import type { Question } from "../src/types";
+import { appSound } from "../src/sound";
 
 /**
  * 两个模式共用的筛选栏外壳，以及虚拟列表的「无分组头」模式。
@@ -68,6 +69,7 @@ afterEach(() => {
 
 describe("筛选栏外壳", () => {
   it("筛选按钮切换展开态（收起 / 展开是 class 驱动，内容始终在 DOM 里）", () => {
+    const play = vi.spyOn(appSound, "play").mockReturnValue(false);
     const host = render({
       kind: "filter",
       groups: makeGroups(() => {}),
@@ -88,9 +90,13 @@ describe("筛选栏外壳", () => {
     expect(button.getAttribute("aria-pressed")).toBe("true");
     expect(panel.classList.contains("expanded")).toBe(true);
     expect(host.querySelector('[data-testid="actions"]')).not.toBeNull();
+    expect(play, "展开筛选面板要有声音").toHaveBeenLastCalledWith(
+      "setting-toggle-on",
+    );
   });
 
   it("勾选分组把新的值交给调用方", () => {
+    const play = vi.spyOn(appSound, "play").mockReturnValue(false);
     const onChange = vi.fn();
     const host = render({ kind: "filter", groups: makeGroups(onChange) });
 
@@ -100,6 +106,9 @@ describe("筛选栏外壳", () => {
     flushSync();
 
     expect(onChange).toHaveBeenCalledWith(["mastered"]);
+    expect(play, "每个筛选项点击都要有声音").toHaveBeenLastCalledWith(
+      "setting-choice",
+    );
   });
 
   it("scopeApplied 时按钮变绿并换成「已筛选」图标", () => {

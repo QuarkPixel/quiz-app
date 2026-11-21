@@ -22,6 +22,7 @@
     import IconBooks from "@tabler/icons-svelte/icons/books";
     import IconAdjustments from "@tabler/icons-svelte/icons/adjustments";
     import { toastStore } from "@/features/toast.svelte";
+    import { appSound, attachOverlaySound } from "@/sound";
 
     /**
      * 全局设置对话框是**按需加载**的。
@@ -88,6 +89,30 @@
 
     let { source }: { source: QuizSource } = $props();
     const sidebar = Sidebar.useSidebar();
+
+    /**
+     * 侧边栏开合的声音。
+     *
+     * 三个入口（rail、页头按钮、⌘B）做的都是同一件事：改 `sidebar.open`
+     * （移动端是 `openMobile`）。所以声音盯状态，而不是给每个入口各挂一次
+     * 点击监听——多一个入口就漏一次。初值就是当前状态，首帧不响。
+     */
+    // svelte-ignore state_referenced_locally
+    let sidebarWasExpanded = $state(sidebar.state === "expanded");
+    $effect(() => {
+        const expanded = sidebar.state === "expanded";
+        if (expanded === sidebarWasExpanded) return;
+        sidebarWasExpanded = expanded;
+        appSound.play(expanded ? "sidebar-expand" : "sidebar-collapse");
+    });
+
+    // 移动端是抽屉（`openMobile`），桌面端的 `state` 不会跟着变。
+    let mobileWasOpen = $state(sidebar.openMobile);
+    $effect(() => {
+        if (sidebar.openMobile === mobileWasOpen) return;
+        mobileWasOpen = sidebar.openMobile;
+        appSound.play(mobileWasOpen ? "sidebar-expand" : "sidebar-collapse");
+    });
 
     // 初始读取 + subscribe；source 自身是稳定引用
     // svelte-ignore state_referenced_locally
@@ -172,6 +197,31 @@
     let deleteTarget = $state<{ hashes: string[]; names: string[] } | null>(
         null,
     );
+
+    /**
+     * 侧边栏自己的四张对话框（重命名 / 导入汇总 / 删除确认 / 覆盖询问）共用
+     * 一套开合音：同一刻最多只有一张在屏上，分开挂只会得到四份重复逻辑。
+     */
+    const anyDialogOpen = $derived(
+        renameTarget !== null ||
+            importMessage !== null ||
+            deleteTarget !== null ||
+            overwriteRequest !== null,
+    );
+
+    /**
+     * 关闭的瞬间已经有结果音（删除成功 / 重命名保存）：不再叠一声 dialog-close。
+     * 标记在同一个 flush 的 effect 里被读到，定时器随后清掉。
+     */
+    let closeSoundHandled = false;
+    function muteCloseSound(): void {
+        closeSoundHandled = true;
+        setTimeout(() => (closeSoundHandled = false), 0);
+    }
+
+    attachOverlaySound(() => anyDialogOpen, {
+        skipClose: () => closeSoundHandled,
+    });
 
     function orderedHashes(): string[] {
         return banks.map((bank) => bank.hash);
@@ -278,12 +328,14 @@
                 "粘贴到 AI 对话中，并附上原始内容",
                 "success",
             );
+            appSound.play("clipboard-copy");
         } catch {
             toastStore.show(
                 "复制失败",
                 "剪贴板不可用，请检查权限",
                 "destructive",
             );
+            appSound.play("action-failed");
         }
     }
 
@@ -388,6 +440,9 @@
         const trimmed = renameInput.trim();
         if (trimmed && trimmed !== renameTarget.name) {
             source.renameBank(renameTarget.hash, trimmed);
+            // 结果音自己会响：这次关闭就不再补 dialog-close
+            muteCloseSound();
+            appSound.play("bank-renamed");
         }
         renameTarget = null;
     }
@@ -403,6 +458,8 @@
     function commitDelete(): void {
         if (!deleteTarget) return;
         const hashes = deleteTarget.hashes;
+        // 删除结果音会盖住退场音，这一下不再补 dialog-close
+        muteCloseSound();
         deleteTarget = null;
         closeMenus(true);
         const deleted = new Set(hashes);
@@ -413,10 +470,14 @@
         for (const hash of hashes) {
             source.removeBank(hash);
         }
+        appSound.play("bank-deleted");
     }
 
     function pickBank(hash: string): void {
+        // 点的是当前题库：什么都不做，也不该响（否则每次点当前项都有一声）。
+        if (source.getActiveBank()?.hash === hash) return;
         source.setActiveBank(hash);
+        appSound.play("bank-switch");
     }
 
     function handleBankClick(event: MouseEvent, hash: string): void {
@@ -486,18 +547,23 @@
     function moveSelectionToTop(hash: string): void {
         closeMenus(true);
         source.moveBanksToTop(selectionScopeFor(hash));
+        appSound.play("banks-moved");
     }
 
     async function handleExport(hash: string): Promise<void> {
         closeMenus(true);
         const result = await exportBank(source, hash);
         if (!result.ok) {
+            // 失败会摊一张对话框，开合音已经是反馈，别再叠 error
             importState = importReport(result.message);
         } else if (result.warning) {
             importState = importReport({
                 title: "题库已导出",
                 text: result.warning,
             });
+        } else {
+            // 纯成功没有对话框：这一声是唯一的反馈
+            appSound.play("bank-exported");
         }
     }
 

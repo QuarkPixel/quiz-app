@@ -27,6 +27,7 @@
     import IconSearch from "@tabler/icons-svelte/icons/search";
     import IconFilter from "@tabler/icons-svelte/icons/filter-2";
     import IconFilterSpark from "@tabler/icons-svelte/icons/filter-2-spark";
+    import { playSettingChoice, playSettingToggle } from "@/sound";
 
     /**
      * 总览筛选栏的外壳：`图标 + 展示对象 + 点线 + 搜索框 + 筛选按钮`，
@@ -109,7 +110,11 @@
                         size="icon-sm"
                         aria-pressed={showFilters}
                         aria-label="筛选"
-                        onclick={() => (showFilters = !showFilters)}
+                        onclick={() => {
+                            showFilters = !showFilters;
+                            // 展开 / 收起是一组二值状态：与设置里的 switch 同一档
+                            playSettingToggle(showFilters);
+                        }}
                     >
                         {#if scopeApplied}
                             <IconFilterSpark size={16} stroke={2} />
@@ -140,8 +145,12 @@
                                 type="multiple"
                                 value={group.values}
                                 spacing={1}
-                                onValueChange={(v) =>
-                                    group.onChange((v ?? []) as string[])}
+                                onValueChange={(v) => {
+                                    // 每个选项本身就是「一项进入/离开活动集」：
+                                    // 与设置里的单选同一档声音（多选时每次点击都响）
+                                    playSettingChoice();
+                                    group.onChange((v ?? []) as string[]);
+                                }}
                                 variant="outline"
                                 size="sm"
                                 class="*:data-[state=on]:bg-primary/80 *:data-[state=on]:text-primary-foreground *:data-[state=on]:border-transparent"
