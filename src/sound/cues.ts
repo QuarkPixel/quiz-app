@@ -44,6 +44,7 @@ export const SOUND_PACK = "minimal";
  *   forward    「导航前进到下一个地方」→ 手动下一题 / 我知道了
  *   toggle-on/off 「二值设置变为开 / 关」→ 设置面板里的 switch
  *   select     「一项进入活动集」→ 设置里的单选 / 分段选择
+ *   deselect   「一项离开活动集」→ 多选筛选里取消勾选
  *   snap       「对象锁进一个精确位置」→ 数值滑杆 / 数字输入落定一档
  *   delete     「破坏性移除已提交」→ 删除题库 / 重置进度
  *   open/close 「面板 / 弹层出现 / 退场」→ 侧边栏展开 / 收起
@@ -92,6 +93,8 @@ export const SOUND_CUES = {
   "setting-toggle-on": "toggle-on",
   "setting-toggle-off": "toggle-off",
   "setting-choice": "select",
+  // 多选筛选里取消勾选是「一项离开活动集」：和选中分开，用户能听出方向。
+  "setting-deselect": "deselect",
   "setting-step": "snap",
   "sound-enabled": "toggle-on",
   "volume-changed": "volume-change",

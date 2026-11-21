@@ -109,6 +109,18 @@ describe("筛选栏外壳", () => {
     expect(play, "每个筛选项点击都要有声音").toHaveBeenLastCalledWith(
       "setting-choice",
     );
+
+    // 键盘空格取消勾选（ToggleGroup 自己处理 keydown，不会派发 click）：
+    // 方向要能听出来，不能还是「选中」那一声
+    host
+      .querySelector<HTMLElement>('button[aria-label="已掌握"]')!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    flushSync();
+
+    expect(onChange).toHaveBeenLastCalledWith([]);
+    expect(play, "取消勾选要用 deselect").toHaveBeenLastCalledWith(
+      "setting-deselect",
+    );
   });
 
   it("scopeApplied 时按钮变绿并换成「已筛选」图标", () => {

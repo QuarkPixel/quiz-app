@@ -1,7 +1,7 @@
 /**
- * 设置面板里的三类交互音。
+ * 设置面板里的交互音。
  *
- * 只在设置项上调用：开关、单选 / 分段选择、数值档位。
+ * 三类：开关、选择（单选只有选中，多选还有取消）、数值档位。
  * **不要**拿它给普通按钮配音——按钮有自己的结果音（复制、删除、成功 / 失败），
  * 两套混在一起就会出现「点一下响两声」。
  */
@@ -16,6 +16,16 @@ export function playSettingToggle(next: boolean): void {
 /** 单选 / 分段选择（学习顺序、题型筛选、云端片段…）。 */
 export function playSettingChoice(): void {
   appSound.play("setting-choice");
+}
+
+/**
+ * 多选里取消勾选（总览筛选项）。
+ *
+ * 单选 / 分段选择没有「取消」这回事（点了就是换到那一项）；只有多选才有
+ * 「进入 / 离开活动集」两个方向。选中仍用 `playSettingChoice`，取消用这一声。
+ */
+export function playSettingDeselect(): void {
+  appSound.play("setting-deselect");
 }
 
 /**

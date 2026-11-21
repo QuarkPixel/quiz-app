@@ -906,7 +906,8 @@ quiz_app_sync_mtime:<key>     某个可同步键最后一次本地改动的时�
 | `next-question` | 手动「下一题 / 我知道了」（按钮与键盘） | `forward` |
 | `progress-reset` | 重置当前题库进度已提交 | `delete` |
 | `setting-toggle-on` / `setting-toggle-off` | 设置里的 switch、总览筛选面板展开 / 收起（按结果状态） | `toggle-on` / `toggle-off` |
-| `setting-choice` | 设置里的单选 / 分段选择（顺序、筛选、Gist）、总览筛选的每个选项 | `select` |
+| `setting-choice` | 设置里的单选 / 分段选择（顺序、筛选、Gist）、总览筛选里**选中**一项 | `select` |
+| `setting-deselect` | 总览筛选里**取消**一项（多选才有方向） | `deselect` |
 | `setting-step` | 设置里的数值档位（掌握阈值、池大小、连对次数） | `snap`（掌握阈值按档位升调） |
 | `sound-enabled` / `volume-changed` | 打开音效的试听 / 音量拖动（每一档都试听） | `toggle-on` / `volume-change` |
 | `action-failed` | 复制 / 导入 / 导出失败 | `error` |
@@ -1059,8 +1060,10 @@ rail、页头按钮、⌘B 各挂一次点击监听：入口多一个就漏一�
   - 网格是 `role="img"` + 一句 `aria-label`（读屏当它是一张图）；点击/指针事件在非交互元素上，
     三个 a11y 提示是**有意 ignore** 的，别当 bug 去"修"
 - `OverviewFilterBar.svelte` / `OverviewList.svelte` — 两个模式共用的筛选栏与虚拟列表（`list/` 下是布局数学）。
-  筛选栏的交互音都落在 `FilterBar` 外壳里：面板展开 / 收起是 `playSettingToggle`，每个分组选项是
-  `playSettingChoice`——两个模式自动一致，不要加到各自的适配器里
+  筛选栏的交互音都落在 `FilterBar` 外壳里：面板展开 / 收起是 `playSettingToggle`，分组选项
+  选中是 `playSettingChoice`、取消是 `playSettingDeselect`——两个模式自动一致，不要加到
+  各自的适配器里。方向在 `click` / `keydown` 的**捕获阶段**读按钮自己的 `data-state`
+  （空格 / 回车不会派发 click），不要拿 `group.values` 现推：那一轮事件里它还是旧值
 - `QuizOverview.svelte` / `MemoryOverview.svelte` — 适配器：数字怎么算、格子怎么上色、每行画什么
 
 几条硬约束：

@@ -3,8 +3,8 @@
  *
  * 业务代码通常只用这几样：
  *   - `appSound.play("语义事件")` —— 播放；
- *   - `playSettingToggle` / `playSettingChoice` / `playSettingStep` —— 设置项的
- *     三类交互（开关 / 单选 / 数值档位）；
+ *   - `playSettingToggle` / `playSettingChoice` / `playSettingDeselect` /
+ *     `playSettingStep` —— 设置项交互（开关 / 选中 / 取消 / 数值档位）；
  *   - `playHeatmapHover` / `playHeatmapJump` —— 热力图的悬停与跳转；
  *   - `attachOverlaySound(() => open)` —— 浮层开合。
  *
@@ -20,6 +20,7 @@ export {
 export { attachOverlaySound } from "./overlay.svelte";
 export {
   playSettingChoice,
+  playSettingDeselect,
   playSettingStep,
   playSettingToggle,
 } from "./settings";

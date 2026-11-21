@@ -27,7 +27,11 @@
     import IconSearch from "@tabler/icons-svelte/icons/search";
     import IconFilter from "@tabler/icons-svelte/icons/filter-2";
     import IconFilterSpark from "@tabler/icons-svelte/icons/filter-2-spark";
-    import { playSettingChoice, playSettingToggle } from "@/sound";
+    import {
+        playSettingChoice,
+        playSettingDeselect,
+        playSettingToggle,
+    } from "@/sound";
 
     /**
      * 总览筛选栏的外壳：`图标 + 展示对象 + 点线 + 搜索框 + 筛选按钮`，
@@ -66,6 +70,30 @@
     }: Props = $props();
 
     let showFilters = $state(false);
+
+    /**
+     * 这次点击是「取消」还是「选中」。
+     *
+     * `onValueChange` 只给新值；`group.values` 在这轮事件里还是旧值，外部重置
+     * 筛选时又会整体变掉，不适合拿来判断方向。直接读按钮自己的 `data-state`
+     * 最准：捕获阶段拿到的还是点击前的状态。
+     *
+     * 空格 / 回车由 ToggleGroup 自己的 keydown 处理，不会再派发 click，
+     * 所以键盘也要在捕获阶段看一眼。
+     */
+    let pendingDeselect = false;
+
+    function toggleItemAt(target: EventTarget | null): HTMLElement | null {
+        const element = target instanceof HTMLElement ? target : null;
+        return element?.closest<HTMLElement>("[data-value][data-state]") ?? null;
+    }
+
+    function captureChoice(event: MouseEvent | KeyboardEvent): void {
+        if (event instanceof KeyboardEvent) {
+            if (event.key !== "Enter" && event.key !== " ") return;
+        }
+        pendingDeselect = toggleItemAt(event.target)?.dataset.state === "on";
+    }
 </script>
 
 <div class="flex flex-col gap-1">
@@ -139,17 +167,28 @@
                     <!-- key 用下标：分组是静态的、不重排，用 label 做 key 会在
                          「同面板出现两个同名分组」时直接抛 each_key_duplicate -->
                     {#each groups as group, groupIndex (groupIndex)}
-                        <div class="flex flex-col items-start gap-1">
+                        <!-- 捕获阶段只读状态、不拦事件：方向记在 pendingDeselect 里，
+                             等 ToggleGroup 触发 onValueChange 时再用 -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div
+                            class="flex flex-col items-start gap-1"
+                            onclickcapture={captureChoice}
+                            onkeydowncapture={captureChoice}
+                        >
                             <span class="text-xs opacity-50">{group.label}</span>
                             <ToggleGroup.Root
                                 type="multiple"
                                 value={group.values}
                                 spacing={1}
                                 onValueChange={(v) => {
-                                    // 每个选项本身就是「一项进入/离开活动集」：
-                                    // 与设置里的单选同一档声音（多选时每次点击都响）
-                                    playSettingChoice();
-                                    group.onChange((v ?? []) as string[]);
+                                    const next = (v ?? []) as string[];
+                                    // 多选有「进入 / 离开」两个方向：取消一项用
+                                    // deselect，新选中用 select。方向来自点击前
+                                    // 那颗按钮的 data-state，不依赖调用方回写时机。
+                                    if (pendingDeselect) playSettingDeselect();
+                                    else playSettingChoice();
+                                    pendingDeselect = false;
+                                    group.onChange(next);
                                 }}
                                 variant="outline"
                                 size="sm"
