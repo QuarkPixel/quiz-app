@@ -27,6 +27,7 @@
     import IconCheck from "@tabler/icons-svelte/icons/check";
     import { SYNC_VERIFIED_FLASH_MS } from "@/config";
     import { toastStore } from "@/features/toast.svelte";
+    import { playSettingChoice, playSettingToggle } from "@/sound";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import { syncEngine } from "@/features/sync/engine.svelte";
     import { collectLocalState, filesOfState } from "@/features/sync/collect";
@@ -274,6 +275,7 @@
     function setEnabled(next: boolean): void {
         enabled = next;
         syncConfigStore.update({ enabled: next });
+        playSettingToggle(next);
         // 打开：没有令牌就直接进编辑态。关掉：草稿与自检结果一起作废，
         // 否则再打开会看到上次那半截。
         panel = next
@@ -518,6 +520,7 @@
     function setAutoSync(next: boolean): void {
         autoSync = next;
         syncConfigStore.update({ autoSync: next });
+        playSettingToggle(next);
     }
 
     function formatBytes(bytes: number): string {
@@ -564,7 +567,10 @@
                 class="sr-only"
                 {value}
                 checked={verifiedDraft?.pickedId === value}
-                onchange={() => (panel = pickGist(panel, value))}
+                onchange={() => {
+                    panel = pickGist(panel, value);
+                    playSettingChoice();
+                }}
             />
             {#if value === NEW_GIST}
                 <!-- 还没建出来的那条：一眼看出是「新建」，不假装成一条已有片段 -->

@@ -1,20 +1,33 @@
 <script lang="ts">
-    import { APP_SHORTCUTS } from "@/config";
+    import {
+        APP_SHORTCUTS,
+        SOUND_VOLUME_MAX,
+        SOUND_VOLUME_MIN,
+        SOUND_VOLUME_STEP,
+    } from "@/config";
     import { modKeyLabel } from "$lib/platform";
     import * as Dialog from "$lib/components/ui/dialog";
     import { Switch } from "$lib/components/ui/switch";
     import { Label } from "$lib/components/ui/label";
+    import * as Slider from "$lib/components/ui/slider";
     import logoRaw from "/assets/icons/logo.svg?raw";
 
     import { Separator } from "$lib/components/ui/separator";
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import * as Tooltip from "$lib/components/ui/tooltip";
+    import { prefersReducedMotion } from "$lib/utils";
+    import { slide } from "svelte/transition";
+    import { cubicOut } from "svelte/easing";
     import SyncSettings from "./SyncSettings.svelte";
     import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
     import { toastStore } from "@/features/toast.svelte";
     import { globalSettingsStore } from "@/features/globalSettings.svelte";
-    import { createSoundPlayer, setSoundEnabledPreference } from "@/sound";
-    import type { SoundPlayer } from "@/sound/types";
+    import {
+        applySoundEnabledPreference,
+        setSoundVolumePreference,
+        toggleAutoNextPreference,
+    } from "@/features/globalSettingsActions";
+    import { appSound, attachOverlaySound, playSettingToggle } from "@/sound";
 
     interface Props {
         open?: boolean;
@@ -25,12 +38,8 @@
     // 这个 dialog 挂在侧边栏，不依赖具体题库的 QuizSession，所以直接读写共享 store。
     const settings = globalSettingsStore;
 
-    let soundPlayer: SoundPlayer | null = null;
-
-    function ensureSoundPlayer(): SoundPlayer {
-        soundPlayer ??= createSoundPlayer();
-        return soundPlayer;
-    }
+    // 浮层的开合由状态驱动（图标 / ⌘⇧I / 任何 show() 都走同一条）。
+    attachOverlaySound(() => open);
 
     function showToast(
         title: string,
@@ -41,39 +50,31 @@
     }
 
     function setSoundEnabled(next: boolean): void {
-        setSoundEnabledPreference(
-            settings.value,
-            next,
-            () => settings.persist(),
-            showToast,
-            ensureSoundPlayer(),
-        );
+        applySoundEnabledPreference(settings, next, showToast, appSound);
+    }
+
+    function setSoundVolume(next: number): void {
+        setSoundVolumePreference(settings, next, appSound);
     }
 
     function toggleAutoNext(): void {
-        const next = !settings.value.autoNextOnCorrect;
-        settings.update({ autoNextOnCorrect: next });
-        showToast(
-            next ? "答对自动下一题已开启" : "答对自动下一题已关闭",
-            next
-                ? "答对后自动进入下一题。"
-                : "答对后停留在结果页（按空格继续）。",
-        );
+        toggleAutoNextPreference(settings, showToast, appSound);
     }
 
     function setAutoSubmitOnSelection(next: boolean): void {
         settings.update({ autoSubmitOnSelection: next });
+        playSettingToggle(next);
     }
 </script>
-
 
 <Dialog.Root bind:open>
     <Dialog.Content
         class="bg-card flex max-h-[calc(100vh-4rem)] w-[calc(100vw-2rem)] max-w-md flex-col gap-0 overflow-hidden p-0 sm:max-w-md"
     >
         <Dialog.Header class="border-b px-5 py-3.5">
-            <Dialog.Title class="text-base font-semibold">全局设置</Dialog.Title
-            >
+            <Dialog.Title class="text-base font-semibold">
+                全局设置
+            </Dialog.Title>
         </Dialog.Header>
 
         <div class="flex flex-col gap-4 overflow-y-auto px-5 py-4">
@@ -96,6 +97,60 @@
                         size="sm"
                     />
                 </div>
+
+                <!--
+                    音量是音效的附属项：关掉音效时整行不出现，开关与下一项之间
+                    仍走 section 的统一 gap；打开时才用 mb-1.5 把「音效 + 音量」
+                    这一组和下一项隔开，看上去像这一项长出来的子选项。
+                -->
+                {#if settings.value.soundEnabled}
+                    <div
+                        class="mb-1.5 flex items-center justify-between gap-3"
+                        transition:slide={{
+                            duration: prefersReducedMotion ? 0 : 180,
+                            easing: cubicOut,
+                        }}
+                    >
+                        <Label
+                            for="global-sound-volume"
+                            class="text-muted-foreground text-xs font-normal"
+                        >
+                            音量
+                        </Label>
+                        <div class="flex items-center gap-2">
+                            <Slider.Root
+                                type="single"
+                                min={SOUND_VOLUME_MIN}
+                                max={SOUND_VOLUME_MAX}
+                                step={SOUND_VOLUME_STEP}
+                                value={settings.value.soundVolume}
+                                onValueChange={(value) => setSoundVolume(value)}
+                                class="w-28 sm:w-32"
+                            >
+                                {#snippet children({ thumbs })}
+                                    <span
+                                        data-orientation="horizontal"
+                                        class="bg-muted relative grow overflow-hidden rounded-full data-[orientation=horizontal]:h-1.5 data-[orientation=horizontal]:w-full"
+                                    >
+                                        <Slider.Range />
+                                    </span>
+                                    {#each thumbs as thumb (thumb)}
+                                        <Slider.Thumb
+                                            id="global-sound-volume"
+                                            index={thumb}
+                                            aria-label="音效音量"
+                                        />
+                                    {/each}
+                                {/snippet}
+                            </Slider.Root>
+                            <span
+                                class="text-muted-foreground w-9 text-right text-xs tabular-nums"
+                            >
+                                {Math.round(settings.value.soundVolume * 100)}%
+                            </span>
+                        </div>
+                    </div>
+                {/if}
 
                 <div class="flex items-center justify-between gap-3">
                     <Label
@@ -120,8 +175,8 @@
                                 {/snippet}
                             </Tooltip.Trigger>
                             <Tooltip.Content side="top" align="center">
-                                <span class="flex items-center"
-                                    >单选&thinsp;/&thinsp;判断&thinsp;题选中时，自动提交答案。
+                                <span class="flex items-center">
+                                    单选&thinsp;/&thinsp;判断&thinsp;题选中时，自动提交答案。
                                 </span>
                             </Tooltip.Content>
                         </Tooltip.Root>

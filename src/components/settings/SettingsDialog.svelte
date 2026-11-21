@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Snippet } from "svelte";
     import * as Dialog from "$lib/components/ui/dialog";
+    import { attachOverlaySound } from "@/sound";
 
     /**
      * 刷题 / 记忆两个模式的设置面板共用的 Dialog 外壳：标题栏 + 唯一的滚动内容区。
@@ -21,6 +22,9 @@
         title = "当前题库设置",
         children,
     }: Props = $props();
+
+    // 刷题 / 记忆两个模式的设置面板共用这个外壳，开合音效也只写这一处。
+    attachOverlaySound(() => open);
 </script>
 
 <Dialog.Root bind:open>

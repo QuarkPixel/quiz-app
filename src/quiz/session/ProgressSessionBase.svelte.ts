@@ -43,14 +43,13 @@ import {
   EXPORT_STATUS_ERROR_RESET_MS,
   EXPORT_STATUS_SUCCESS_RESET_MS,
 } from "@/config";
-import { maybePlaySuccessSound } from "@/sound";
+import { appSound } from "@/sound";
 import {
   applySoundEnabledPreference,
   toggleAutoNextPreference,
   toggleSoundPreference,
 } from "@/features/globalSettingsActions";
 import type { Toast } from "@/features/toast.svelte";
-import type { SoundPlayer } from "@/sound/types";
 import type {
   QuestionCopyContext,
   QuestionCopyPattern,
@@ -73,8 +72,6 @@ export interface SessionDeps {
   flash(isCorrect: boolean): void;
   /** 显示 toast 提示 */
   toast: Toast;
-  /** 播放音效 */
-  sound: SoundPlayer;
 }
 
 export abstract class ProgressSessionBase {
@@ -117,7 +114,7 @@ export abstract class ProgressSessionBase {
     toggleSoundPreference(
       this.globalSettingsRef,
       this.deps.toast,
-      this.deps.sound,
+      appSound,
     );
   }
 
@@ -126,12 +123,16 @@ export abstract class ProgressSessionBase {
       this.globalSettingsRef,
       next,
       this.deps.toast,
-      this.deps.sound,
+      appSound,
     );
   }
 
   toggleAutoNext(): void {
-    toggleAutoNextPreference(this.globalSettingsRef, this.deps.toast);
+    toggleAutoNextPreference(
+      this.globalSettingsRef,
+      this.deps.toast,
+      appSound,
+    );
   }
 
   setAutoSubmitOnSelection(next: boolean): void {
@@ -159,7 +160,7 @@ export abstract class ProgressSessionBase {
         "粘贴到任意位置即可备份。",
         "success",
       );
-      maybePlaySuccessSound(this.globalSettings, this.deps.sound);
+      appSound.play("clipboard-copy");
     } else {
       this.exportStatus = "error";
       setTimeout(
@@ -167,6 +168,7 @@ export abstract class ProgressSessionBase {
         EXPORT_STATUS_ERROR_RESET_MS,
       );
       this.deps.toast("导出失败", result.error, "destructive");
+      appSound.play("action-failed");
     }
   }
 
@@ -174,6 +176,7 @@ export abstract class ProgressSessionBase {
     const result = await readProgressFromClipboard();
     if (!result.ok) {
       this.deps.toast("无法导入", result.error, "destructive");
+      appSound.play("action-failed");
       return;
     }
     // 先不落盘：等 UI 二次确认（覆盖全部进度且不可撤销）。
@@ -196,11 +199,12 @@ export abstract class ProgressSessionBase {
     );
     if (!parsed.ok) {
       this.deps.toast("导入失败", parsed.error, "destructive");
+      appSound.play("action-failed");
       return;
     }
     this.applyImportedState(parsed.state);
     this.deps.toast("进度已导入", "已覆盖当前进度。", "success");
-    maybePlaySuccessSound(this.globalSettings, this.deps.sound);
+    appSound.play("data-imported");
   }
 
   // ── 复制题目 ────────────────────────────────────────────────────────
@@ -234,6 +238,7 @@ export abstract class ProgressSessionBase {
           "success",
         );
       }
+      appSound.play("clipboard-copy");
       return "copied";
     } catch {
       onStatus?.("error");
@@ -244,6 +249,7 @@ export abstract class ProgressSessionBase {
           "destructive",
         );
       }
+      appSound.play("action-failed");
       return "error";
     }
   }

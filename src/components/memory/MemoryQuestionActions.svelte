@@ -1,6 +1,7 @@
 <script lang="ts">
     import { Button } from "$lib/components/ui/button";
     import { useMemorySession } from "@/features/memory/context";
+    import { appSound } from "@/sound";
     import {
         memoryAnswerDowngrades,
         type MemoryAnswerKind,
@@ -24,6 +25,12 @@
 
     function pick(kind: MemoryAnswerKind): void {
         session.pick(kind);
+    }
+
+    /** 手动下一题；自动下一题 / 轮次收尾不经过这里（它们有自己的结果音）。 */
+    function nextQuestion(): void {
+        appSound.play("next-question");
+        session.advanceQuestionFlow();
     }
 </script>
 
@@ -79,7 +86,7 @@
         <Button
             size="lg"
             class="px-5 sm:px-8"
-            onclick={() => session.advanceQuestionFlow()}
+            onclick={nextQuestion}
         >
             下一题
         </Button>

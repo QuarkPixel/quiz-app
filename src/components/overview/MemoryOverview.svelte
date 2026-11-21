@@ -37,9 +37,31 @@
     interface Props {
         open: boolean;
         onOpenChange: (open: boolean) => void;
+        /**
+         * 打开后直接跳到这张卡（首页热力图点击走这里）。
+         * `null` = 没有待处理的跳转。
+         */
+        focusId?: string | null;
+        /** 跳转已经交给列表，调用方可以把 `focusId` 清掉。 */
+        onFocusHandled?: () => void;
+        /**
+         * 这次打开是首页热力图的跳转（swipe 已经响过）：窗口开合音要静音，
+         * 否则两声响在同一帧会叠成一个怪音。
+         *
+         * 由调用方在 `open` 变 true 之前同步置位，**不要**在这里从 `focusId`
+         * 现推——`focusId` 会被下面的 effect 立刻清掉，那时窗口的 effect
+         * 可能还没跑，推出来就是 false。
+         */
+        openedByJump?: boolean;
     }
 
-    let { open, onOpenChange }: Props = $props();
+    let {
+        open,
+        onOpenChange,
+        focusId = null,
+        onFocusHandled,
+        openedByJump = false,
+    }: Props = $props();
 
     const session = useMemorySession();
     const source = useQuizSource();
@@ -167,6 +189,19 @@
     }
 
     /**
+     * 首页热力图点了一格：先把总览打开，再把那张卡滚到眼前。
+     *
+     * 只在 `open` 为真时处理；`onFocusHandled` 立刻把父层的 `focusId` 清掉，
+     * 由 `jumpTargetId` 自己走完「等筛选清空 → 交给虚拟列表」的两步。
+     */
+    $effect(() => {
+        const id = focusId;
+        if (!open || id === null) return;
+        void jumpToCard(id);
+        onFocusHandled?.();
+    });
+
+    /**
      * 把当前筛选结果另存为一份新的记忆题库。
      *
      * 只写 `mode` 与 `questions`，不带 `state`——另存出来的是一份纯题目集合，
@@ -216,6 +251,7 @@
     {open}
     {onOpenChange}
     hash={session.bank.hash}
+    skipOpenSound={() => openedByJump}
     filter={{
         subject: "展示卡片",
         searchTerm,

@@ -26,7 +26,6 @@
     import { activeWork } from "@/features/sync/activeWork.svelte";
     import { MediaQuery } from "svelte/reactivity";
     import { COMPACT_LAYOUT_QUERY } from "@/config";
-    import { createSoundPlayer } from "@/sound";
 
     /**
      * 刷题模式的装配层：只做「把哪几块放进 `ViewShell` 的哪个槽」。
@@ -39,7 +38,6 @@
     let { bank }: { bank: QuizBank } = $props();
 
     let flashContainer: FlashContainer;
-    const soundPlayer = createSoundPlayer();
 
     // session 在挂载前构造 —— 此时 flash/toast 还未 bind，回调里走 ?. 兜底。
     // bank 在外层用 {#key bank.hash} 控制重建，所以这里把 bank 当作不变量处理。
@@ -48,7 +46,6 @@
         flash: (correct) => flashContainer?.flash(correct),
         toast: (title, description, variant) =>
             toastStore.show(title, description, variant),
-        sound: soundPlayer,
     });
     provideQuizSession(session);
 

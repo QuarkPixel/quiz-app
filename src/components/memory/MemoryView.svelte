@@ -24,7 +24,6 @@
     import { prefersReducedMotion } from "$lib/utils";
     import IconSettings from "@tabler/icons-svelte/icons/settings";
     import IconBook2 from "@tabler/icons-svelte/icons/book-2";
-    import { createSoundPlayer } from "@/sound";
     import { createAppKeyboardHandler } from "@/features/appShortcuts";
     import { useRouter } from "@/features/routing/context";
 
@@ -43,7 +42,6 @@
     let { bank }: { bank: MemoryBank } = $props();
 
     let flashContainer: FlashContainer;
-    const soundPlayer = createSoundPlayer();
 
     // bank 在外层用 {#key bank.hash} 控制重建，这里把它当作不变量处理。
     // svelte-ignore state_referenced_locally
@@ -52,7 +50,6 @@
         flash: (correct) => flashContainer?.flash(correct),
         toast: (title, description, variant) =>
             toastStore.show(title, description, variant),
-        sound: soundPlayer,
     });
     provideMemorySession(session);
 
@@ -103,6 +100,32 @@
 
     let showSettings = $state(false);
     let showOverview = $state(false);
+    /** 首页热力图点击后，总览要直接跳到的那张卡；`null` = 没有待处理跳转。 */
+    let overviewFocusId = $state<string | null>(null);
+    /**
+     * 这一次打开是不是「热力图跳转」。
+     *
+     * 跳转那一下已经响过 `heatmap-jump`（swipe），窗口开合音要静音——两声响
+     * 在同一帧会叠成一个怪音。标志在 `open` 变 true 之前同步置位，窗口的
+     * effect 读到的就是这次打开的真实来源（不能靠 focusId 现推：它会先被清掉）。
+     */
+    let overviewOpenedByJump = $state(false);
+
+    /** 首页热力图：打开总览，并把对应卡片滚到眼前。 */
+    function openOverviewAt(id: string): void {
+        overviewFocusId = id;
+        overviewOpenedByJump = true;
+        showOverview = true;
+    }
+
+    /** 总览开关的唯一入口：关闭时顺手丢掉未处理的跳转目标。 */
+    function setOverviewOpen(next: boolean): void {
+        showOverview = next;
+        if (!next) {
+            overviewFocusId = null;
+            overviewOpenedByJump = false;
+        }
+    }
 
     /**
      * 窗口级快捷键：**与刷题模式共用同一份分发**（`@/features/appShortcuts`）。
@@ -113,7 +136,7 @@
      * Esc = 退出本轮由 session 的 `isSessionActive` + `exitSession` 表达。
      */
     const handleKeydown = createAppKeyboardHandler(session, {
-        toggleReview: () => (showOverview = !showOverview),
+        toggleReview: () => setOverviewOpen(!showOverview),
         toggleSettings: () => (showSettings = !showSettings),
     });
 
@@ -200,7 +223,7 @@
             shortcut="toggleReview"
             rotateClass="hover:rotate-[10deg]"
             expanded={showOverview}
-            onclick={() => (showOverview = !showOverview)}
+            onclick={() => setOverviewOpen(!showOverview)}
         />
     </div>
 {/snippet}
@@ -273,7 +296,7 @@
             <MemoryQuestionBody />
         {:else}
             <div class="my-auto w-full">
-                <MemoryHome name={bank.name} />
+                <MemoryHome name={bank.name} onJump={openOverviewAt} />
             </div>
         {/if}
     </SwapFade>
@@ -287,7 +310,10 @@
 
 <MemoryOverview
     open={showOverview}
-    onOpenChange={(open) => (showOverview = open)}
+    onOpenChange={setOverviewOpen}
+    focusId={overviewFocusId}
+    onFocusHandled={() => (overviewFocusId = null)}
+    openedByJump={overviewOpenedByJump}
 />
 
 <ImportProgressDialog

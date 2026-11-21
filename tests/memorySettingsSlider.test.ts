@@ -4,6 +4,7 @@ import MemorySettingsHarness from "./MemorySettingsHarness.svelte";
 import { BankStore } from "../src/source/bankStore";
 import { MemorySession } from "../src/features/memory/MemorySession.svelte";
 import { globalSettingsStore } from "../src/features/globalSettings.svelte";
+import { appSound } from "../src/sound";
 import {
     cumulativeIntervalDays,
     MEMORY_GRADUATE_LEVEL_BOUNDS as BOUNDS,
@@ -92,7 +93,7 @@ async function mountSettings(
 
     const session = new MemorySession(
         bank,
-        { flash: () => {}, toast: () => {}, sound: { play: () => {} } as never },
+        { flash: () => {}, toast: () => {} },
         globalSettingsStore,
         { now: () => BASE_TIME },
     );
@@ -157,6 +158,7 @@ function expectedLabels(): string[] {
 let mounted: Mounted | null = null;
 
 afterEach(() => {
+    vi.restoreAllMocks();
     mounted?.destroy();
     mounted = null;
     // portal 残留 + bits-ui 的 ScrollLock 往 body 上写的 style，逐个用例复原
@@ -209,7 +211,8 @@ describe("掌握阈值滑块", () => {
         );
     });
 
-    it("方向键调高阈值：写回 session、落盘，并刷新「约 N 天」", async () => {
+    it("方向键调高阈值：写回 session、落盘，刷新「约 N 天」，并响一档", async () => {
+        const play = vi.spyOn(appSound, "play").mockReturnValue(false);
         mounted = await mountSettings();
 
         thumb().dispatchEvent(
@@ -223,6 +226,10 @@ describe("掌握阈值滑块", () => {
             "改了却没落盘：刷新页面阈值又回去了",
         ).toBe(8);
         expect(totalDaysText()).toBe(String(cumulativeIntervalDays(8)));
+        // 每档一个音，阈值越高音调越高（3→10 是 0–7 个半音）
+        expect(play).toHaveBeenCalledWith("setting-step", {
+            playbackRate: 2 ** (5 / 12),
+        });
     });
 });
 
@@ -253,7 +260,8 @@ describe("每轮限定题数开关", () => {
         ).not.toBeNull();
     });
 
-    it("点一下打开：写回 session 并落盘", async () => {
+    it("点一下打开：写回 session 并落盘，响一声开", async () => {
+        const play = vi.spyOn(appSound, "play").mockReturnValue(false);
         mounted = await mountSettings();
 
         lockSwitch().click();
@@ -265,5 +273,6 @@ describe("每轮限定题数开关", () => {
             "改了却没落盘：刷新页面开关又弹回去了",
         ).toBe(true);
         expect(lockSwitch().getAttribute("aria-checked")).toBe("true");
+        expect(play).toHaveBeenCalledWith("setting-toggle-on");
     });
 });

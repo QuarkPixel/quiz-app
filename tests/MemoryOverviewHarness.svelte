@@ -18,9 +18,20 @@
     interface Props {
         session: MemorySession;
         source: QuizSource;
+        /** 首页热力图点击后要跳到的卡（模拟 MemoryView 传下来的 focusId） */
+        focusId?: string | null;
+        onFocusHandled?: () => void;
+        /** 这次打开来自首页热力图跳转（窗口开合音静音） */
+        openedByJump?: boolean;
     }
 
-    let { session, source }: Props = $props();
+    let {
+        session,
+        source,
+        focusId = null,
+        onFocusHandled,
+        openedByJump = false,
+    }: Props = $props();
 
     provideMemorySession(session);
     provideQuizSource(source);
@@ -35,5 +46,11 @@
 
 <!-- bits-ui 的 Tooltip.Root 没有 Provider 会直接抛错，与 App.svelte 的层级一致 -->
 <Tooltip.Provider delayDuration={0}>
-    <MemoryOverview {open} onOpenChange={(value) => (open = value)} />
+    <MemoryOverview
+        {open}
+        onOpenChange={(value) => (open = value)}
+        {focusId}
+        {onFocusHandled}
+        {openedByJump}
+    />
 </Tooltip.Provider>

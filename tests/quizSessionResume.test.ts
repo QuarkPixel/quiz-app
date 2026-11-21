@@ -47,7 +47,6 @@ function makeDeps() {
   return {
     flash: vi.fn(),
     toast: vi.fn(),
-    sound: { preload: vi.fn(), playAnswer: vi.fn(), playSuccess: vi.fn() },
   };
 }
 

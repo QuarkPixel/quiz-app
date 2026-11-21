@@ -4,7 +4,7 @@ import {
   sanitizeGlobalSettings,
 } from "../src/globalSettings";
 import { globalSettingsStore } from "../src/features/globalSettings.svelte";
-import { STORAGE_KEY_GENERAL } from "../src/config";
+import { SOUND_VOLUME_DEFAULT, STORAGE_KEY_GENERAL } from "../src/config";
 
 beforeEach(() => {
   localStorage.clear();
@@ -37,6 +37,7 @@ describe("sanitizeGlobalSettings", () => {
       }),
     ).toEqual({
       soundEnabled: true,
+      soundVolume: SOUND_VOLUME_DEFAULT,
       autoSubmitOnSelection: false,
       autoNextOnCorrect: true,
     });
@@ -49,6 +50,23 @@ describe("sanitizeGlobalSettings", () => {
         autoNextOnCorrect: 0,
       }),
     ).toEqual(defaults);
+  });
+
+  it("音量：只接受有限数字，钳到 0–1，保留两位小数", () => {
+    expect(sanitizeGlobalSettings({ soundVolume: 0.35 }).soundVolume).toBe(
+      0.35,
+    );
+    expect(sanitizeGlobalSettings({ soundVolume: 4 }).soundVolume).toBe(1);
+    expect(sanitizeGlobalSettings({ soundVolume: -1 }).soundVolume).toBe(0);
+    expect(
+      sanitizeGlobalSettings({ soundVolume: 0.333 }).soundVolume,
+    ).toBe(0.33);
+    expect(sanitizeGlobalSettings({ soundVolume: "loud" }).soundVolume).toBe(
+      SOUND_VOLUME_DEFAULT,
+    );
+    expect(sanitizeGlobalSettings({ soundVolume: NaN }).soundVolume).toBe(
+      SOUND_VOLUME_DEFAULT,
+    );
   });
 });
 
@@ -79,6 +97,7 @@ describe("globalSettingsStore", () => {
 
     expect(globalSettingsStore.value).toEqual({
       soundEnabled: true,
+      soundVolume: SOUND_VOLUME_DEFAULT,
       autoSubmitOnSelection: false,
       autoNextOnCorrect: true,
     });

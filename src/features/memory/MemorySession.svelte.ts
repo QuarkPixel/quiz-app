@@ -189,7 +189,7 @@ import {
   QuestionCopyPattern,
   type QuestionCopyContext,
 } from "@/quiz/types/types";
-import { maybePlayAnswerSound, maybePlaySuccessSound } from "@/sound";
+import { appSound } from "@/sound";
 import { shuffle } from "@/features/quiz";
 
 export type MemoryRunKind = MemoryRun["kind"];
@@ -828,6 +828,7 @@ export class MemorySession extends ProgressSessionBase {
     // 开轮这一步也要落盘：这一批是谁、目标几道、队列顺序，都是刚定下的
     this.save();
     this.selectNext();
+    appSound.play("session-start");
 
     // 上次停在答案页：答案已经写进 `progress`，恢复时先走一次结算
     // （学习轮可能因此在 `advanceQuestionFlow` 里毕业 / 补题 / 收尾）。
@@ -946,6 +947,7 @@ export class MemorySession extends ProgressSessionBase {
     };
     this.save();
     this.selectNext();
+    appSound.play("session-start");
 
     // 上次停在答案页：答案已经写进 `progress`，恢复时先走一次结算。
     if (
@@ -959,6 +961,7 @@ export class MemorySession extends ProgressSessionBase {
 
   /** 回到首页。 */
   exitSession(): void {
+    const wasActive = this.run !== "idle";
     // 先带着**当前 flow** 存一次快照：这一轮 / 今天这一轮的队列与当前题
     // 必须留下，否则「退出再进来」只能从 round 重建队列，位置就丢了。
     this.save();
@@ -968,6 +971,8 @@ export class MemorySession extends ProgressSessionBase {
     // 池子不落盘——`save()` 对记忆模式永远写空池子，`startLearning` 会按
     // `round` 重建；复习队列则从会话记录恢复。
     this.save();
+
+    if (wasActive) appSound.play("session-end");
   }
 
   // ── 整轮的动作（总览里的「标熟」 / 答题区的「结束本轮」） ────────────
@@ -1027,8 +1032,16 @@ export class MemorySession extends ProgressSessionBase {
     }
     this.save();
 
-    // 标熟也可能正好把这一轮凑满（在总览里连点几下）：照常收尾
-    if (this.run === "learning" && this.round && isMemoryRoundComplete(this.round)) {
+    // 标熟也可能正好把这一轮凑满（在总览里连点几下）：照常收尾。
+    // 凑满时只响「完成」，不再叠一声 checkpoint——那是同一件事的两个阶段，
+    // 不是两次操作。
+    const completesRound =
+      this.run === "learning" &&
+      this.round !== null &&
+      isMemoryRoundComplete(this.round);
+    if (!completesRound) appSound.play("question-mastered");
+
+    if (completesRound) {
       this.finishLearningRound();
       return;
     }
@@ -1066,6 +1079,7 @@ export class MemorySession extends ProgressSessionBase {
     // 这里**不写** `learnedDay`：没学完的一轮不算「今天学过一轮」，
     // 首页的学习入口该保持高亮（和 `exitSession` 同一口径）
     this.save();
+    appSound.play("session-end");
   }
 
   /**
@@ -1291,7 +1305,7 @@ export class MemorySession extends ProgressSessionBase {
     this.save();
 
     this.deps.flash(correct);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, correct);
+    appSound.play(correct ? "answer-correct" : "answer-wrong");
 
     // 「答对自动下一题」是全局设置（⌘N 切换）：刷题模式在 submit 末尾做同一件事，
     // 记忆模式的「答对」= 自评「知道」。
@@ -1319,7 +1333,7 @@ export class MemorySession extends ProgressSessionBase {
     this.appState = this.applyMemoryAnswer(question, kind, rewind);
     this.save();
     this.deps.flash(correct);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, correct);
+    appSound.play(correct ? "answer-correct" : "answer-wrong");
   }
 
   /** 「记错了」：改判成忘记（原来答「知道」或「模糊」时才可用）。 */
@@ -1462,7 +1476,7 @@ export class MemorySession extends ProgressSessionBase {
       `已掌握 ${mastered} / ${target} 题。`,
       "success",
     );
-    maybePlaySuccessSound(this.globalSettings, this.deps.sound);
+    appSound.play("round-complete");
   }
 
   /**
@@ -1701,7 +1715,7 @@ export class MemorySession extends ProgressSessionBase {
       `共复习 ${learned} 道卡片。`,
       "success",
     );
-    maybePlaySuccessSound(this.globalSettings, this.deps.sound);
+    appSound.play("round-complete");
   }
 
   // ── 设置（全局设置开关在基类） ──────────────────────────────────────
@@ -1762,6 +1776,7 @@ export class MemorySession extends ProgressSessionBase {
     this.reviewSessionRev = 0;
     this.exitSession();
     this.save();
+    appSound.play("progress-reset");
   }
 
   // ── 复制当前题目（沿用题型的 formatCopyText） ────────────────────────

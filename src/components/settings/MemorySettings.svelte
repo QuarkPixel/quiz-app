@@ -25,6 +25,7 @@
     import { Kbd, KbdGroup } from "$lib/components/ui/kbd";
     import { modKeyLabel } from "$lib/platform";
     import { APP_SHORTCUTS } from "@/config";
+    import { playSettingStep, playSettingToggle } from "@/sound";
     import SettingsDialog from "./SettingsDialog.svelte";
     import SettingsSection from "./SettingsSection.svelte";
     import SettingNumberRow from "./SettingNumberRow.svelte";
@@ -63,10 +64,12 @@
             min={MEMORY_SETTINGS_BOUNDS.roundTarget.min}
             max={MEMORY_SETTINGS_BOUNDS.roundTarget.max}
             bind:value={session.memorySettings.roundTarget}
-            onChange={() =>
+            onChange={() => {
                 session.updateMemorySettings({
                     roundTarget: session.memorySettings.roundTarget,
-                })}
+                });
+                playSettingStep();
+            }}
         />
         <SettingNumberRow
             id="memory-streak"
@@ -74,11 +77,13 @@
             min={BANK_SETTINGS_BOUNDS.correctStreakToMaster.min}
             max={BANK_SETTINGS_BOUNDS.correctStreakToMaster.max}
             bind:value={session.appState.settings.correctStreakToMaster}
-            onChange={() =>
+            onChange={() => {
                 session.updateBankSettings({
                     correctStreakToMaster:
                         session.appState.settings.correctStreakToMaster,
-                })}
+                });
+                playSettingStep();
+            }}
         />
         <!-- 每轮限定题数：把一批卡刷完就收尾，中途不再补新题进来 -->
         <div class="flex items-center justify-between gap-3">
@@ -112,8 +117,10 @@
             <Switch
                 id="memory-lock-round-pool"
                 checked={session.memorySettings.lockRoundPool}
-                onCheckedChange={(checked) =>
-                    session.updateMemorySettings({ lockRoundPool: checked })}
+                onCheckedChange={(checked) => {
+                    session.updateMemorySettings({ lockRoundPool: checked });
+                    playSettingToggle(checked);
+                }}
                 size="sm"
             />
         </div>
@@ -145,8 +152,15 @@
                 max={BOUNDS.max}
                 step={1}
                 value={threshold}
-                onValueChange={(value) =>
-                    session.updateMemorySettings({ graduateLevel: value })}
+                onValueChange={(value) => {
+                    // 只在**真的换了一档**时响：滑块在拖动中会连续发同一个
+                    // 整数（7.0、7.0…），不比较的话就成了「动一点响一声」。
+                    const next = Math.round(value);
+                    if (next === session.memorySettings.graduateLevel) return;
+                    session.updateMemorySettings({ graduateLevel: next });
+                    // 档位越高音调越高：3→10 从原音高升到高五度。
+                    playSettingStep(next - BOUNDS.min);
+                }}
                 trackPadding={3}
             >
                 {#snippet children({ tickItems })}

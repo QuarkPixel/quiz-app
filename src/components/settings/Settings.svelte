@@ -19,6 +19,7 @@
     import BankNameSetting from "./BankNameSetting.svelte";
     import IconInfoCircle from "@tabler/icons-svelte/icons/info-circle";
     import { getLearningLevelColor } from "@/features/quiz/learningProgress";
+    import { playSettingStep, playSettingToggle } from "@/sound";
     import SettingsDialog from "./SettingsDialog.svelte";
     import SettingsSection from "./SettingsSection.svelte";
     import SettingNumberRow from "./SettingNumberRow.svelte";
@@ -48,6 +49,18 @@
             resetButton?.reset();
         }
     });
+
+    /** 数字输入落定 / 算法参数变化：一档一声，统一走 `snap`。 */
+    function algorithmChanged(): void {
+        session.handleAlgorithmChange();
+        playSettingStep();
+    }
+
+    /** 设置里的 switch：按结果状态选开 / 关。 */
+    function preferenceChanged(checked: boolean): void {
+        session.handlePreferenceChange();
+        playSettingToggle(checked);
+    }
 </script>
 
 <SettingsDialog bind:open>
@@ -108,7 +121,7 @@
                 bind:checked={
                     session.appState.settings.notifyNewQuestionInPool
                 }
-                onCheckedChange={() => session.handlePreferenceChange()}
+                onCheckedChange={(checked) => preferenceChanged(checked)}
                 size="sm"
             />
         </div>
@@ -123,7 +136,7 @@
             min={5}
             max={100}
             bind:value={session.appState.settings.activePoolSize}
-            onChange={() => session.handleAlgorithmChange()}
+            onChange={algorithmChanged}
         >
             <div class="w-8 h-1 flex rounded-full overflow-hidden">
                 {#each [0, 1, 2] as level}
@@ -140,7 +153,7 @@
             min={1}
             max={10}
             bind:value={session.appState.settings.correctStreakToMaster}
-            onChange={() => session.handleAlgorithmChange()}
+            onChange={algorithmChanged}
         >
             <div class="w-2 h-2 bg-success rounded-full"></div>
         </SettingNumberRow>
@@ -150,7 +163,7 @@
             min={1}
             max={20}
             bind:value={session.appState.settings.correctStreakAfterMistake}
-            onChange={() => session.handleAlgorithmChange()}
+            onChange={algorithmChanged}
         >
             <div class="w-2 h-2 bg-warning rounded-full"></div>
         </SettingNumberRow>

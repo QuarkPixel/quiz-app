@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { Snippet } from "svelte";
     import * as Dialog from "$lib/components/ui/dialog";
+    import { attachOverlaySound } from "@/sound";
     import { isCoarsePointer } from "$lib/utils";
     import type { FilterGroupDef } from "@/components/shared/FilterBar.svelte";
     import OverviewRail from "./OverviewRail.svelte";
@@ -56,10 +57,29 @@
         filter: OverviewFilterConfig;
         list: OverviewListConfig;
         row: Snippet<[QuestionRowContext]>;
+        /**
+         * 这一次打开是另一个动作的延续（记忆首页点热力图已经响过 swipe）：
+         * 返回 true 时不再补一声 `dialog-open`，避免两声响在同一帧。
+         */
+        skipOpenSound?: () => boolean;
     }
 
-    let { open, onOpenChange, hash, cards, filter, list, row }: Props =
-        $props();
+    let {
+        open,
+        onOpenChange,
+        hash,
+        cards,
+        filter,
+        list,
+        row,
+        skipOpenSound,
+    }: Props = $props();
+
+    // 总览窗口由两个模式共用，开合音效挂在外壳上，两边自动一致。
+    // 外面再包一层闭包：`skipOpenSound` 是 prop，要读调用时的值而不是初始值。
+    attachOverlaySound(() => open, {
+        skipOpen: () => skipOpenSound?.() === true,
+    });
 
     let searchInputRef = $state<HTMLInputElement | null>(null);
 </script>

@@ -59,12 +59,10 @@ function makeBank(questions?: Question[]): QuizBank {
 function makeDeps() {
   const flash = vi.fn();
   const toast = vi.fn();
-  const sound = { preload: vi.fn(), playAnswer: vi.fn(), playSuccess: vi.fn() };
   return {
-    deps: { flash, toast, sound },
+    deps: { flash, toast },
     flash,
     toast,
-    sound,
   };
 }
 

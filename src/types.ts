@@ -99,6 +99,8 @@ export interface ActivePoolItem {
 export interface GlobalSettings {
   /** 是否启用音效 */
   soundEnabled: boolean;
+  /** 音效主音量（0–1 线性增益） */
+  soundVolume: number;
   /** 单选 / 判断题选择答案后是否自动提交 */
   autoSubmitOnSelection: boolean;
   /** 答题正确时自动下一题 */

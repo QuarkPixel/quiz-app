@@ -69,7 +69,7 @@ import {
   type QuestionCopyContext,
   type ShuffledOption,
 } from "../types/types";
-import { maybePlayAnswerSound } from "@/sound";
+import { appSound } from "@/sound";
 import { nextRev } from "@/lib/rev";
 import { SWAP_LEAVING_ATTR } from "@/lib/transitions/swap";
 import type {
@@ -358,7 +358,7 @@ export class QuizSession extends ProgressSessionBase {
     // 快照要在改 appState **之前**取：「视作正确」以它为起点重算
     this.flow = judge(this.flow, nextIsCorrect, this.appState);
     this.deps.flash(nextIsCorrect);
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, nextIsCorrect);
+    appSound.play(nextIsCorrect ? "answer-correct" : "answer-wrong");
     const poolIdsBeforeAnswer = this.activePoolIdSet();
     this.appState = applyAnswer(this.appState, question.id, nextIsCorrect);
     this.enqueueNewlyPooled(poolIdsBeforeAnswer);
@@ -387,7 +387,7 @@ export class QuizSession extends ProgressSessionBase {
     this.persistQuizSession({ phase: "judged", correct: true });
     this.save();
     this.deps.flash(true);
-    this.maybePlayAnswerSoundForCorrect();
+    appSound.play("answer-correct");
   }
 
   /**
@@ -471,6 +471,7 @@ export class QuizSession extends ProgressSessionBase {
   reset(): void {
     this.appState = createResetRuntimeState(this.questions, this.hash);
     this.initialize();
+    appSound.play("progress-reset");
   }
 
   // ── 模式内 UI 开关（全局设置开关在基类） ────────────────────────────
@@ -484,6 +485,9 @@ export class QuizSession extends ProgressSessionBase {
   togglePool(): void {
     this.appState.ui.showPool = !this.appState.ui.showPool;
     this.save();
+    appSound.play(
+      this.appState.ui.showPool ? "pool-expand" : "pool-collapse",
+    );
   }
 
   /**
@@ -497,6 +501,8 @@ export class QuizSession extends ProgressSessionBase {
     if (this.appState.ui.showPool === open) return;
     this.appState.ui.showPool = open;
     this.save();
+    // 抽屉自己的关闭途径（下滑 / 遮罩 / Esc）也走这里，所以收起音自动一致
+    appSound.play(open ? "pool-expand" : "pool-collapse");
   }
 
   /**
@@ -654,6 +660,7 @@ export class QuizSession extends ProgressSessionBase {
    * 流程怎么走由各自的调用点决定（见 `markAsMastered` / `markPreviewQuestionAsMastered`）。
    */
   private applyMastery(questionId: string): void {
+    const wasMastered = this.appState.masteredIds.includes(questionId);
     const poolIdsBeforeMastery = this.activePoolIdSet();
     const activeItem = this.appState.activePool.find(
       (item) => item.id === questionId,
@@ -679,10 +686,9 @@ export class QuizSession extends ProgressSessionBase {
     this.appState = fillActivePool(nextState);
     this.enqueueNewlyPooled(poolIdsBeforeMastery);
     this.save();
-  }
 
-  private maybePlayAnswerSoundForCorrect(): void {
-    maybePlayAnswerSound(this.globalSettings, this.deps.sound, true);
+    // 只在「真的从没掌握变成已掌握」时响：重复点同一道题不该再叠一声。
+    if (!wasMastered) appSound.play("question-mastered");
   }
 
   // ────────────────────────────────────────────────────────────────

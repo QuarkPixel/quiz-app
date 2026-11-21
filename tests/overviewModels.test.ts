@@ -10,7 +10,6 @@ import type {
     Question,
     StoredState,
 } from "../src/types";
-import type { SoundPlayer } from "../src/sound/types";
 
 /**
  * 两个模式的总览视图模型（纯函数）。
@@ -20,12 +19,6 @@ import type { SoundPlayer } from "../src/sound/types";
  */
 
 const HASH = "overview_model_hash";
-
-const NO_SOUND: SoundPlayer = {
-    preload: () => {},
-    playAnswer: () => {},
-    playSuccess: () => {},
-};
 
 function baseState(): StoredState {
     return {
@@ -100,7 +93,7 @@ function quizSession(): QuizSession {
     });
     return new QuizSession(
         { hash: HASH, name: "总览题库", mode: "quiz", questions: QUIZ_QUESTIONS },
-        { flash: () => {}, toast: () => {}, sound: NO_SOUND },
+        { flash: () => {}, toast: () => {} },
     );
 }
 
@@ -114,7 +107,7 @@ function memorySession(): MemorySession {
     });
     return new MemorySession(
         { hash: HASH, name: "总览题库", mode: "memory", questions: MEMORY_QUESTIONS },
-        { flash: () => {}, toast: () => {}, sound: NO_SOUND },
+        { flash: () => {}, toast: () => {} },
     );
 }
 

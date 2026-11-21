@@ -185,7 +185,7 @@ describe("记忆模式：旧题库兼容", () => {
     } as unknown as MemoryBank;
     const session = new MemorySession(
       bank,
-      { flash: () => {}, toast: () => {}, sound: {} as never },
+      { flash: () => {}, toast: () => {} },
       globalSettingsStore,
     );
 

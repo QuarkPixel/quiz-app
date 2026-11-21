@@ -3,6 +3,7 @@
     import ConfirmActionButton from "$lib/components/ConfirmActionButton.svelte";
     import { cn, prefersReducedMotion } from "$lib/utils";
     import { getCorrectChoiceLetters } from "@/features/quiz";
+    import { appSound } from "@/sound";
     import { useQuizSession } from "@/quiz/session/context";
     import { slide } from "svelte/transition";
     import { circOut } from "svelte/easing";
@@ -35,6 +36,18 @@
     const slideIn = prefersReducedMotion
         ? { duration: 0 }
         : { duration: 180, easing: circOut };
+
+    /**
+     * 手动推进到下一题（按钮 / 键盘共用同一条语义）。
+     *
+     * 不在 `advanceQuestionFlow` 里响：那条路也被「答对自动下一题」和「标熟后
+     * 自动推进」调用，它们已经有 answer-correct / question-mastered，不能再叠
+     * 一声 forward。这里只认**用户主动按了下一题**。
+     */
+    function nextQuestion(): void {
+        appSound.play("next-question");
+        session.advanceQuestionFlow();
+    }
 </script>
 
 {#if hasQuestion}
@@ -115,7 +128,7 @@
             <Button
                 size="lg"
                 class="px-8"
-                onclick={() => session.advanceQuestionFlow()}
+                onclick={nextQuestion}
             >
                 我知道了
             </Button>
@@ -143,7 +156,7 @@
             <Button
                 size="lg"
                 class="px-8"
-                onclick={() => session.advanceQuestionFlow()}
+                onclick={nextQuestion}
             >
                 下一题
             </Button>

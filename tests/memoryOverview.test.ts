@@ -13,6 +13,7 @@ import {
   saveState,
 } from "../src/store";
 import { STORAGE_PREFIX_QUESTIONS } from "../src/config/storage";
+import { appSound } from "../src/sound";
 import type { MemoryBank } from "../src/source/types";
 import type {
   MemoryProgress,
@@ -101,7 +102,14 @@ interface Mounted {
   destroy: () => void;
 }
 
-async function mountOverview(progress: MemoryProgressMap): Promise<Mounted> {
+async function mountOverview(
+  progress: MemoryProgressMap,
+  options: {
+    focusId?: string | null;
+    onFocusHandled?: () => void;
+    openedByJump?: boolean;
+  } = {},
+): Promise<Mounted> {
   localStorage.clear();
   const source = new BankStore();
   const result = await source.importBank("记忆题库", MEMORY_BANK_JSON);
@@ -120,7 +128,7 @@ async function mountOverview(progress: MemoryProgressMap): Promise<Mounted> {
 
   const session = new MemorySession(
     bank,
-    { flash: () => {}, toast: () => {}, sound: { play: () => {} } as never },
+    { flash: () => {}, toast: () => {} },
     globalSettingsStore,
     { now: () => BASE_TIME },
   );
@@ -129,7 +137,13 @@ async function mountOverview(progress: MemoryProgressMap): Promise<Mounted> {
   document.body.appendChild(host);
   const app = mount(MemoryOverviewHarness, {
     target: host,
-    props: { session, source },
+    props: {
+      session,
+      source,
+      focusId: options.focusId ?? null,
+      onFocusHandled: options.onFocusHandled,
+      openedByJump: options.openedByJump ?? false,
+    },
   });
   flushSync();
 
@@ -255,11 +269,15 @@ function mustMasteryButton(): HTMLButtonElement {
 
 /** 某一行渲染出来的文字（虚拟列表的行自己带着 data-review-question-id） */
 function rowText(id: string): string {
+  return rowEl(id).textContent ?? "";
+}
+
+function rowEl(id: string): HTMLElement {
   const row = document.querySelector<HTMLElement>(
     `[data-review-question-id="${id}"]`,
   );
   if (!row) throw new Error(`列表里没有第 ${id} 行`);
-  return row.textContent ?? "";
+  return row;
 }
 
 function storedQuestionIds(hash: string): string[] {
@@ -420,5 +438,40 @@ describe("记忆模式：总览里点两下「标熟」", () => {
 
     expect(rowText("m1")).toContain("已掌握");
     expect(masteryButton()).toBeNull();
+  });
+});
+
+describe("记忆总览：首页热力图跳转", () => {
+  let view: Mounted | null = null;
+
+  afterEach(() => {
+    view?.destroy();
+    view = null;
+    vi.restoreAllMocks();
+  });
+
+  it("带 focusId 打开：对应行高亮，并通知父层已处理", async () => {
+    const onFocusHandled = vi.fn();
+    const mounted = await mountOverview(PROGRESS, {
+      focusId: "m4",
+      onFocusHandled,
+    });
+    view = mounted;
+
+    await vi.waitFor(() => expect(rowEl("m4")).toBeTruthy());
+    expect(rowEl("m4").className, "目标行要高亮一下").toContain("ring-2");
+    expect(onFocusHandled, "父层的 focusId 要被清掉").toHaveBeenCalled();
+  });
+
+  it("openedByJump：窗口打开不再叠一声 dialog-open（swipe 已经响过）", async () => {
+    const play = vi.spyOn(appSound, "play").mockReturnValue(false);
+    const mounted = await mountOverview(PROGRESS, {
+      focusId: "m4",
+      openedByJump: true,
+    });
+    view = mounted;
+
+    await vi.waitFor(() => expect(rowEl("m4")).toBeTruthy());
+    expect(play).not.toHaveBeenCalledWith("dialog-open");
   });
 });

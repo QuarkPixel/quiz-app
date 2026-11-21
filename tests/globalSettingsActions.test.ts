@@ -1,36 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applySoundEnabledPreference,
+  setSoundVolumePreference,
   toggleAutoNextPreference,
   toggleSoundPreference,
 } from "../src/features/globalSettingsActions";
 import { GlobalSettingsStore } from "../src/features/globalSettings.svelte";
 import { QuizSession } from "../src/quiz/session/QuizSession.svelte";
 import { MemorySession } from "../src/features/memory/MemorySession.svelte";
-import { STORAGE_KEY_GENERAL } from "../src/config";
+import { STORAGE_KEY_GENERAL, SOUND_VOLUME_DEFAULT } from "../src/config";
 import type { QuizBank, MemoryBank } from "../src/source/types";
-import type { SoundPlayer } from "../src/sound/types";
+import type { SoundService } from "../src/sound/types";
 
 /**
- * 全局偏好开关（音效 / 答对自动下一题）的统一实现。
+ * 全局偏好开关（音效 / 音量 / 答对自动下一题）的统一实现。
  *
- * 这两个开关在 `GlobalSettings` 面板上，也要能被答题界面的快捷键按到。
+ * 这几个开关在 `GlobalSettings` 面板上，也要能被答题界面的快捷键按到。
  * 以前 `QuizSession`、`MemorySession`、`GlobalSettings.svelte` 各写了一遍，
  * 文案与副作用慢慢就不一样了 —— 记忆模式甚至连 ⌘S / ⌘N 都没接上。
- * 所以这里守两件事：
+ * 所以这里守三件事：
  *   1. 开关本身的**可观察结果**（落盘 + 提示文案 + 试听）；
- *   2. **两个 session 走的是同一份实现**（同样的提示、同样的落盘结果）。
+ *   2. 关闭时**先同步偏好再提示**，且不再试听；
+ *   3. **两个 session 走的是同一份实现**（同样的提示、同样的落盘结果）。
  */
 
-function makePlayer() {
+function makeSound() {
   return {
-    preload: vi.fn(),
-    playSuccess: vi.fn(),
-    playAnswer: vi.fn(),
-    play: vi.fn(),
-  } as unknown as SoundPlayer & {
-    preload: ReturnType<typeof vi.fn>;
-    playSuccess: ReturnType<typeof vi.fn>;
+    attachUnlockGesture: vi.fn(() => () => {}),
+    play: vi.fn(() => true),
+    applyPreferences: vi.fn(),
+    dispose: vi.fn(async () => {}),
+  } as unknown as SoundService & {
+    play: ReturnType<typeof vi.fn>;
+    applyPreferences: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -53,63 +55,125 @@ afterEach(() => {
 });
 
 describe("音效开关", () => {
-  it("打开：落盘 + 试听一声 + 提示「音效已开启」", () => {
+  it("打开：落盘 + 同步偏好 + 试听一声 + 提示「音效已开启」", () => {
     const store = freshStore();
-    const player = makePlayer();
+    const sound = makeSound();
     const toast = vi.fn();
 
-    toggleSoundPreference(store, toast, player);
+    toggleSoundPreference(store, toast, sound);
 
     expect(store.value.soundEnabled).toBe(true);
     expect(persistedSettings().soundEnabled, "没写回 general 配置").toBe(true);
-    expect(player.preload).toHaveBeenCalledOnce();
-    expect(player.playSuccess).toHaveBeenCalledOnce();
+    expect(sound.applyPreferences).toHaveBeenCalledWith({
+      soundEnabled: true,
+      soundVolume: SOUND_VOLUME_DEFAULT,
+      autoSubmitOnSelection: true,
+      autoNextOnCorrect: false,
+    });
+    expect(sound.play).toHaveBeenCalledWith("sound-enabled");
+    expect(
+      sound.applyPreferences.mock.invocationCallOrder[0],
+      "先让播放器跟上开关，再试听",
+    ).toBeLessThan(sound.play.mock.invocationCallOrder[0]!);
     expect(toast).toHaveBeenCalledWith("音效已开启");
   });
 
-  it("关闭：落盘 + 不再试听", () => {
+  it("关闭：落盘 + 同步偏好，不再试听", () => {
     const store = freshStore();
     store.update({ soundEnabled: true });
-    const player = makePlayer();
+    const sound = makeSound();
     const toast = vi.fn();
 
-    toggleSoundPreference(store, toast, player);
+    toggleSoundPreference(store, toast, sound);
 
     expect(store.value.soundEnabled).toBe(false);
     expect(persistedSettings().soundEnabled).toBe(false);
-    expect(player.playSuccess).not.toHaveBeenCalled();
+    expect(sound.applyPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ soundEnabled: false }),
+    );
+    expect(sound.play).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith("音效已关闭");
   });
 
   it("设成当前值：不动盘、不提示（幂等）", () => {
     const store = freshStore();
-    const player = makePlayer();
+    const sound = makeSound();
     const toast = vi.fn();
     const before = localStorage.getItem(STORAGE_KEY_GENERAL);
 
-    applySoundEnabledPreference(store, store.value.soundEnabled, toast, player);
+    applySoundEnabledPreference(store, store.value.soundEnabled, toast, sound);
 
     expect(toast).not.toHaveBeenCalled();
-    expect(player.playSuccess).not.toHaveBeenCalled();
+    expect(sound.play).not.toHaveBeenCalled();
+    expect(sound.applyPreferences).not.toHaveBeenCalled();
     expect(localStorage.getItem(STORAGE_KEY_GENERAL)).toBe(before);
+  });
+});
+
+describe("音效音量", () => {
+  it("落盘 + 同步到播放器", () => {
+    const store = freshStore();
+    const sound = makeSound();
+
+    setSoundVolumePreference(store, 0.35, sound);
+
+    expect(store.value.soundVolume).toBe(0.35);
+    expect(persistedSettings().soundVolume).toBe(0.35);
+    expect(sound.applyPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ soundVolume: 0.35 }),
+    );
+    expect(sound.play).toHaveBeenCalledWith("volume-changed", {
+      cooldownMs: 45,
+      retrigger: "restart",
+    });
+  });
+
+  it("越界值被钳到 0–1，并保留两位小数", () => {
+    const store = freshStore();
+    const sound = makeSound();
+
+    setSoundVolumePreference(store, 4, sound);
+    expect(store.value.soundVolume).toBe(1);
+
+    setSoundVolumePreference(store, -1, sound);
+    expect(store.value.soundVolume).toBe(0);
+
+    setSoundVolumePreference(store, 0.333, sound);
+    expect(store.value.soundVolume).toBe(0.33);
+  });
+
+  it("拖到 0：静音，不再试听", () => {
+    const store = freshStore();
+    const sound = makeSound();
+
+    setSoundVolumePreference(store, 0, sound);
+
+    expect(store.value.soundVolume).toBe(0);
+    expect(sound.applyPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ soundVolume: 0 }),
+    );
+    expect(sound.play).not.toHaveBeenCalled();
   });
 });
 
 describe("答对自动下一题", () => {
   it("翻转开关并给出对应的说明文案", () => {
     const store = freshStore();
+    const sound = makeSound();
     const toast = vi.fn();
 
-    toggleAutoNextPreference(store, toast);
+    toggleAutoNextPreference(store, toast, sound);
     expect(store.value.autoNextOnCorrect).toBe(true);
     expect(persistedSettings().autoNextOnCorrect).toBe(true);
+    expect(sound.play).toHaveBeenLastCalledWith("setting-toggle-on");
     expect(toast).toHaveBeenLastCalledWith(
       "答对自动下一题已开启",
       "答对后自动进入下一题。",
     );
 
-    toggleAutoNextPreference(store, toast);
+    toggleAutoNextPreference(store, toast, sound);
     expect(store.value.autoNextOnCorrect).toBe(false);
+    expect(sound.play).toHaveBeenLastCalledWith("setting-toggle-off");
     expect(toast).toHaveBeenLastCalledWith(
       "答对自动下一题已关闭",
       "答对后停留在结果页（按空格继续）。",
@@ -139,14 +203,14 @@ describe("两个模式共用同一份实现", () => {
     const quizToast = vi.fn();
     const quiz = new QuizSession(
       QUIZ_BANK,
-      { flash: () => {}, toast: quizToast, sound: makePlayer() },
+      { flash: () => {}, toast: quizToast },
       freshStore(),
     );
 
     const memoryToast = vi.fn();
     const memory = new MemorySession(
       MEMORY_BANK,
-      { flash: () => {}, toast: memoryToast, sound: makePlayer() },
+      { flash: () => {}, toast: memoryToast },
       freshStore(),
     );
 

@@ -37,7 +37,7 @@ function makeBank(ids: string[]): MemoryBank {
 function makeSession(ids: string[], now = BASE_TIME): MemorySession {
   return new MemorySession(
     makeBank(ids),
-    { flash: () => {}, toast: () => {}, sound: { play: () => {} } as never },
+    { flash: () => {}, toast: () => {} },
     globalSettingsStore,
     { now: () => now },
   );

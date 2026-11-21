@@ -6,7 +6,6 @@
 
     import { cn } from "$lib/utils";
     import { globalSettingsDialog } from "@/features/globalSettingsDialog.svelte";
-    import { globalSettingsStore } from "@/features/globalSettings.svelte";
     import { syncConfigStore } from "@/features/sync/config.svelte";
     import { syncEngine } from "@/features/sync/engine.svelte";
     import {
@@ -15,7 +14,7 @@
         type SyncTone,
     } from "@/features/sync/indicator";
     import { handleSyncNowShortcut } from "@/features/sync/shortcut";
-    import { createSoundPlayer, maybePlaySyncSuccessSound } from "@/sound";
+    import { appSound } from "@/sound";
     import { modKeyLabel } from "$lib/platform";
     import { APP_SHORTCUTS } from "@/config";
     import * as Tooltip from "$lib/components/ui/tooltip";
@@ -144,16 +143,7 @@
     let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
     /**
-     * 指示点自己的播放器（音效开着时的那一下「答对」声）。
-     *
-     * 指示点不属于任何一个 session，拿不到 QuizView / MemoryView 那个播放器实例，
-     * 所以在常驻的 AppShell 里单开一个——`createSoundPlayer` 只是一张
-     * `HTMLAudioElement` 的表，多一份不额外下载任何东西（三个音效本来就随主包走）。
-     */
-    const soundPlayer = createSoundPlayer();
-
-    /**
-     * 一轮同步跑完：手动点的就亮一下（成功了再补一声「答对」）。
+     * 一轮同步跑完：手动点的就亮一下（成功了再补一声确认音）。
      *
      * 判定「跑完」用 `syncing` 的下降沿（`prev`）：这一轮无论是成功、报错还是
      * 有冲突，只要不在跑了就算跑完——用户要的是「这次点击有回执」，
@@ -176,9 +166,9 @@
         manualSync = false;
         flashTone = settledTone;
         // 音效是「成功」的加码反馈，跟 wink 同时起：失败/冲突时不响，
-        // 那时用户要看的是红点，加一声「答对」只会说反话
+        // 那时用户要看的是红点，加一声确认只会说反话
         if (succeeded) {
-            maybePlaySyncSuccessSound(globalSettingsStore.value, soundPlayer);
+            appSound.play("sync-succeeded");
         }
         if (flashTimer) clearTimeout(flashTimer);
         flashTimer = setTimeout(() => {

@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { QuestionOrder } from "@/types";
     import * as ToggleGroup from "$lib/components/ui/toggle-group";
+    import { playSettingChoice } from "@/sound";
     import IconShuffle from "@tabler/icons-svelte/icons/arrows-shuffle";
     import IconArrowsRight from "@tabler/icons-svelte/icons/arrow-narrow-right";
 
@@ -27,6 +28,8 @@
             return;
         }
         onSelect(v as QuestionOrder);
+        // 选择由结果状态驱动：点已选中项时 bits-ui 给空串，这里已经提前返回。
+        playSettingChoice();
     }
 </script>
 

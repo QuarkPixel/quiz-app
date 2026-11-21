@@ -19,6 +19,44 @@ import { syncEngine } from "@/features/sync/engine.svelte";
 import { installStorageHook } from "@/features/sync/storage";
 import { SyncHarness } from "./syncSupport";
 
+/**
+ * 换掉 uisfx 的播放器：同步音效只关心「响的是哪个语义 cue」，不需要真的
+ * 建 AudioContext。`appSound` 在模块加载时创建服务，但播放器是懒创建的，
+ * 所以这个 mock 能接管整条链路。
+ */
+const soundMock = vi.hoisted(() => {
+  const cues: string[] = [];
+  const player = {
+    async unlock() {
+      return true;
+    },
+    play(cue: string) {
+      cues.push(cue);
+      return { stop() {}, ended: Promise.resolve() };
+    },
+    async preload() {},
+    setPack() {},
+    getPack() {
+      return "minimal";
+    },
+    setVolume() {},
+    getVolume() {
+      return 0.7;
+    },
+    setEnabled() {},
+    isEnabled() {
+      return true;
+    },
+    stopAll() {},
+    async destroy() {},
+  };
+  return { cues, player };
+});
+
+vi.mock("uisfx", () => ({
+  createUISFX: () => soundMock.player,
+}));
+
 const HASH = "aaaabbbbccccdddd";
 
 let app: ReturnType<typeof mount> | null = null;
@@ -616,30 +654,19 @@ describe("头部的云同步指示点", () => {
   });
 
   /**
-   * 手动点击成功那一下要响**答对题目**的同款音效（`answer-correct.webm`）。
+   * 手动点击成功那一下要响**轻量确认**（`sync-succeeded` → uisfx 的 `reaction`），
+   * 不是答对的 `check`，也不是「一轮学完」的 `complete`。
    *
-   * 用假的 `Audio` 抓住「谁被 play 了」：指示点在 AppShell 里，拿不到
-   * QuizView / MemoryView 那个播放器实例，所以它自己 createSoundPlayer()。
+   * 用 uisfx 的假播放器抓 cue：页头的指示点与答题会话共用 `appSound`
+   * 这一个服务，不再各自 new 一个 `HTMLAudioElement`。
    */
-  function captureAudio(): { played: () => string[] } {
-    const played: string[] = [];
-    class MockAudio {
-      preload = "";
-      volume = 1;
-      currentTime = 0;
-      constructor(readonly src = "") {}
-      load(): void {}
-      play(): Promise<void> {
-        played.push(this.src);
-        return Promise.resolve();
-      }
-    }
-    vi.stubGlobal("Audio", MockAudio as unknown as typeof Audio);
-    return { played: () => played };
+  function captureSound(): { played: () => string[] } {
+    soundMock.cues.length = 0;
+    return { played: () => soundMock.cues };
   }
 
-  test("音效开着 + 手动同步成功 → wink 之外还响一声「答对」", async () => {
-    const audio = captureAudio();
+  test("音效开着 + 手动同步成功 → wink 之外还响一声确认音", async () => {
+    const audio = captureSound();
     const h = new SyncHarness();
     await h.start();
     try {
@@ -668,20 +695,14 @@ describe("头部的云同步指示点", () => {
 
       expect(dot()?.className, "手动点完要亮一下").toContain("animate-wink");
       const played = audio.played();
-      expect(played, "成功那一下要响一声").toHaveLength(1);
-      expect(played[0], "用的是答对题目的那个音效").toContain(
-        "answer-correct",
-      );
-      expect(played[0], "不是「一轮学完」的 success 音").not.toContain(
-        "success",
-      );
+      expect(played, "成功那一下要响一声").toEqual(["reaction"]);
     } finally {
       await h.stop();
     }
   });
 
   test("音效关着 → 手动同步成功也不出声", async () => {
-    const audio = captureAudio();
+    const audio = captureSound();
     const h = new SyncHarness();
     await h.start();
     try {
@@ -712,8 +733,8 @@ describe("头部的云同步指示点", () => {
     }
   });
 
-  test("手动点击失败 → 亮一下但**不响**（那时响「答对」是说反话）", async () => {
-    const audio = captureAudio();
+  test("手动点击失败 → 亮一下但**不响**（那时响确认音是说反话）", async () => {
+    const audio = captureSound();
     const h = new SyncHarness();
     await h.start();
     try {

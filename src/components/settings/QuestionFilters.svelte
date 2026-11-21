@@ -2,6 +2,7 @@
     import type { QuestionType } from "@/types";
     import type { FilterOption } from "@/features/quiz/filters";
     import * as ToggleGroup from "$lib/components/ui/toggle-group";
+    import { playSettingChoice } from "@/sound";
     import IconAsterisk from "@tabler/icons-svelte/icons/asterisk";
     import { QUESTION_TYPES } from "@/quiz/types/registry";
 
@@ -39,6 +40,8 @@
         if (accepted === false) {
             selected = activeType;
         }
+        // 即使这次选择要弹「怎么处理活动池」，选择本身已经发生，先给一声。
+        playSettingChoice();
     }
 </script>
 

@@ -95,7 +95,6 @@ function makeSession(
     {
       flash: () => {},
       toast: options.toast ?? (() => {}),
-      sound: { play: () => {} } as never,
     },
     options.store ?? globalSettingsStore,
     { now: options.now2 ?? (() => fixedNow) },
@@ -865,7 +864,7 @@ describe("记忆模式：持久化", () => {
     // 不传 options.now：走生产路径（每次现算 Date.now + 调试偏移）
     const session = new MemorySession(
       makeBank(["a"], hash),
-      { flash: () => {}, toast: () => {}, sound: {} as never },
+      { flash: () => {}, toast: () => {} },
       globalSettingsStore,
     );
     const before = session.now;

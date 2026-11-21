@@ -15,6 +15,8 @@
     import { provideQuizSource } from "./source/context";
     import type { Bank } from "./source/types";
     import { provideRouter, router } from "./features/routing/context";
+    import { globalSettingsStore } from "./features/globalSettings.svelte";
+    import { appSound } from "./sound";
     import SwapFade from "./components/shared/SwapFade.svelte";
     import { SWAP_MS } from "./config";
     import IconFishBoneFilled from "@tabler/icons-svelte/icons/fish-bone-filled";
@@ -22,6 +24,21 @@
     const source = createSource();
     provideQuizSource(source);
     provideRouter(router);
+
+    /**
+     * 全局音效偏好 → 播放器。只在应用级同步这一处：
+     *
+     *   - 开关关掉时要**立刻**静音（服务里先 stopAll 再 setEnabled(false)），
+     *     不能等下一次 play 才发现；
+     *   - 音量 / 开关也可能被云同步从另一台设备写回来（`GlobalSettingsStore.reload`），
+     *     所以盯的是 store 本身，而不是某个面板的提交事件。
+     */
+    $effect(() => {
+        appSound.applyPreferences({
+            soundEnabled: globalSettingsStore.value.soundEnabled,
+            soundVolume: globalSettingsStore.value.soundVolume,
+        });
+    });
 
     let activeBank = $state<Bank | null>(source.getActiveBank());
 

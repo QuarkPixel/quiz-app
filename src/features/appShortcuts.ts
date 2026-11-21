@@ -15,6 +15,7 @@
  */
 
 import { SHORTCUTS, SHORTCUT_IDS, type ShortcutId } from "@/config";
+import { appSound } from "@/sound";
 import { isGlobalSettingsShortcut } from "@/features/globalSettingsShortcut";
 import {
   hasSelectedText,
@@ -258,6 +259,9 @@ function runQuestionAction(
 
   switch (action.kind) {
     case "next":
+      // 与按钮共用同一个语义：只有用户主动推进才响；自动下一题 / 标熟推进
+      // 走各自的 session 方法，不经过这里。
+      appSound.play("next-question");
       session.advanceQuestionFlow();
       return true;
     case "submit":
